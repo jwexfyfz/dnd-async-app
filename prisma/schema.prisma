@@ -14,22 +14,24 @@ datasource db {
 model User {
   id         String      @id @default(uuid())
   email      String      @unique
+  createdAt  DateTime    @default(now())
   characters Character[] // Added brackets [] to signify a User has multiple characters
 }
 
 model Character {
-  id        String   @id @default(uuid())
-  name      String
-  userId    String
-  user      User     @relation(fields: [userId], references: [id])
+  id           String   @id @default(uuid())
+  name         String
+  userId       String
+  user         User     @relation(fields: [userId], references: [id])
   
-  // New MVP Fields
-  class     String   // e.g., "Fighter", "Mage", "Rogue"
-  strength  Int      @default(10)
-  dexterity Int      @default(10)
-  constitution Int    @default(10)
-  intelligence Int    @default(10)
-  wisdom       Int    @default(10)
-  charisma     Int    @default(10)
+  characterClass String   
+  
+  strength     Int      @default(8)
+  dexterity    Int      @default(8)
+  constitution Int      @default(8)
+  intelligence Int      @default(8)
+  wisdom       Int      @default(8)
+  charisma     Int      @default(8)
 }
+
 

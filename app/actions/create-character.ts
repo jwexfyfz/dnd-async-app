@@ -35,19 +35,23 @@ export async function createCharacter(formData: FormData): Promise<ActionRespons
       create: { id: mockUserId, email: "mvp_tester@example.com" },
     });
 
+    // app/actions/create-character.ts
+// ... keep everything else the same, just update the data allocation block at the bottom:
+
     await prisma.character.create({
-      data: {
+    data: {
         name: name.trim(),
         userId: mockUserId,
-        class: characterClass,
+        characterClass: characterClass, // Map the form data variable to our safe database key
         strength,
         dexterity,
         constitution,
         intelligence,
         wisdom,
         charisma
-      },
+    },
     });
+
 
     revalidatePath("/");
     return { success: true };
