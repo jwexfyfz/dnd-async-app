@@ -5,9 +5,22 @@
 
 generator client {
   provider = "prisma-client-js"
-  output   = "../generated/prisma/client"
 }
 
 datasource db {
   provider = "postgresql"
+}
+
+model User {
+  id         String      @id @default(uuid())
+  email      String      @unique
+  characters Character[] // Added brackets [] to signify a User has multiple characters
+}
+
+model Character {
+  id     String @id @default(uuid())
+  name   String 
+  userId String
+  // FIX THIS LINE: Ensure [userId] is inside the fields argument
+  user   User   @relation(fields: [userId], references: [id])
 }
