@@ -18,9 +18,18 @@ model User {
 }
 
 model Character {
-  id     String @id @default(uuid())
-  name   String 
-  userId String
-  // FIX THIS LINE: Ensure [userId] is inside the fields argument
-  user   User   @relation(fields: [userId], references: [id])
+  id        String   @id @default(uuid())
+  name      String
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  
+  // New MVP Fields
+  class     String   // e.g., "Fighter", "Mage", "Rogue"
+  strength  Int      @default(10)
+  dexterity Int      @default(10)
+  constitution Int    @default(10)
+  intelligence Int    @default(10)
+  wisdom       Int    @default(10)
+  charisma     Int    @default(10)
 }
+

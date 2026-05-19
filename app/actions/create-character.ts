@@ -1,28 +1,34 @@
 "use server";
 
-// FORCE the environment variables to load explicitly for this action
-import { config } from "dotenv";
-import path from "path";
-config({ path: path.resolve(process.cwd(), ".env.local") });
-
 import { revalidatePath } from "next/cache";
-import { prisma } from "../../lib/prisma"; 
+import { prisma } from "../../lib/prisma";
 
-export async function createCharacter(formData: FormData) {
+interface ActionResponse {
+  success: boolean;
+  error?: string;
+}
+
+export async function createCharacter(formData: FormData): Promise<ActionResponse> {
   const name = formData.get("name") as string;
-
-  console.log("------------------ MVP DIAGNOSTICS ------------------");
-  console.log("Form Name Received:", name);
-  console.log("Raw Env Test:", process.env.DATABASE_URL ? "FOUND" : "MISSING");
-  console.log("Is Prisma Object Defined?:", typeof prisma !== 'undefined');
-  console.log("-----------------------------------------------------");
+  const characterClass = formData.get("class") as string;
+  
+  const strength = parseInt(formData.get("strength") as string) || 10;
+  const dexterity = parseInt(formData.get("dexterity") as string) || 10;
+  const constitution = parseInt(formData.get("constitution") as string) || 10;
+  const intelligence = parseInt(formData.get("intelligence") as string) || 10;
+  const wisdom = parseInt(formData.get("wisdom") as string) || 10;
+  const charisma = parseInt(formData.get("charisma") as string) || 10;
 
   if (!name || name.trim().length === 0) {
     return { success: false, error: "Character name cannot be blank." };
   }
+  if (!characterClass) {
+    return { success: false, error: "You must choose a character class." };
+  }
 
   try {
     const mockUserId = "test-user-uuid-12345";
+    
     await prisma.user.upsert({
       where: { id: mockUserId },
       update: {},
@@ -30,13 +36,23 @@ export async function createCharacter(formData: FormData) {
     });
 
     await prisma.character.create({
-      data: { name: name.trim(), userId: mockUserId },
+      data: {
+        name: name.trim(),
+        userId: mockUserId,
+        class: characterClass,
+        strength,
+        dexterity,
+        constitution,
+        intelligence,
+        wisdom,
+        charisma
+      },
     });
 
     revalidatePath("/");
     return { success: true };
   } catch (error: any) {
-    console.error("Database error during character creation:", error);
-    return { success: false, error: error.message };
+    console.error("Database error:", error);
+    return { success: false, error: error.message || "Failed to save character." };
   }
 }
