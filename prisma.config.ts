@@ -9,8 +9,11 @@ import { defineConfig, env } from "prisma/config";
 
 export default defineConfig({
   schema: "prisma/schema.prisma",
+  migrations: {
+    // Prisma 7: seed command lives here, not in package.json
+    seed: "node prisma/seed.mjs",
+  },
   datasource: {
-    // This tells the CLI to use your Session mode / Pooler string on port 5432
     url: env("DIRECT_URL"),
   },
 });

@@ -41,13 +41,18 @@ export async function createCharacter(formData: FormData): Promise<ActionRespons
 
   try {
     // Step 3: Ensure this Supabase user has a matching row in our own database.
-    // We use the Supabase user's ID as our primary key so the two systems stay
-    // permanently in sync — no separate mapping table needed.
-    // upsert = "create the row if it doesn't exist yet, otherwise do nothing."
+    // displayName comes from the Google OAuth full_name claim and is shown on
+    // party cards so teammates can identify each other.
+    const displayName =
+      (user.user_metadata?.full_name as string | undefined) ||
+      (user.user_metadata?.name    as string | undefined) ||
+      user.email?.split("@")[0] ||
+      "Adventurer";
+
     await prisma.user.upsert({
       where:  { id: user.id },
-      update: {},
-      create: { id: user.id, email: user.email! },
+      update: { displayName },
+      create: { id: user.id, email: user.email!, displayName },
     });
 
     // Step 4: Save the new character, linked to the authenticated user's ID.

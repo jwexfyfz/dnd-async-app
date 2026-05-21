@@ -1,3 +1,22 @@
+# CLAUDE.md - Core Project Guidelines
+
+## Critical Efficiency Rules (Anti-Loop Guardrails)
+* **Never Use Broad Grep:** Do not run open-ended searches on the whole codebase. Target specific directories.
+* **Never Guess File Structures:** Use existing project maps or specific file paths instead of guessing.
+* **Stop and Ask After 3 Fails:** If a command or test fails 3 times in a row, STOP immediately and ask the human for guidance. Do not try to auto-fix indefinitely.
+* **No Speculative Reading:** Do not read files unless they are directly related to the active task.
+* **No Redundant Building:** Avoid running build commands or test suites repeatedly unless a file modification actually requires verification.
+
+## Build & Test Commands
+* Build: `npm run build`
+* Test: `npm test`
+* Lint: `npm run lint`
+
+## Code Style & Architecture
+* Follow strict TypeScript patterns.
+* Keep functions small and modular.
+
+
 # Project Context: Async AI D&D Web App
 
 ## 🎯 Core Mission & Vision
