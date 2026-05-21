@@ -1,7 +1,7 @@
-<!-- refreshed: 2026-05-20 -->
+<!-- refreshed: 2026-05-21 -->
 # Architecture
 
-**Analysis Date:** 2026-05-20
+**Analysis Date:** 2026-05-21
 
 ## System Overview
 
@@ -72,11 +72,25 @@
 
 ## Backend / API
 
-**Server Actions** (`app/actions/`):
-- All marked `"use server"` — execute on the server, callable from client components.
-- Every action that touches user data calls `createSupabaseServerClient()` and verifies the session before doing anything.
-- Actions return plain serializable objects `{ success: boolean, data?, error? }`.
-- `get-story-prompts.ts` is the only action without an auth check (reads public seeded data).
+**Server Actions** (`app/actions/`) — 13 total:
+
+| Action | Auth | Purpose |
+|--------|------|---------|
+| `create-character.ts` | Yes | Upserts User, creates Character |
+| `delete-character.ts` | Yes | Deletes a character owned by the user |
+| `get-characters.ts` | Yes | Fetches all characters for current user |
+| `get-story-prompts.ts` | No | Returns seeded StoryPrompt rows (public) |
+| `start-game.ts` | Yes | Creates a new Game in LOBBY state |
+| `join-game.ts` | Yes | Adds a character to an existing lobby |
+| `leave-game.ts` | Yes | Removes a character from a lobby |
+| `kick-player.ts` | Yes | Host removes another player from lobby |
+| `set-ready.ts` | Yes | Marks a player as ready in lobby |
+| `start-adventure.ts` | Yes | Host transitions lobby → ACTIVE, builds initial state |
+| `initialize-game.ts` | Yes | Builds initial AI narrative for the game start |
+| `take-turn.ts` | Yes | Processes a player turn through the AI + state mutation |
+| `get-game.ts` | Yes | Fetches full game state + message history |
+
+All actions marked `"use server"`. Auth-gated actions call `createSupabaseServerClient()` first. Actions return `{ success: boolean, data?, error? }`.
 
 **Auth on the Server:**
 - `lib/supabase-server.ts` exports `createSupabaseServerClient()`, which creates a per-request Supabase client that reads/writes session tokens from HTTP cookies.
@@ -90,6 +104,13 @@
 **Route Handlers:**
 - `app/auth/callback/route.ts`: Single GET handler that redirects to `/`. No logic beyond the redirect.
 - `app/api/auth/` directory exists but is empty (no NextAuth routes present).
+
+**Pages:**
+- `app/page.tsx`: Home — auth gate, character roster, start/join game entry point.
+- `app/create-character/page.tsx`: Dedicated character creation page.
+- `app/game/[id]/page.tsx`: Active game view — chat feed, turn input, game state display.
+- `app/game/[id]/lobby/page.tsx`: Pre-game lobby — player list, ready checks, host controls.
+- `app/play/page.tsx`: Game browser / join existing game.
 
 ## Data Flow
 

@@ -1,21 +1,39 @@
-<!-- refreshed: 2026-05-20 -->
+<!-- refreshed: 2026-05-21 -->
 # Codebase Structure
 
-**Analysis Date:** 2026-05-20
+**Analysis Date:** 2026-05-21
 
 ## Directory Layout
 
 ```
 dnd-async-app/
-├── app/                  — Next.js App Router: pages, layouts, routes, server actions
-│   ├── actions/          — Server Actions ("use server") — all backend data logic
-│   ├── api/              — Route Handlers (currently empty aside from placeholder auth dir)
-│   │   └── auth/         — (empty) placeholder for future NextAuth or webhook routes
+├── app/                      — Next.js App Router: pages, layouts, routes, server actions
+│   ├── actions/              — Server Actions ("use server") — all backend data logic (13 files)
+│   │   ├── create-character.ts
+│   │   ├── delete-character.ts
+│   │   ├── get-characters.ts
+│   │   ├── get-game.ts
+│   │   ├── get-story-prompts.ts
+│   │   ├── initialize-game.ts
+│   │   ├── join-game.ts
+│   │   ├── kick-player.ts
+│   │   ├── leave-game.ts
+│   │   ├── set-ready.ts
+│   │   ├── start-adventure.ts
+│   │   ├── start-game.ts
+│   │   └── take-turn.ts
+│   ├── api/                  — Route Handlers (currently empty aside from placeholder auth dir)
+│   │   └── auth/             — (empty) placeholder for future NextAuth or webhook routes
 │   ├── auth/
-│   │   └── callback/     — OAuth redirect landing (route.ts redirects to /)
-│   ├── globals.css       — Global TailwindCSS styles
-│   ├── layout.tsx        — Root layout: fonts, html/body wrapper, metadata
-│   └── page.tsx          — Home page: auth gate, character form, character roster
+│   │   └── callback/         — OAuth redirect landing (route.ts redirects to /)
+│   ├── create-character/     — Dedicated character creation page
+│   ├── game/
+│   │   └── [id]/             — Active game view (chat feed, turn input)
+│   │       └── lobby/        — Pre-game lobby (player list, ready checks, host controls)
+│   ├── play/                 — Game browser / join existing game
+│   ├── globals.css           — Global TailwindCSS styles
+│   ├── layout.tsx            — Root layout: fonts, html/body wrapper, metadata
+│   └── page.tsx              — Home page: auth gate, character roster, game entry
 │
 ├── components/           — Shared React client components
 │   ├── character-form.tsx  — Point-buy character creation form
@@ -61,11 +79,15 @@ dnd-async-app/
 - `prisma/seed.mjs`: Idempotent seed (upsert by name). Populates 2 maps and 2 story prompts.
 - `prisma.config.ts`: Tells Prisma CLI to use `DIRECT_URL` (not the pooled `DATABASE_URL`) for migrations.
 
-**Server Actions:**
-- `app/actions/create-character.ts`: Auth-gated. Upserts User, creates Character. Calls `revalidatePath("/")`.
-- `app/actions/get-characters.ts`: Auth-gated. Fetches all characters for the current user, includes active game IDs.
-- `app/actions/start-game.ts`: Auth-gated. Idempotent game creation. Computes starting HP, builds initial `Game.state` JSON.
-- `app/actions/get-story-prompts.ts`: No auth required. Returns all seeded `StoryPrompt` rows ordered by difficulty.
+**Server Actions (key ones):**
+- `app/actions/create-character.ts`: Auth-gated. Upserts User, creates Character.
+- `app/actions/start-game.ts`: Creates a new Game in LOBBY state.
+- `app/actions/join-game.ts` / `leave-game.ts` / `kick-player.ts` / `set-ready.ts`: Lobby management.
+- `app/actions/start-adventure.ts`: Host transitions lobby → ACTIVE, builds initial world state.
+- `app/actions/initialize-game.ts`: Builds opening AI narrative after lobby transitions to active.
+- `app/actions/take-turn.ts`: Core gameplay — processes player input through AI + state mutation.
+- `app/actions/get-game.ts`: Returns full game state and message history for the game view.
+- `app/actions/get-story-prompts.ts`: No auth required. Returns seeded `StoryPrompt` rows.
 
 **Components:**
 - `components/login-screen.tsx`: Google OAuth button. Constructs Supabase OAuth URL dynamically using `window.location.origin` (works in both local dev and production).

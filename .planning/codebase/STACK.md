@@ -5,78 +5,88 @@
 ## Languages
 
 **Primary:**
-- TypeScript 5.9.3 — all application code (`app/`, `lib/`, `components/`, `prisma.config.ts`)
-- Target: ES2017, strict mode enabled, `moduleResolution: bundler`
+- TypeScript 5.x — all application code (`app/`, `lib/`, `components/`, `prisma.config.ts`)
+- TSConfig target: ES2017, strict mode enabled, `moduleResolution: bundler`, path alias `@/*` → project root
 
 **Secondary:**
 - JavaScript (ESM `.mjs`) — seed script only (`prisma/seed.mjs`)
+- CSS — global styles (`app/globals.css`) via Tailwind v4 `@import "tailwindcss"`
 
 ## Frameworks & Libraries
 
-**Core Frontend:**
-- Next.js 16.2.6 — App Router; hosted on Vercel
-  - Config: `next.config.ts`
-  - `serverExternalPackages: ["pg", "dotenv"]` (prevents bundling native node packages)
-  - Uses Google Fonts via `next/font/google` (Geist Sans, Geist Mono)
+**Core Framework:**
+- Next.js 16.2.6 — App Router, server actions (`"use server"`), server components, route handlers
+  - No `next.config.*` file detected — default Next.js config
+  - Dynamic route: `app/game/[id]/` (game view and lobby)
 - React 19.2.4 — UI layer (`react`, `react-dom`)
+- Fonts: `next/font/google` — Geist Sans and Geist Mono loaded in `app/layout.tsx`
 
 **Styling:**
-- TailwindCSS 4.3.0 — utility-first CSS
-  - PostCSS plugin: `@tailwindcss/postcss` ^4
-  - Config: `postcss.config.mjs`
-  - Global styles: `app/globals.css`
+- TailwindCSS 4.x — utility classes throughout all components
+- `@tailwindcss/postcss` v4 — PostCSS plugin; config in `postcss.config.mjs`
+- Global styles: `app/globals.css`
+- No Shadcn/Radix UI — all UI is hand-rolled with Tailwind
 
-**Auth:**
-- `@supabase/ssr` 0.10.3 — Supabase auth for Next.js (SSR-safe)
-  - Browser client: `lib/supabase-client.ts` (uses `createBrowserClient`)
-  - Server client: `lib/supabase-server.ts` (uses `createServerClient` with cookies)
-- `@supabase/auth-ui-react` 0.4.7 — installed but not actively used in current UI (login implemented manually)
+**Authentication:**
+- `@supabase/ssr` 0.10.3 — SSR-safe Supabase auth for Next.js
+  - Browser client: `lib/supabase-client.ts` (`createBrowserClient`)
+  - Server client: `lib/supabase-server.ts` (`createServerClient` with cookie read/write)
+- `@supabase/auth-ui-react` 0.4.7 — installed but not used; login UI is custom (`components/login-screen.tsx`)
 - `@supabase/auth-ui-shared` 0.1.8 — peer dependency of auth-ui-react
 
-**Database / ORM:**
-- Prisma 7.8.0 — ORM and schema management
-  - Schema: `prisma/schema.prisma`
-  - Prisma CLI config: `prisma.config.ts` (points CLI at `DIRECT_URL` on port 5432)
-  - Generated client: `generated/prisma/client/`
-- `@prisma/adapter-neon` 7.8.0 — Neon serverless adapter used by the runtime client (`lib/prisma.ts`)
-- `@prisma/adapter-pg` 7.8.0 — installed, not actively used in runtime path
-- `@neondatabase/serverless` 1.1.0 — Neon WebSocket driver (dependency of the Neon adapter)
-- `pg` 8.20.0 — node-postgres (used by `@prisma/adapter-pg` and kept as server external package)
+**AI Layer:**
+- `@anthropic-ai/sdk` 0.97.1 — direct Anthropic API calls in server actions
+  - Used in: `app/actions/take-turn.ts`, `app/actions/initialize-game.ts`
+  - Model configured in `lib/ai-config.ts`: `claude-haiku-4-5`; max tokens: 600; rolling context window: 15 messages
+  - Prompt caching used: `cache_control: { type: "ephemeral" }` on static system prompt block
 
-**Environment:**
-- `dotenv` 17.4.2 — loads `.env.local` for Prisma CLI and seed script
+**ORM / Database Client:**
+- Prisma 7.8.0 — schema at `prisma/schema.prisma`, generated client at `generated/prisma/client/`
+- `@prisma/adapter-neon` 7.8.0 — Neon serverless WebSocket adapter; used exclusively in `lib/prisma.ts`
+- `@prisma/adapter-pg` 7.8.0 — installed but not used in the runtime path
+- `@neondatabase/serverless` 1.1.0 — Neon WebSocket driver (dependency of the Neon adapter)
+- `pg` 8.20.0 — raw postgres driver; used by seed and kept as adapter fallback
+- `dotenv` 17.4.2 — loads `.env.local` for Prisma CLI (`prisma.config.ts`) and seed script
 
 ## Build Tooling
 
 **Bundler:**
-- Next.js built-in (Webpack / Turbopack via `next dev` / `next build`)
+- Next.js built-in (Webpack/Turbopack) — no standalone bundler config
 
 **Linter:**
-- ESLint 9 with `eslint-config-next` 16.2.6
-  - Config: `eslint.config.mjs`
-  - Rulesets: `eslint-config-next/core-web-vitals`, `eslint-config-next/typescript`
+- ESLint 9.x — config at `eslint.config.mjs`
+- `eslint-config-next` 16.2.6 — extends `core-web-vitals` and `typescript` presets
 
 **Type Checking:**
-- TypeScript compiler (tsc) — `noEmit: true`, incremental builds
-  - Config: `tsconfig.json`
-  - Path alias: `@/*` maps to project root
+- TypeScript compiler — `noEmit: true`, incremental builds; config at `tsconfig.json`
 
-**No formatter config detected** (no `.prettierrc`, no `biome.json`).
+**CSS Build:**
+- PostCSS — `postcss.config.mjs` with single plugin `@tailwindcss/postcss`
+
+**No formatter config detected** — no `.prettierrc`, no `biome.json`.
+
+**Prisma CLI:**
+- `prisma` 7.8.0 — `postinstall` script runs `prisma generate` after every `npm install`
+- CLI configured via `prisma.config.ts` (reads `DIRECT_URL` from `.env.local`)
 
 ## Runtime & Environment
 
 **Node.js:**
-- Active version: 24.15.0 (no `.nvmrc` or `.node-version` file — version not pinned)
+- Active system version: 24.15.0 (no `.nvmrc` or `.node-version` — version not pinned in repo)
 
-**Execution model:**
-- Server Actions (`"use server"`) for all database mutations — run as Node.js serverless functions on Vercel
-- Client components (`"use client"`) for auth state, forms, and UI
-- Route handlers for auth callback: `app/auth/callback/route.ts`
-- No Edge Runtime used — all server code targets Node.js
+**Execution Model:**
+- Server Actions (`"use server"`) — all database mutations and AI calls run as Node.js serverless functions
+- Client Components (`"use client"`) — auth state, interactive UI, real-time polling
+- Route handlers — auth callback at `app/auth/callback/route.ts`
+- No Edge Runtime used (`export const runtime = "edge"` not found anywhere)
+
+**Deployment Target:**
+- Vercel — inferred from Next.js App Router + Supabase URL pattern; no `vercel.json` file present
+- Database: Neon serverless PostgreSQL (WebSocket adapter confirms serverless-compatible transport)
 
 **Package Manager:**
-- npm (lockfile: `package-lock.json` present)
-- `postinstall` hook runs `prisma generate` automatically after `npm install`
+- npm — `package-lock.json` present (lockfileVersion 3); no `yarn.lock` or `pnpm-lock.yaml`
+- `postinstall` hook: `prisma generate` runs automatically on `npm install`
 
 ## Key Scripts
 
