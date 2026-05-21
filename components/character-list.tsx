@@ -1,8 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { getCharacters } from "@/app/actions/get-characters";
-
+// Character data shape — must stay in sync with the Prisma Character model.
 interface Character {
   id: string;
   name: string;
@@ -15,22 +13,15 @@ interface Character {
   charisma: number;
 }
 
-export default function CharacterList() {
-  const [characters, setCharacters] = useState<Character[]>([]);
-  const [loading, setLoading] = useState(true);
+interface Props {
+  // Characters are fetched in page.tsx and passed down here so that
+  // creating a new character can trigger a refresh without this component
+  // needing to know anything about data fetching.
+  characters: Character[];
+  loading: boolean;
+}
 
-  async function load() {
-    const res = await getCharacters();
-    if (res.success && res.data) {
-      setCharacters(res.data as Character[]);
-    }
-    setLoading(false);
-  }
-
-  useEffect(() => {
-    load();
-  }, []);
-
+export default function CharacterList({ characters, loading }: Props) {
   if (loading) return <p className="text-center text-sm text-slate-500 mt-8">Summoning your roster...</p>;
 
   if (characters.length === 0) {

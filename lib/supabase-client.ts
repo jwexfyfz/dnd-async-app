@@ -1,13 +1,10 @@
 import { createBrowserClient } from "@supabase/ssr";
 
-// Wrap initialization in a dynamic helper function to bypass Turbopack static compilation caches
-function initSupabase() {
-  const settings = {
-    url: "https://supabase.co".trim(),
-    anonKey: "sb_publishable_KwvUsyfXUnLTynka1U-Yng_SyUgrwCI".trim()
-  };
-
-  return createBrowserClient(settings.url, settings.anonKey);
-}
-
-export const supabaseBrowser = initSupabase();
+// Browser-side Supabase client — used for auth state management in React components.
+// Credentials come from environment variables, never hardcoded.
+// The NEXT_PUBLIC_ prefix means these values are intentionally exposed to the browser
+// (they're public keys, not secrets).
+export const supabaseBrowser = createBrowserClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);

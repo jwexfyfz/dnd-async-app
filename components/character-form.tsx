@@ -3,11 +3,19 @@
 import { useState } from "react";
 import { createCharacter } from "@/app/actions/create-character";
 
+// The four classes available in this campaign. Add more here to extend the picker.
 const CLASSES = ["Fighter", "Wizard", "Rogue", "Cleric"];
-// Official D&D 5e Point Buy baseline starts at 8
+
+// D&D 5e Point Buy rule: every stat starts at 8, the minimum allowed value.
 const INITIAL_STATS = { strength: 8, dexterity: 8, constitution: 8, intelligence: 8, wisdom: 8, charisma: 8 };
 
-export default function CharacterForm() {
+interface Props {
+  // Called by the parent (page.tsx) after a successful save so it can
+  // immediately refresh the character roster without a full page reload.
+  onCharacterCreated: () => void;
+}
+
+export default function CharacterForm({ onCharacterCreated }: Props) {
   const [name, setName] = useState("");
   const [selectedClass, setSelectedClass] = useState("");
   const [stats, setStats] = useState(INITIAL_STATS);
@@ -82,6 +90,8 @@ export default function CharacterForm() {
         setSelectedClass("");
         setStats(INITIAL_STATS);
         setPointsLeft(27);
+        // Notify the parent so it can re-fetch the roster immediately.
+        onCharacterCreated();
       } else {
         setStatus("error");
         setErrorMessage(result?.error || "Failed to create character.");
