@@ -747,16 +747,15 @@ No missing dependencies. All required tools are present.
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Level-up narration timing (D-06 sequencing)**
    - What we know: `encounterResult` comes FROM Claude's response; level-up injection needs to go INTO Claude's system prompt.
-   - What's unclear: Whether the level-up note is in the same turn's narration or the next turn's.
-   - Recommendation: Store `levelUpNote` in `Game.state` after the transaction. `buildDynamicStatePrompt` reads it on the next turn and then clears it from state. This is a one-turn delay but avoids a second API call and stays within the existing prompt structure. This matches the `consecutiveMisses` pattern already in the codebase.
+   - RESOLVED: Store `levelUpNote` in `Game.state` after the transaction. `buildDynamicStatePrompt` reads it on the next turn and then clears it from state. This is a one-turn delay but avoids a second API call and stays within the existing prompt structure. This matches the `consecutiveMisses` pattern already in the codebase.
 
 2. **`character.update` when xpAwarded = 0 (non-encounter turns)**
    - What we know: Most turns will not have `encounterResult: "completed"`.
-   - Recommendation: Skip `character.update` entirely when `xpAwarded === 0` and `didLevelUp === false`. This avoids a no-op DB write on every turn.
+   - RESOLVED: Skip `character.update` entirely when `xpAwarded === 0` and `didLevelUp === false`. This avoids a no-op DB write on every turn. Conditional is explicit in Plan 02-02 Task 2.
 
 ---
 
