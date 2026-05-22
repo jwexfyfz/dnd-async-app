@@ -3,41 +3,41 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Phase 2, Plan 2 complete (02-02-PLAN.md)
-last_updated: "2026-05-22T00:07:45.000Z"
+stopped_at: Phase 2, Plan 3 complete (02-03-PLAN.md)
+last_updated: "2026-05-22T00:30:00.000Z"
 progress:
   total_phases: 4
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 8
-  completed_plans: 7
-  percent: 31
+  completed_plans: 8
+  percent: 38
 ---
 
 # Project State
 
 ## Status
 
-Phase 2 in progress. Plans 02-01 and 02-02 complete.
+Phase 2 complete. All 3 plans delivered.
 
 ## Project Reference
 
 See: .planning/PROJECT.md (updated 2026-05-21)
 
 **Core value:** A solo or small-group D&D experience that fits into a busy life.
-**Current focus:** Phase 02 — xp-system (Plan 02-03 next)
+**Current focus:** Phase 03 — Leveling (next phase)
 
 ## Active Phase
 
-Phase: 2
-Name: XP System
-Status: Executing Phase 02 — Plan 2 of 3 complete
+Phase: 3
+Name: Leveling
+Status: Not started
 
 ## Phases
 
 | # | Name | Status |
 |---|------|--------|
 | 1 | Dice Engine & Critical Bug Fixes | ✅ Complete |
-| 2 | XP System | In Progress (2/3 plans done) |
+| 2 | XP System | ✅ Complete (3/3 plans done) |
 | 3 | Leveling | not started |
 | 4 | Skills | not started |
 
@@ -50,13 +50,16 @@ Status: Executing Phase 02 — Plan 2 of 3 complete
 - encounterCompleted uses strict === "completed" equality — truthy check not used
 - tx.character.update conditional on xpAwarded > 0 || didLevelUp to avoid no-op writes
 - levelUpNote one-turn delay pattern: written to Game.state, deleted every non-level-up turn
+- XP bar value import (not type import) — xpForNextLevel and XP_THRESHOLDS used at runtime in JSX
+- within-level XP progress: (xp - XP_THRESHOLDS[level-1]) / (nextThreshold - XP_THRESHOLDS[level-1]) * 100
+- xpPct clamped to [0, 100] via Math.max/Math.min before style interpolation (T-02-09)
 
 ## Last Action
 
-2026-05-22 — Phase 2 Plan 2 complete: XP award integrated into take-turn.ts — encounterResult parsing, XP computation, tx.character.update inside transaction, levelUpNote injection, system prompt extension.
+2026-05-22 — Phase 2 Plan 3 complete: XP progress bar added to PartyTab — CharacterData extended with xp/level, lib/xp value import, slim blue bar (h-1.5 bg-blue-500) below HP bar, within-level progress calculation, human verification approved.
 
 ## Session Continuity
 
-Last session: 2026-05-22T00:07:45.000Z
-Stopped at: Phase 2, Plan 2 complete (02-02-PLAN.md)
+Last session: 2026-05-22T00:30:00.000Z
+Stopped at: Phase 2, Plan 3 complete (02-03-PLAN.md) — Phase 2 fully complete
 Resume file: None

@@ -10,7 +10,7 @@
 ## Phases
 
 - [x] **Phase 1: Dice Engine & Critical Bug Fixes** - Replace AI-invented rolls with a deterministic TypeScript engine; fix prompt injection and race condition; establish test infrastructure.
-- [ ] **Phase 2: XP System** - Players earn XP at encounter end via code; XP persists on Character; level computed from cumulative total; progress visible in UI.
+- [x] **Phase 2: XP System** - Players earn XP at encounter end via code; XP persists on Character; level computed from cumulative total; progress visible in UI.
 - [ ] **Phase 3: Leveling** - Characters auto-level when XP crosses D&D Basic Rules thresholds (levels 1–5); max HP and proficiency bonus update per class hit die; Claude locked out of HP/XP/level via stateDeltas allowlist.
 - [ ] **Phase 4: Skills** - Characters have skill proficiencies; skill checks resolve via code (d20 + ability mod + proficiency bonus if applicable) and feed results to Claude for narration.
 
@@ -49,12 +49,12 @@ Plans:
 3. The character status panel displays current XP, current level, and XP remaining to the next level without a page reload after a turn completes.
 4. Unit tests for `computeLevel` pass at all 10 boundary values (0, 299, 300, 301, 899, 900, 2699, 2700, 6499, 6500).
 5. XP awarded to a character persists when they join a new game — it is stored on `Character`, not inside the `Game.state` blob.
-**Plans:** 2/3 plans executed
+**Plans:** 3/3 plans complete
 
 Plans:
 - [x] 02-01-PLAN.md — Schema (xp/level on Character + db:push) + lib/xp.ts engine + lib/xp.test.ts unit tests
 - [x] 02-02-PLAN.md — take-turn.ts integration: encounterResult parsing, XP award in $transaction, levelUpNote prompt injection
-- [ ] 02-03-PLAN.md — Party tab XP bar UI: CharacterData extension + XP progress bar in PartyTab
+- [x] 02-03-PLAN.md — Party tab XP bar UI: CharacterData extension + XP progress bar in PartyTab
 
 ### Phase 3: Leveling
 **Goal:** Characters automatically level from 1 to 5 as XP thresholds are crossed; max HP increases by the correct class hit die average plus CON modifier at each level; the proficiency bonus updates at level 5; Claude cannot write HP, XP, or level values through stateDeltas.
@@ -90,6 +90,6 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Dice Engine & Critical Bug Fixes | 5/5 | Complete | 2026-05-22 |
-| 2. XP System | 2/3 | In Progress|  |
+| 2. XP System | 3/3 | Complete | 2026-05-22 |
 | 3. Leveling | 0/? | Not started | - |
 | 4. Skills | 0/? | Not started | - |
