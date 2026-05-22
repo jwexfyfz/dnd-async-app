@@ -26,7 +26,7 @@ A solo or small-group D&D experience that fits into a busy life — drop in for 
 - [ ] Dice engine — pure TypeScript `rollD20()`, `rollDice()`, modifier application; replaces AI-invented rolls
 - [ ] Server-side prompt injection fix in `take-turn.ts` — sanitize `chipText` input
 - [ ] DB transaction on turn state mutation — prevent race conditions on concurrent turn submissions
-- [ ] XP system — grant experience at encounter end, track totals on `Character`, display progress
+- ✓ XP system — grant experience at encounter end, track totals on `Character`, display progress — Validated in Phase 02: xp-system
 - [ ] Leveling — auto-level-up when XP crosses D&D Basic Rules threshold (levels 1–5); recalculate proficiency bonus and max HP
 - [ ] Skill proficiency tracking — store which skills a character is proficient in; apply to d20 checks
 - [ ] In-game skill checks — parse player intent → identify relevant skill → roll d20 + ability modifier + proficiency bonus if applicable
@@ -85,4 +85,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-21 after initialization*
+*Last updated: 2026-05-22 after Phase 02 (XP System) completion*
