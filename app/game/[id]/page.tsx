@@ -10,6 +10,7 @@ import { initializeGame } from "../../actions/initialize-game";
 import MapRenderer, { type MapData, type PartyMarker } from "../../../components/map-renderer";
 import { classEmoji } from "../../../lib/class-emoji";
 import type { D20Result } from "../../../lib/dice";
+import { xpForNextLevel, XP_THRESHOLDS } from "../../../lib/xp";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -38,6 +39,8 @@ interface CharacterData {
   intelligence:   number;
   wisdom:         number;
   charisma:       number;
+  xp:             number;
+  level:          number;
 }
 
 interface PartyMemberData {
