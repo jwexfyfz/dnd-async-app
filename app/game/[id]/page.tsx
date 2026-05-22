@@ -29,6 +29,14 @@ interface GameState {
   partyMaxHp?:     Record<string, number>;
 }
 
+interface LevelUpResult {
+  oldLevel:         number;
+  newLevel:         number;
+  oldMaxHp:         number;
+  newMaxHp:         number;
+  proficiencyBonus: number;
+}
+
 interface CharacterData {
   id:             string;
   name:           string;
@@ -125,6 +133,7 @@ export default function GamePage() {
   const [isInitializing, setIsInitializing] = useState(false);
   const [isTakingTurn,   setIsTakingTurn]   = useState(false);
   const [diceResult,     setDiceResult]     = useState<D20Result | null>(null);
+  const [levelUpResult, setLevelUpResult] = useState<LevelUpResult | null>(null);
   const [turnError,      setTurnError]      = useState<string | null>(null);
 
   const initCalledRef = useRef(false);
@@ -189,6 +198,7 @@ export default function GamePage() {
     if (isTakingTurn || isInitializing || !localState) return;
     setIsTakingTurn(true);
     setDiceResult(null);
+    setLevelUpResult(null);
     setTurnError(null);
 
     const playerMsg: MessageData = {
@@ -211,6 +221,7 @@ export default function GamePage() {
       }]);
       if (result.newState) setLocalState(result.newState as unknown as GameState);
       setDiceResult(result.diceResult ?? null);
+      setLevelUpResult(result.levelUpResult ?? null);
 
       // Re-fetch to get the updated currentTurnCharacterId.
       getGame(gameId).then((res) => {
@@ -221,6 +232,7 @@ export default function GamePage() {
     } else {
       setLocalMessages((prev) => prev.filter((m) => m.id !== playerMsg.id));
       setDiceResult(null);
+      setLevelUpResult(null);
       const msg = result.error === "STALE_TURN"
         ? "Another action was submitted first — please try again."
         : result.error === "It's not your turn."
@@ -342,6 +354,7 @@ export default function GamePage() {
             isTakingTurn={isTakingTurn}
             chipsEnabled={!isPartyGame || isMyTurn}
             diceResult={diceResult}
+            levelUpResult={levelUpResult}
             turnError={turnError}
           />
         )}
@@ -364,7 +377,7 @@ export default function GamePage() {
 
 function FieldTab({
   state, map, storyPrompt, messages, chips, partyMarkers,
-  onChipClick, isInitializing, isTakingTurn, chipsEnabled, diceResult, turnError,
+  onChipClick, isInitializing, isTakingTurn, chipsEnabled, diceResult, levelUpResult, turnError,
 }: {
   state:          GameState;
   map:            { name: string; data: MapData };
@@ -377,6 +390,7 @@ function FieldTab({
   isTakingTurn:   boolean;
   chipsEnabled:   boolean;
   diceResult?:    D20Result | null;
+  levelUpResult?: LevelUpResult | null;
   turnError?:     string | null;
 }) {
   const lastDm        = [...messages].reverse().find((m) => m.role === "DUNGEON_MASTER");
@@ -410,6 +424,9 @@ function FieldTab({
             )}
             {!isTakingTurn && diceResult && (
               <DiceCard result={diceResult} />
+            )}
+            {!isTakingTurn && levelUpResult && (
+              <LevelUpCard result={levelUpResult} />
             )}
             {isInitializing ? (
               <p className="text-sm text-slate-400 italic animate-pulse">
@@ -500,6 +517,28 @@ function DiceCard({ result }: { result: D20Result }) {
       </span>
       <span className="text-slate-400">vs {result.dcType} {result.dc}</span>
       <span className={outcomeColor}>{outcomeText}</span>
+    </div>
+  );
+}
+
+// ─── Level-up card ────────────────────────────────────────────────────────────
+
+function LevelUpCard({ result }: { result: LevelUpResult }) {
+  const profChanged = result.newLevel === 5;
+  return (
+    <div className="flex items-center gap-2 bg-indigo-50 border border-indigo-200 rounded-lg px-3 py-2 text-sm">
+      <span className="text-base">⬆</span>
+      <span className="font-semibold text-indigo-700">
+        Level {result.oldLevel} → {result.newLevel}
+      </span>
+      <span className="text-slate-500">
+        Max HP: {result.oldMaxHp} → {result.newMaxHp}
+      </span>
+      {profChanged && (
+        <span className="text-slate-500">
+          Proficiency Bonus: +{result.proficiencyBonus}
+        </span>
+      )}
     </div>
   );
 }
