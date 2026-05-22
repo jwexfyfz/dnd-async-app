@@ -73,9 +73,11 @@ Always reply with a single JSON object — no markdown fences, no extra text.
     // "activeObjective": "..." (if the objective changed)
     // "npcsEncountered": [{name, disposition, note}]
   },
-  "chips": ["Short action 1", "Short action 2", "Short action 3", "Short action 4"]
+  "chips": ["Short action 1", "Short action 2", "Short action 3", "Short action 4"],
+  "encounterResult": "completed" | null
 }
 chips: 3–5 options, each under 6 words. Situationally specific to what just happened.
+encounterResult: set to "completed" ONLY when a combat encounter fully resolves this turn — enemy defeated, fled, or room cleared. Set to null on all other turns including exploration, dialogue, and non-combat actions. Do not set "completed" for partial victories or ongoing combat.
 
 DICE RULES — YOU MUST FOLLOW THESE EXACTLY
 The DICE RESULT in your context is code-generated and final. You MUST narrate around it — never contradict, alter, or invent a different outcome. The roll is a mechanical fact.`;
@@ -134,7 +136,11 @@ consecutiveMisses: ${consecutiveMisses}`;
     ? `\nNARRATION DIRECTIVE: After ${consecutiveMisses} consecutive misses, engineer a dramatic opening before the player's action — enemy stumbles, environment intervenes, or an NPC assists. Do not alter the roll outcome.`
     : "";
 
-  return `${stateSection}${diceSection}${missDirective}`;
+  const levelUpDirective = gameState.levelUpNote
+    ? `\n\nLEVEL UP: ${gameState.levelUpNote} Weave this advancement into your narration as a dramatic, triumphant moment.`
+    : "";
+
+  return `${stateSection}${diceSection}${missDirective}${levelUpDirective}`;
 }
 
 function buildConversationMessages(
