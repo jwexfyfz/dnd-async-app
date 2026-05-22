@@ -78,7 +78,7 @@ Plans:
 4. A Claude response that includes `hp`, `maxHp`, `xp`, or `level` in its `stateDeltas` payload is rejected; the rules engine applies no change for those keys.
 5. Unit tests cover `maxHpAtLevel` for all 4 classes at levels 1–5 with CON modifiers of −2, 0, and +3.
 
-**Plans:** 1/4 plans executed
+**Plans:** 3/4 plans executed
 
 Plans:
 **Wave 1**
@@ -87,8 +87,8 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 03-02-PLAN.md — Character creation + adventure start wire-up: maxHpAtLevel on create, read canonical maxHp on adventure start (LVL-03)
-- [ ] 03-03-PLAN.md — take-turn.ts $transaction extension: atomic maxHp update + levelUpResult return shape + LVL-04 allowlist verification + multi-level-up test (LVL-02, LVL-04, LVL-05)
+- [x] 03-02-PLAN.md — Character creation + adventure start wire-up: maxHpAtLevel on create, read canonical maxHp on adventure start (LVL-03)
+- [x] 03-03-PLAN.md — take-turn.ts $transaction extension: atomic maxHp update + levelUpResult return shape + LVL-04 allowlist verification + multi-level-up test (LVL-02, LVL-04, LVL-05)
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -119,5 +119,5 @@ Plans:
 |-------|----------------|--------|-----------|
 | 1. Dice Engine & Critical Bug Fixes | 5/5 | Complete | 2026-05-22 |
 | 2. XP System | 3/3 | Complete | 2026-05-22 |
-| 3. Leveling | 1/4 | In Progress|  |
+| 3. Leveling | 3/4 | In Progress|  |
 | 4. Skills | 0/? | Not started | - |
