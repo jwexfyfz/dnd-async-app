@@ -29,7 +29,14 @@
 3. Submitting a `chipText` value containing injection patterns (e.g., `SYSTEM:`, backticks) does not alter the system prompt; the input is sanitized before use.
 4. Two concurrent turn submissions for the same game return one success and one `STALE_TURN` error — the database state reflects exactly one mutation.
 5. The `rollD20Check` function returns an audit-trail object `{ roll, modifier, total, dc, success }` verifiable in test output at DC boundary conditions.
-**Plans:** TBD
+**Plans:** 5 plans
+
+Plans:
+- [ ] 01-01-PLAN.md — Vitest install and configuration
+- [ ] 01-02-PLAN.md — lib/dice.ts engine + lib/dice.test.ts unit tests
+- [ ] 01-03-PLAN.md — [BLOCKING] Schema migration: Game.version column
+- [ ] 01-04-PLAN.md — take-turn.ts refactor: sanitization + $transaction + dice integration
+- [ ] 01-05-PLAN.md — Dice card UI in FieldTab
 
 ### Phase 2: XP System
 **Goal:** Players earn experience points at encounter end through code-owned logic; XP accumulates on the Character record across games; level is derived from cumulative XP; the game UI surfaces current XP, level, and progress to next level.
@@ -77,7 +84,7 @@
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Dice Engine & Critical Bug Fixes | 0/? | Not started | - |
+| 1. Dice Engine & Critical Bug Fixes | 0/5 | Not started | - |
 | 2. XP System | 0/? | Not started | - |
 | 3. Leveling | 0/? | Not started | - |
 | 4. Skills | 0/? | Not started | - |
