@@ -11,6 +11,7 @@ import { DM_MODEL, DM_MAX_TOKENS, ROLLING_WINDOW_SIZE } from "../../lib/ai-confi
 import { rollD20Check, abilityModifier } from "../../lib/dice";
 import type { D20Result } from "../../lib/dice";
 import { computeLevel, XP_BY_DIFFICULTY } from "../../lib/xp";
+import { maxHpAtLevel, proficiencyBonus } from "../../lib/leveling";
 
 // ─── Input sanitization ───────────────────────────────────────────────────────
 
@@ -163,15 +164,24 @@ function buildConversationMessages(
 
 // ─── Action ───────────────────────────────────────────────────────────────────
 
+interface LevelUpResult {
+  oldLevel:         number;
+  newLevel:         number;
+  oldMaxHp:         number;
+  newMaxHp:         number;
+  proficiencyBonus: number;
+}
+
 interface TurnResult {
-  success:     boolean;
-  narrative?:  string;
-  chips?:      string[];
-  newState?:   Record<string, unknown>;
-  error?:      string;
-  diceResult?: D20Result;
-  leveledUp?:  boolean;   // true if the character leveled up this turn
-  newLevel?:   number;    // the new level value if leveledUp is true
+  success:       boolean;
+  narrative?:    string;
+  chips?:        string[];
+  newState?:     Record<string, unknown>;
+  error?:        string;
+  diceResult?:   D20Result;
+  leveledUp?:    boolean;          // true if the character leveled up this turn
+  newLevel?:     number;           // the new level value if leveledUp is true
+  levelUpResult?: LevelUpResult;   // full level-up payload; undefined when no level-up occurred
 }
 
 export async function takeTurn(gameId: string, chipText: string): Promise<TurnResult> {
@@ -332,9 +342,12 @@ export async function takeTurn(gameId: string, chipText: string): Promise<TurnRe
         data:  { state: newState, currentTurnCharacterId: nextCharId, version: { increment: 1 } },
       });
       if (xpAwarded > 0 || didLevelUp) {
+        const newMaxHp = didLevelUp
+          ? maxHpAtLevel(currentCharacter.characterClass, currentCharacter.constitution, newLevel)
+          : currentCharacter.maxHp;
         await tx.character.update({
           where: { id: currentCharId },
-          data:  { xp: currentXp, level: newLevel },
+          data:  { xp: currentXp, level: newLevel, maxHp: newMaxHp },
         });
       }
     });
@@ -345,5 +358,20 @@ export async function takeTurn(gameId: string, chipText: string): Promise<TurnRe
     throw err;
   }
 
-  return { success: true, narrative: parsed.narrative, chips: parsed.chips, newState, diceResult, leveledUp: didLevelUp, newLevel: didLevelUp ? newLevel : undefined };
+  return {
+    success:   true,
+    narrative: parsed.narrative,
+    chips:     parsed.chips,
+    newState,
+    diceResult,
+    leveledUp: didLevelUp,
+    newLevel:  didLevelUp ? newLevel : undefined,
+    levelUpResult: didLevelUp ? {
+      oldLevel:         previousLevel,
+      newLevel,
+      oldMaxHp:         currentCharacter.maxHp,
+      newMaxHp:         maxHpAtLevel(currentCharacter.characterClass, currentCharacter.constitution, newLevel),
+      proficiencyBonus: proficiencyBonus(newLevel),
+    } : undefined,
+  };
 }

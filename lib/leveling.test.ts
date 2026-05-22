@@ -273,6 +273,30 @@ describe('maxHpAtLevel Wizard CON 16 (mod +3)', () => {
   })
 })
 
+// ─── maxHpAtLevel — LVL-02 multi-level-up path (integration) ─────────────────
+// Proves the total-HP function gives the correct cumulative result for multi-level
+// jumps (LVL-02 + LVL-05). The delta between level-5 and level-1 must equal
+// exactly 4 × (avg + conMod), matching stepwise per-level math.
+
+describe('maxHpAtLevel multi-level-up path (LVL-02)', () => {
+  it('Fighter CON 14: level 1 (12) → level 5 (44) — total delta 32 = 4 × (avg 6 + con mod 2)', () => {
+    expect(maxHpAtLevel('Fighter', 14, 1)).toBe(12)
+    expect(maxHpAtLevel('Fighter', 14, 5)).toBe(44)
+    expect(maxHpAtLevel('Fighter', 14, 5) - maxHpAtLevel('Fighter', 14, 1)).toBe(32)
+  })
+
+  it('Wizard CON 8: level 1 (5) → level 5 (17) — total delta 12 = 4 × (avg 4 + con mod -1)', () => {
+    expect(maxHpAtLevel('Wizard', 8, 1)).toBe(5)
+    expect(maxHpAtLevel('Wizard', 8, 5)).toBe(17)
+    expect(maxHpAtLevel('Wizard', 8, 5) - maxHpAtLevel('Wizard', 8, 1)).toBe(12)
+  })
+
+  it('Rogue CON 10 multi-level parity: total delta is the per-level increment times the level count', () => {
+    expect(maxHpAtLevel('Rogue', 10, 5)).toBe(28)
+    expect(maxHpAtLevel('Rogue', 10, 5) - maxHpAtLevel('Rogue', 10, 1)).toBe(20)   // 4 × (avg 5 + conMod 0)
+  })
+})
+
 // ─── maxHpAtLevel — LVL-02 multi-level-up consistency ────────────────────────
 
 describe('maxHpAtLevel multi-level-up consistency (LVL-02)', () => {
