@@ -49,11 +49,11 @@ Plans:
 3. The character status panel displays current XP, current level, and XP remaining to the next level without a page reload after a turn completes.
 4. Unit tests for `computeLevel` pass at all 10 boundary values (0, 299, 300, 301, 899, 900, 2699, 2700, 6499, 6500).
 5. XP awarded to a character persists when they join a new game — it is stored on `Character`, not inside the `Game.state` blob.
-**Plans:** 1/3 plans executed
+**Plans:** 2/3 plans executed
 
 Plans:
 - [x] 02-01-PLAN.md — Schema (xp/level on Character + db:push) + lib/xp.ts engine + lib/xp.test.ts unit tests
-- [ ] 02-02-PLAN.md — take-turn.ts integration: encounterResult parsing, XP award in $transaction, levelUpNote prompt injection
+- [x] 02-02-PLAN.md — take-turn.ts integration: encounterResult parsing, XP award in $transaction, levelUpNote prompt injection
 - [ ] 02-03-PLAN.md — Party tab XP bar UI: CharacterData extension + XP progress bar in PartyTab
 
 ### Phase 3: Leveling
@@ -90,6 +90,6 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Dice Engine & Critical Bug Fixes | 5/5 | Complete | 2026-05-22 |
-| 2. XP System | 1/3 | In Progress|  |
+| 2. XP System | 2/3 | In Progress|  |
 | 3. Leveling | 0/? | Not started | - |
 | 4. Skills | 0/? | Not started | - |

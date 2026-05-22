@@ -25,7 +25,7 @@
 
 - [x] **XP-01**: Prisma migration adds `xp Int @default(0)` and `level Int @default(1)` columns to the `Character` model; migration is applied cleanly after baselining the existing pushed schema
 - [x] **XP-02**: `lib/xp.ts` exports `XP_THRESHOLDS` (cumulative table: 0/300/900/2700/6500), `computeLevel(xp: number): number`, `xpForNextLevel(level: number): number | null` (null at level cap)
-- [ ] **XP-03**: At encounter end, `take-turn.ts` awards XP from code (not Claude); XP is added to `character.xp` inside the transaction; `computeLevel()` is called and if level increased, the new level is written to `character.level`
+- [x] **XP-03**: At encounter end, `take-turn.ts` awards XP from code (not Claude); XP is added to `character.xp` inside the transaction; `computeLevel()` is called and if level increased, the new level is written to `character.level`
 - [ ] **XP-04**: Game UI displays current XP, current level, and XP remaining to next level on the character status panel
 
 **Tests (XP phase):**
