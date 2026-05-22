@@ -73,6 +73,26 @@ const mineMap = {
   ],
 };
 
+// Small 6×4 arena: one open room, no doors, nowhere to hide.
+// Every turn is a fight — perfect for testing level-up without navigating story.
+const arenaMap = {
+  width: 6,
+  height: 4,
+  tiles: [
+    ["W","W","W","W","W","W"],
+    ["W","F","F","F","F","W"],
+    ["W","F","F","F","F","W"],
+    ["W","W","W","W","W","W"],
+  ],
+  playerStart: { x: 1, y: 1 },
+  rooms: [
+    { name: "Proving Grounds", description: "Sand. Blood. An endless stream of challengers." },
+  ],
+  pois: [
+    { id: "gate", name: "Iron Gate", x: 4, y: 2, symbol: "G" },
+  ],
+};
+
 // ─── Seed ─────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -115,7 +135,28 @@ async function main() {
     },
   });
 
-  console.log("Done. 2 maps, 2 story prompts seeded.");
+  const arena = await prisma.map.upsert({
+    where:  { name: "Proving Grounds Arena" },
+    update: { data: arenaMap },
+    create: { name: "Proving Grounds Arena", data: arenaMap },
+  });
+
+  await prisma.storyPrompt.upsert({
+    where:  { title: "The Proving Grounds" },
+    update: {},
+    create: {
+      title:      "The Proving Grounds",
+      // Heavy-combat description: Claude reads this in the system prompt and
+      // treats every player action as triggering an immediate enemy attack.
+      // Each exchange ends with a defeated enemy so encounterResult fires fast.
+      description:
+        "You are locked in a gladiatorial proving grounds. Wave after wave of enemies floods the arena. There is no story here — only combat. IMPORTANT DUNGEON MASTER RULES FOR THIS SCENARIO: (1) Begin combat immediately on the very first turn. (2) Every player action results in a fight with one enemy. (3) Resolve each fight completely within 1-2 turns — the enemy is defeated quickly. (4) Set encounterResult to 'completed' as soon as the enemy falls. (5) Immediately spawn a new enemy for the next turn. Keep the player in constant back-to-back combat with no downtime.",
+      difficulty: "Veteran",
+      mapId:      arena.id,
+    },
+  });
+
+  console.log("Done. 3 maps, 3 story prompts seeded.");
 }
 
 main()

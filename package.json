@@ -11,6 +11,7 @@
     "db:push": "prisma db push",
     "db:seed": "node prisma/seed.mjs",
     "db:backfill-maxhp": "node prisma/seed-backfill-maxhp.mjs",
+    "db:boost-xp": "node prisma/dev-boost-xp.mjs",
     "test": "vitest",
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage"
