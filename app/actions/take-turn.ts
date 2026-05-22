@@ -4,6 +4,33 @@ import Anthropic from "@anthropic-ai/sdk";
 import { prisma } from "../../lib/prisma";
 import { createSupabaseServerClient } from "../../lib/supabase-server";
 import { DM_MODEL, DM_MAX_TOKENS, ROLLING_WINDOW_SIZE } from "../../lib/ai-config";
+import { rollD20Check, abilityModifier } from "../../lib/dice";
+import type { D20Result } from "../../lib/dice";
+
+// ─── Input sanitization ───────────────────────────────────────────────────────
+
+function sanitizeChipText(raw: string): string {
+  let s = raw.slice(0, 200);
+  s = s.replace(/[\r\n]+/g, " ");
+  s = s.replace(/SYSTEM:|ASSISTANT:|USER:/gi, "");
+  s = s.replace(/`/g, "");
+  s = s.replace(/ignore previous/gi, "");
+  return s.trim();
+}
+
+// ─── Action type detection ────────────────────────────────────────────────────
+
+function detectActionType(
+  sanitizedAction: string,
+  gameState: Record<string, unknown>,
+): { dcType: "AC" | "DC"; dc: number } {
+  const lower = sanitizedAction.toLowerCase();
+  const attackKeywords = ["attack", "strike", "hit", "shoot", "stab", "slash", "smash", "fire"];
+  if (attackKeywords.some((kw) => lower.includes(kw))) {
+    return { dcType: "AC", dc: (gameState.targetAC as number | undefined) ?? 14 };
+  }
+  return { dcType: "DC", dc: 12 };
+}
 
 // ─── Prompt builders ──────────────────────────────────────────────────────────
 
@@ -11,7 +38,6 @@ function buildStaticPrompt(character: any, allMembers: any[], storyPrompt: any, 
   const rooms = mapData.rooms?.map((r: any) => `${r.name}: ${r.description}`).join(" | ") ?? "—";
   const pois  = mapData.pois?.map((p: any) => `${p.name} [${p.symbol}] at (${p.x},${p.y})`).join(", ") ?? "—";
 
-  // Describe all party members so the DM can reference them by name.
   const partyLines = allMembers.length > 1
     ? allMembers.map((m: any) =>
         `  ${m.character.name} (${m.character.characterClass}): STR${m.character.strength} DEX${m.character.dexterity} CON${m.character.constitution} INT${m.character.intelligence} WIS${m.character.wisdom} CHA${m.character.charisma}`
@@ -36,7 +62,6 @@ Always reply with a single JSON object — no markdown fences, no extra text.
   "narrative": "2–4 sentences. Vivid, present tense. Address the active character by name.",
   "stateDeltas": {
     // Only include fields that changed this turn. Omit everything else.
-    // "hp": 15               (active character's new HP)
     // "playerPos": {x,y}    (active character's new position)
     // "inventory": [...]     (full updated shared inventory)
     // "plotFlags": [...]     (full updated list)
@@ -45,19 +70,25 @@ Always reply with a single JSON object — no markdown fences, no extra text.
   },
   "chips": ["Short action 1", "Short action 2", "Short action 3", "Short action 4"]
 }
-chips: 3–5 options, each under 6 words. Situationally specific to what just happened.`;
+chips: 3–5 options, each under 6 words. Situationally specific to what just happened.
+
+DICE RULES — YOU MUST FOLLOW THESE EXACTLY
+The DICE RESULT in your context is code-generated and final. You MUST narrate around it — never contradict, alter, or invent a different outcome. The roll is a mechanical fact.`;
 }
 
 function buildDynamicStatePrompt(
   gameState: any,
   partyMembers: any[],
   currentCharId: string,
+  diceResult: D20Result,
+  consecutiveMisses: number,
 ): string {
   const inv   = gameState.inventory?.length ? gameState.inventory.join(", ") : "empty";
   const flags = gameState.plotFlags?.length ? gameState.plotFlags.join(", ") : "none";
 
+  let stateSection: string;
+
   if (partyMembers.length > 1 && gameState.partyHp) {
-    // Party game — describe each member's current status.
     const memberLines = partyMembers
       .map((m: any) => {
         const hp    = gameState.partyHp?.[m.characterId] ?? "?";
@@ -68,15 +99,13 @@ function buildDynamicStatePrompt(
       })
       .join("\n");
 
-    return `PARTY STATE (→ = active character this turn)
+    stateSection = `PARTY STATE (→ = active character this turn)
 ${memberLines}
 Shared inventory: ${inv}
 Objective: ${gameState.activeObjective}
 Plot flags: ${flags}`;
-  }
-
-  // Solo / legacy game.
-  return `CURRENT STATE
+  } else {
+    stateSection = `CURRENT STATE
 Position: (${gameState.playerPos?.x ?? 0}, ${gameState.playerPos?.y ?? 0})
 HP: ${gameState.hp}/${gameState.maxHp}
 Inventory: ${inv}
@@ -84,6 +113,23 @@ Weapon: ${gameState.equipped?.weapon ?? "none"} | Armor: ${gameState.equipped?.a
 Objective: ${gameState.activeObjective}
 Plot flags: ${flags}
 NPCs met: ${gameState.npcsEncountered?.map((n: any) => `${n.name} (${n.disposition})`).join(", ") ?? "none"}`;
+  }
+
+  const outcomeLabel = diceResult.dcType === "AC"
+    ? (diceResult.success ? "HIT" : "MISS")
+    : (diceResult.success ? "SUCCESS" : "FAILURE");
+  const critNote = diceResult.critical ? " (CRITICAL HIT)" : diceResult.fumble ? " (FUMBLE)" : "";
+
+  const diceSection = `
+DICE RESULT
+Roll: ${diceResult.roll} + ${diceResult.modifier} = ${diceResult.total} vs ${diceResult.dcType} ${diceResult.dc} — ${outcomeLabel}${critNote}
+consecutiveMisses: ${consecutiveMisses}`;
+
+  const missDirective = consecutiveMisses >= 3
+    ? `\nNARRATION DIRECTIVE: After ${consecutiveMisses} consecutive misses, engineer a dramatic opening before the player's action — enemy stumbles, environment intervenes, or an NPC assists. Do not alter the roll outcome.`
+    : "";
+
+  return `${stateSection}${diceSection}${missDirective}`;
 }
 
 function buildConversationMessages(
@@ -107,14 +153,17 @@ function buildConversationMessages(
 // ─── Action ───────────────────────────────────────────────────────────────────
 
 interface TurnResult {
-  success:   boolean;
-  narrative?: string;
-  chips?:     string[];
-  newState?:  Record<string, unknown>;
-  error?:     string;
+  success:     boolean;
+  narrative?:  string;
+  chips?:      string[];
+  newState?:   Record<string, unknown>;
+  error?:      string;
+  diceResult?: D20Result;
 }
 
 export async function takeTurn(gameId: string, chipText: string): Promise<TurnResult> {
+  const sanitizedAction = sanitizeChipText(chipText);
+
   const supabase = await createSupabaseServerClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { success: false, error: "Not authenticated." };
@@ -146,16 +195,28 @@ export async function takeTurn(gameId: string, chipText: string): Promise<TurnRe
     return { success: false, error: "Access denied." };
   }
 
-  const currentCharId = callerMember?.characterId ?? game.characterId;
+  const currentCharId   = callerMember?.characterId ?? game.characterId;
+  const expectedVersion = game.version;
 
   await prisma.message.create({
-    data: { gameId, role: "PLAYER", content: chipText },
+    data: { gameId, role: "PLAYER", content: sanitizedAction },
   });
 
-  const contextWindow = game.messages.slice(-ROLLING_WINDOW_SIZE);
-  const client        = new Anthropic();
-  const gameState     = game.state as Record<string, any>;
-  const mapData       = game.map.data as Record<string, any>;
+  const contextWindow     = game.messages.slice(-ROLLING_WINDOW_SIZE);
+  const client            = new Anthropic();
+  const gameState         = game.state as Record<string, any>;
+  const mapData           = game.map.data as Record<string, any>;
+  const currentCharacter  = callerMember ? callerMember.character : game.character;
+
+  // Compute dice roll before the Claude narration call (D-06: code owns all rolls).
+  const { dcType, dc } = detectActionType(sanitizedAction, gameState);
+  const relevantScore  = dcType === "AC" ? currentCharacter.strength : currentCharacter.wisdom;
+  const modifier       = abilityModifier(relevantScore);
+  const diceResult     = rollD20Check(modifier, dc, dcType);
+
+  // Track consecutiveMisses in gameState.
+  const prevMisses      = (gameState.consecutiveMisses as number | undefined) ?? 0;
+  const consecutiveMisses = diceResult.success ? 0 : prevMisses + 1;
 
   let response;
   try {
@@ -170,10 +231,10 @@ export async function takeTurn(gameId: string, chipText: string): Promise<TurnRe
         },
         {
           type: "text",
-          text: buildDynamicStatePrompt(gameState, game.partyMembers, currentCharId),
+          text: buildDynamicStatePrompt(gameState, game.partyMembers, currentCharId, diceResult, consecutiveMisses),
         },
       ],
-      messages: buildConversationMessages(contextWindow, chipText),
+      messages: buildConversationMessages(contextWindow, sanitizedAction),
     });
   } catch (err: any) {
     console.error("AI DM error:", err.message);
@@ -196,9 +257,8 @@ export async function takeTurn(gameId: string, chipText: string): Promise<TurnRe
     };
   }
 
-  // Apply stateDeltas. For party games, route per-character fields (hp,
-  // playerPos) into the party-scoped maps rather than overwriting global state.
-  const newState: Record<string, any> = { ...gameState };
+  // Apply stateDeltas. For party games, route per-character fields into party-scoped maps.
+  const newState: Record<string, any> = { ...gameState, consecutiveMisses };
   const deltas = { ...parsed.stateDeltas };
 
   if (game.partyMembers.length > 1 && newState.partyHp) {
@@ -211,26 +271,43 @@ export async function takeTurn(gameId: string, chipText: string): Promise<TurnRe
       delete deltas.playerPos;
     }
   }
+
+  // Strip keys the rules engine owns exclusively — Claude cannot override mechanical values (H7).
+  const RULES_ENGINE_KEYS = ["hp", "maxHp", "xp", "level", "proficiencyBonus"] as const;
+  for (const key of RULES_ENGINE_KEYS) {
+    delete deltas[key];
+  }
+
   Object.assign(newState, deltas);
 
   // Advance to the next party member in turn order.
   let nextCharId = currentCharId;
   if (game.partyMembers.length > 1) {
-    const sorted    = [...game.partyMembers].sort((a, b) => a.turnOrder - b.turnOrder);
-    const curIdx    = sorted.findIndex((m) => m.characterId === currentCharId);
-    const nextIdx   = (curIdx + 1) % sorted.length;
-    nextCharId      = sorted[nextIdx].characterId;
+    const sorted  = [...game.partyMembers].sort((a, b) => a.turnOrder - b.turnOrder);
+    const curIdx  = sorted.findIndex((m) => m.characterId === currentCharId);
+    const nextIdx = (curIdx + 1) % sorted.length;
+    nextCharId    = sorted[nextIdx].characterId;
   }
 
-  await Promise.all([
-    prisma.message.create({
-      data: { gameId, role: "DUNGEON_MASTER", content: parsed.narrative, chips: parsed.chips },
-    }),
-    prisma.game.update({
-      where: { id: gameId },
-      data:  { state: newState, currentTurnCharacterId: nextCharId },
-    }),
-  ]);
+  // Atomic write with optimistic lock — concurrent submissions return STALE_TURN.
+  try {
+    await prisma.$transaction(async (tx) => {
+      const current = await tx.game.findUnique({ where: { id: gameId }, select: { version: true } });
+      if (!current || current.version !== expectedVersion) throw new Error("STALE_TURN");
+      await tx.message.create({
+        data: { gameId, role: "DUNGEON_MASTER", content: parsed.narrative, chips: parsed.chips },
+      });
+      await tx.game.update({
+        where: { id: gameId },
+        data:  { state: newState, currentTurnCharacterId: nextCharId, version: { increment: 1 } },
+      });
+    });
+  } catch (err: any) {
+    if (err.message === "STALE_TURN") {
+      return { success: false, error: "STALE_TURN" };
+    }
+    throw err;
+  }
 
-  return { success: true, narrative: parsed.narrative, chips: parsed.chips, newState };
+  return { success: true, narrative: parsed.narrative, chips: parsed.chips, newState, diceResult };
 }
