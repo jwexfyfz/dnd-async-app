@@ -86,6 +86,8 @@ model Game {
   // Party games: extends with { partyPositions, partyHp, partyMaxHp }
   state Json
 
+  version Int @default(0) // optimistic lock counter — increment on every state write
+
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
   messages     Message[]
