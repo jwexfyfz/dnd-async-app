@@ -34,6 +34,7 @@ model Character {
   charisma     Int @default(8)
   xp           Int @default(0)
   level        Int @default(1)
+  maxHp        Int @default(10)
 
   games            Game[]
   partyMemberships PartyMember[]
