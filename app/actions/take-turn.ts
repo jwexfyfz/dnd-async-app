@@ -264,6 +264,16 @@ export async function takeTurn(gameId: string, chipText: string): Promise<TurnRe
     };
   }
 
+  // ─── XP Award ─────────────────────────────────────────────────────────────
+  const encounterCompleted = parsed.encounterResult === "completed";
+  const xpAwarded = encounterCompleted
+    ? (XP_BY_DIFFICULTY[game.storyPrompt.difficulty] ?? 0)
+    : 0;
+  const currentXp     = (currentCharacter.xp ?? 0) + xpAwarded;
+  const previousLevel  = currentCharacter.level ?? 1;
+  const newLevel       = computeLevel(currentXp);
+  const didLevelUp     = newLevel > previousLevel;
+
   // Apply stateDeltas. For party games, route per-character fields into party-scoped maps.
   const newState: Record<string, any> = { ...gameState, consecutiveMisses };
   const deltas = { ...parsed.stateDeltas };
@@ -287,6 +297,13 @@ export async function takeTurn(gameId: string, chipText: string): Promise<TurnRe
 
   Object.assign(newState, deltas);
 
+  // Level-up narration injection (one-turn delay: stored now, read by next call to buildDynamicStatePrompt)
+  if (didLevelUp) {
+    newState.levelUpNote = `${currentCharacter.name} advanced to Level ${newLevel} this turn.`;
+  } else {
+    delete newState.levelUpNote;
+  }
+
   // Advance to the next party member in turn order.
   let nextCharId = currentCharId;
   if (game.partyMembers.length > 1) {
@@ -308,6 +325,12 @@ export async function takeTurn(gameId: string, chipText: string): Promise<TurnRe
         where: { id: gameId },
         data:  { state: newState, currentTurnCharacterId: nextCharId, version: { increment: 1 } },
       });
+      if (xpAwarded > 0 || didLevelUp) {
+        await tx.character.update({
+          where: { id: currentCharId },
+          data:  { xp: currentXp, level: newLevel },
+        });
+      }
     });
   } catch (err: any) {
     if (err.message === "STALE_TURN") {
@@ -316,5 +339,5 @@ export async function takeTurn(gameId: string, chipText: string): Promise<TurnRe
     throw err;
   }
 
-  return { success: true, narrative: parsed.narrative, chips: parsed.chips, newState, diceResult };
+  return { success: true, narrative: parsed.narrative, chips: parsed.chips, newState, diceResult, leveledUp: didLevelUp, newLevel: didLevelUp ? newLevel : undefined };
 }
