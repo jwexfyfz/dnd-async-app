@@ -9,6 +9,7 @@ import { takeTurn } from "../../actions/take-turn";
 import { initializeGame } from "../../actions/initialize-game";
 import MapRenderer, { type MapData, type PartyMarker } from "../../../components/map-renderer";
 import { classEmoji } from "../../../lib/class-emoji";
+import type { D20Result } from "../../../lib/dice";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -120,6 +121,7 @@ export default function GamePage() {
   const [activeTab,      setActiveTab]      = useState<Tab>("field");
   const [isInitializing, setIsInitializing] = useState(false);
   const [isTakingTurn,   setIsTakingTurn]   = useState(false);
+  const [diceResult,     setDiceResult]     = useState<D20Result | null>(null);
 
   const initCalledRef = useRef(false);
 
@@ -182,6 +184,7 @@ export default function GamePage() {
   async function handleChipClick(chip: string) {
     if (isTakingTurn || isInitializing || !localState) return;
     setIsTakingTurn(true);
+    setDiceResult(null);
 
     const playerMsg: MessageData = {
       id:        `player-${Date.now()}`,
@@ -202,6 +205,7 @@ export default function GamePage() {
         createdAt: new Date().toISOString(),
       }]);
       if (result.newState) setLocalState(result.newState as unknown as GameState);
+      setDiceResult(result.diceResult ?? null);
 
       // Re-fetch to get the updated currentTurnCharacterId.
       getGame(gameId).then((res) => {
@@ -211,6 +215,7 @@ export default function GamePage() {
       });
     } else {
       setLocalMessages((prev) => prev.filter((m) => m.id !== playerMsg.id));
+      setDiceResult(null);
     }
     setIsTakingTurn(false);
   }
@@ -325,6 +330,7 @@ export default function GamePage() {
             isInitializing={isInitializing}
             isTakingTurn={isTakingTurn}
             chipsEnabled={!isPartyGame || isMyTurn}
+            diceResult={diceResult}
           />
         )}
         {activeTab === "party" && (
@@ -346,7 +352,7 @@ export default function GamePage() {
 
 function FieldTab({
   state, map, storyPrompt, messages, chips, partyMarkers,
-  onChipClick, isInitializing, isTakingTurn, chipsEnabled,
+  onChipClick, isInitializing, isTakingTurn, chipsEnabled, diceResult,
 }: {
   state:          GameState;
   map:            { name: string; data: MapData };
@@ -358,6 +364,7 @@ function FieldTab({
   isInitializing: boolean;
   isTakingTurn:   boolean;
   chipsEnabled:   boolean;
+  diceResult?:    D20Result | null;
 }) {
   const lastDm        = [...messages].reverse().find((m) => m.role === "DUNGEON_MASTER");
   const situationText = lastDm?.content ?? storyPrompt.description;
@@ -383,7 +390,14 @@ function FieldTab({
           <p className="text-xs font-medium text-amber-600 mb-2">
             Objective: {state.activeObjective}
           </p>
-          <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm min-h-[60px]">
+          <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm min-h-[60px] space-y-2">
+            {/* Dice card — ephemeral, above narrative, hidden while loading */}
+            {isTakingTurn && (
+              <div className="h-6 bg-amber-100 rounded animate-pulse" />
+            )}
+            {!isTakingTurn && diceResult && (
+              <DiceCard result={diceResult} />
+            )}
             {isInitializing ? (
               <p className="text-sm text-slate-400 italic animate-pulse">
                 The Dungeon Master is setting the scene...
@@ -432,6 +446,44 @@ function FieldTab({
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// ─── Dice card ────────────────────────────────────────────────────────────────
+
+function DiceCard({ result }: { result: D20Result }) {
+  let outcomeText: string;
+  let outcomeColor: string;
+
+  if (result.critical) {
+    outcomeText  = "CRIT!";
+    outcomeColor = "text-green-600 font-bold";
+  } else if (result.fumble) {
+    outcomeText  = "FUMBLE!";
+    outcomeColor = "text-red-600 font-bold";
+  } else if (result.success && result.dcType === "AC") {
+    outcomeText  = "HIT!";
+    outcomeColor = "text-green-600 font-semibold";
+  } else if (result.success && result.dcType === "DC") {
+    outcomeText  = "SUCCESS!";
+    outcomeColor = "text-green-600 font-semibold";
+  } else if (!result.success && result.dcType === "AC") {
+    outcomeText  = "MISS!";
+    outcomeColor = "text-red-500 font-semibold";
+  } else {
+    outcomeText  = "FAIL!";
+    outcomeColor = "text-red-500 font-semibold";
+  }
+
+  return (
+    <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-sm">
+      <span className="text-base">🎲</span>
+      <span className="font-mono text-slate-700">
+        {result.roll} + {result.modifier} = {result.total}
+      </span>
+      <span className="text-slate-400">vs {result.dcType} {result.dc}</span>
+      <span className={outcomeColor}>{outcomeText}</span>
     </div>
   );
 }
