@@ -576,6 +576,32 @@ function PartyTab({
                 </div>
               </div>
 
+              {/* XP bar */}
+              {(() => {
+                const xp       = m.character.xp;
+                const level    = m.character.level;
+                const atCap    = level >= 5;
+                const nextXp   = atCap ? null : xpForNextLevel(level);
+                const prevXp   = XP_THRESHOLDS[level - 1];
+                const xpInLevel = xp - prevXp;
+                const xpNeeded  = nextXp !== null ? nextXp - prevXp : 1;
+                const xpPct     = atCap ? 100 : Math.max(0, Math.min(100, (xpInLevel / xpNeeded) * 100));
+                const label     = atCap
+                  ? "Level 5  ·  MAX"
+                  : "Level " + level + "  ·  XP: " + xp + " / " + nextXp;
+                return (
+                  <div className="space-y-1">
+                    <div className="text-xs text-slate-500">{label}</div>
+                    <div className="h-1.5 w-full bg-slate-200 rounded-full overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-blue-500"
+                        style={{ width: xpPct + "%" }}
+                      />
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Compact 6-stat row */}
               <div className="grid grid-cols-6 gap-1 text-center">
                 {STAT_KEYS.map(({ key, label }) => {
