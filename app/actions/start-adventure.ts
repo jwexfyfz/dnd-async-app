@@ -46,7 +46,7 @@ export async function startAdventure(gameId: string) {
   const partyMaxHp:     Record<string, number> = {};
 
   const turnUpdates = sorted.map((member, i) => {
-    const hp = 10 + Math.floor((member.character.constitution - 10) / 2);
+    const hp = member.character.maxHp;   // canonical, stored at character creation (D-03)
     partyPositions[member.characterId] = mapData.playerStart;
     partyHp[member.characterId]        = hp;
     partyMaxHp[member.characterId]     = hp;
