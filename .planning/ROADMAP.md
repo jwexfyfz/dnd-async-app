@@ -78,12 +78,12 @@ Plans:
 4. A Claude response that includes `hp`, `maxHp`, `xp`, or `level` in its `stateDeltas` payload is rejected; the rules engine applies no change for those keys.
 5. Unit tests cover `maxHpAtLevel` for all 4 classes at levels 1–5 with CON modifiers of −2, 0, and +3.
 
-**Plans:** 4 plans
+**Plans:** 1/4 plans executed
 
 Plans:
 **Wave 1**
 
-- [ ] 03-01-PLAN.md — Schema migration (Character.maxHp) + lib/leveling.ts + lib/leveling.test.ts + post-migration backfill (LVL-01, LVL-05)
+- [x] 03-01-PLAN.md — Schema migration (Character.maxHp) + lib/leveling.ts + lib/leveling.test.ts + post-migration backfill (LVL-01, LVL-05)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -119,5 +119,5 @@ Plans:
 |-------|----------------|--------|-----------|
 | 1. Dice Engine & Critical Bug Fixes | 5/5 | Complete | 2026-05-22 |
 | 2. XP System | 3/3 | Complete | 2026-05-22 |
-| 3. Leveling | 0/4 | Planned | - |
+| 3. Leveling | 1/4 | In Progress|  |
 | 4. Skills | 0/? | Not started | - |
