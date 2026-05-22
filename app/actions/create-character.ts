@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { prisma } from "../../lib/prisma";
 import { createSupabaseServerClient } from "../../lib/supabase-server";
+import { maxHpAtLevel } from "../../lib/leveling";
 
 interface ActionResponse {
   success: boolean;
@@ -56,6 +57,7 @@ export async function createCharacter(formData: FormData): Promise<ActionRespons
     });
 
     // Step 4: Save the new character, linked to the authenticated user's ID.
+    const maxHp = maxHpAtLevel(characterClass, constitution, 1);
     await prisma.character.create({
       data: {
         name: name.trim(),
@@ -67,6 +69,7 @@ export async function createCharacter(formData: FormData): Promise<ActionRespons
         intelligence,
         wisdom,
         charisma,
+        maxHp,
       },
     });
 
