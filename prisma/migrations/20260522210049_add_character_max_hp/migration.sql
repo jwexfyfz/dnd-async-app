@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "Character" ADD COLUMN     "maxHp" INTEGER NOT NULL DEFAULT 10;
