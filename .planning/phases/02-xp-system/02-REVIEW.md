@@ -10,9 +10,10 @@ files_reviewed_list:
   - lib/xp.test.ts
   - prisma/schema.prisma
 findings:
-  critical: 3
+  critical: 2
   warning: 5
   info: 2
+  deferred: 1
   total: 10
 status: issues_found
 ---
@@ -63,36 +64,14 @@ if (xpAwarded > 0 || didLevelUp) {
 
 ---
 
-### CR-02: XP accumulation reads stale pre-transaction snapshot — double-award race window
+### CR-02 [DEFERRED — Future Optimization]: XP accumulation reads stale pre-transaction snapshot — double-award race window
 
 **File:** `app/actions/take-turn.ts:278–280`
+**Status:** Deferred by product decision. Low priority for current single-player async MVP; concurrent encounter submissions are practically impossible in this game's turn structure.
 
-**Issue:** `currentXp` is computed as `(currentCharacter.xp ?? 0) + xpAwarded` where `currentCharacter` is the value fetched at the top of the action (line 184). If two concurrent requests for the same character complete their AI calls and both enter the transaction window before either commits (possible when network latency causes overlap), both read the same base XP value and both write `base + 100` instead of `base + 100` then `base + 200`. Additionally, even without true concurrency, a client retry after a transient error can re-run the server action and award XP a second time on the same encounter, because the first request may have committed the character XP update but not updated the game's `encounterResult` state to prevent re-award.
+**Issue:** `currentXp` is computed from `currentCharacter.xp` fetched at request start, not inside the transaction. Two overlapping requests for the same character could both read the same base XP and both write `base + award`, effectively under-awarding. A client retry after a transient error could also re-award XP on the same encounter.
 
-**Fix:**
-Read `character.xp` inside the transaction using a `SELECT FOR UPDATE` equivalent (Prisma: read inside `tx`) and compute the new XP there:
-
-```typescript
-await prisma.$transaction(async (tx) => {
-  const current = await tx.game.findUnique({ where: { id: gameId }, select: { version: true } });
-  if (!current || current.version !== expectedVersion) throw new Error("STALE_TURN");
-
-  if (xpAwarded > 0 || didLevelUp) {
-    // Re-read XP inside the transaction to avoid stale accumulation.
-    const freshChar = await tx.character.findUnique({
-      where: { id: currentCharId },
-      select: { xp: true },
-    });
-    const freshXp   = (freshChar?.xp ?? 0) + xpAwarded;
-    const freshLevel = computeLevel(freshXp);
-    await tx.character.update({
-      where: { id: currentCharId },
-      data:  { xp: freshXp, level: freshLevel },
-    });
-  }
-  // ... rest of transaction
-});
-```
+**Suggested fix when prioritized:** Re-read `character.xp` inside the `prisma.$transaction` block before computing the new total. Track `encounterResult` in game state to prevent re-award on retry.
 
 ---
 
