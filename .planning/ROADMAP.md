@@ -9,7 +9,7 @@
 
 ## Phases
 
-- [ ] **Phase 1: Dice Engine & Critical Bug Fixes** - Replace AI-invented rolls with a deterministic TypeScript engine; fix prompt injection and race condition; establish test infrastructure.
+- [x] **Phase 1: Dice Engine & Critical Bug Fixes** - Replace AI-invented rolls with a deterministic TypeScript engine; fix prompt injection and race condition; establish test infrastructure.
 - [ ] **Phase 2: XP System** - Players earn XP at encounter end via code; XP persists on Character; level computed from cumulative total; progress visible in UI.
 - [ ] **Phase 3: Leveling** - Characters auto-level when XP crosses D&D Basic Rules thresholds (levels 1–5); max HP and proficiency bonus update per class hit die; Claude locked out of HP/XP/level via stateDeltas allowlist.
 - [ ] **Phase 4: Skills** - Characters have skill proficiencies; skill checks resolve via code (d20 + ability mod + proficiency bonus if applicable) and feed results to Claude for narration.
@@ -29,14 +29,14 @@
 3. Submitting a `chipText` value containing injection patterns (e.g., `SYSTEM:`, backticks) does not alter the system prompt; the input is sanitized before use.
 4. Two concurrent turn submissions for the same game return one success and one `STALE_TURN` error — the database state reflects exactly one mutation.
 5. The `rollD20Check` function returns an audit-trail object `{ roll, modifier, total, dc, success }` verifiable in test output at DC boundary conditions.
-**Plans:** 3/5 plans executed
+**Plans:** 5/5 complete
 
 Plans:
 - [x] 01-01-PLAN.md — Vitest install and configuration
 - [x] 01-02-PLAN.md — lib/dice.ts engine + lib/dice.test.ts unit tests
-- [x] 01-03-PLAN.md — [BLOCKING] Schema migration: Game.version column
-- [ ] 01-04-PLAN.md — take-turn.ts refactor: sanitization + $transaction + dice integration
-- [ ] 01-05-PLAN.md — Dice card UI in FieldTab
+- [x] 01-03-PLAN.md — Schema migration: Game.version column
+- [x] 01-04-PLAN.md — take-turn.ts refactor: sanitization + $transaction + dice integration
+- [x] 01-05-PLAN.md — Dice card UI in FieldTab
 
 ### Phase 2: XP System
 **Goal:** Players earn experience points at encounter end through code-owned logic; XP accumulates on the Character record across games; level is derived from cumulative XP; the game UI surfaces current XP, level, and progress to next level.

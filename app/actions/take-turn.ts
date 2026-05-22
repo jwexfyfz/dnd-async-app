@@ -1,6 +1,10 @@
 "use server";
 
 import Anthropic from "@anthropic-ai/sdk";
+
+// Module-level singleton — avoids re-creating the client on every server action call.
+// maxRetries: 4 covers transient 529 overload bursts with SDK exponential backoff.
+const anthropic = new Anthropic({ maxRetries: 4 });
 import { prisma } from "../../lib/prisma";
 import { createSupabaseServerClient } from "../../lib/supabase-server";
 import { DM_MODEL, DM_MAX_TOKENS, ROLLING_WINDOW_SIZE } from "../../lib/ai-config";
@@ -203,7 +207,6 @@ export async function takeTurn(gameId: string, chipText: string): Promise<TurnRe
   });
 
   const contextWindow     = game.messages.slice(-ROLLING_WINDOW_SIZE);
-  const client            = new Anthropic();
   const gameState         = game.state as Record<string, any>;
   const mapData           = game.map.data as Record<string, any>;
   const currentCharacter  = callerMember ? callerMember.character : game.character;
@@ -220,7 +223,7 @@ export async function takeTurn(gameId: string, chipText: string): Promise<TurnRe
 
   let response;
   try {
-    response = await client.messages.create({
+    response = await anthropic.messages.create({
       model:      DM_MODEL,
       max_tokens: DM_MAX_TOKENS,
       system: [

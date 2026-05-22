@@ -122,6 +122,7 @@ export default function GamePage() {
   const [isInitializing, setIsInitializing] = useState(false);
   const [isTakingTurn,   setIsTakingTurn]   = useState(false);
   const [diceResult,     setDiceResult]     = useState<D20Result | null>(null);
+  const [turnError,      setTurnError]      = useState<string | null>(null);
 
   const initCalledRef = useRef(false);
 
@@ -185,6 +186,7 @@ export default function GamePage() {
     if (isTakingTurn || isInitializing || !localState) return;
     setIsTakingTurn(true);
     setDiceResult(null);
+    setTurnError(null);
 
     const playerMsg: MessageData = {
       id:        `player-${Date.now()}`,
@@ -216,6 +218,12 @@ export default function GamePage() {
     } else {
       setLocalMessages((prev) => prev.filter((m) => m.id !== playerMsg.id));
       setDiceResult(null);
+      const msg = result.error === "STALE_TURN"
+        ? "Another action was submitted first — please try again."
+        : result.error === "It's not your turn."
+          ? "It's not your turn."
+          : "The Dungeon Master is temporarily unavailable. Please try again in a moment.";
+      setTurnError(msg);
     }
     setIsTakingTurn(false);
   }
@@ -331,6 +339,7 @@ export default function GamePage() {
             isTakingTurn={isTakingTurn}
             chipsEnabled={!isPartyGame || isMyTurn}
             diceResult={diceResult}
+            turnError={turnError}
           />
         )}
         {activeTab === "party" && (
@@ -352,7 +361,7 @@ export default function GamePage() {
 
 function FieldTab({
   state, map, storyPrompt, messages, chips, partyMarkers,
-  onChipClick, isInitializing, isTakingTurn, chipsEnabled, diceResult,
+  onChipClick, isInitializing, isTakingTurn, chipsEnabled, diceResult, turnError,
 }: {
   state:          GameState;
   map:            { name: string; data: MapData };
@@ -365,6 +374,7 @@ function FieldTab({
   isTakingTurn:   boolean;
   chipsEnabled:   boolean;
   diceResult?:    D20Result | null;
+  turnError?:     string | null;
 }) {
   const lastDm        = [...messages].reverse().find((m) => m.role === "DUNGEON_MASTER");
   const situationText = lastDm?.content ?? storyPrompt.description;
@@ -443,6 +453,9 @@ function FieldTab({
           )}
           {isTakingTurn && (
             <p className="text-xs text-slate-400 animate-pulse pt-1">The dungeon responds…</p>
+          )}
+          {turnError && (
+            <p className="text-xs text-red-500 pt-1">{turnError}</p>
           )}
         </div>
       </div>
