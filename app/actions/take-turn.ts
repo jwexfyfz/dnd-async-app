@@ -10,6 +10,7 @@ import { createSupabaseServerClient } from "../../lib/supabase-server";
 import { DM_MODEL, DM_MAX_TOKENS, ROLLING_WINDOW_SIZE } from "../../lib/ai-config";
 import { rollD20Check, abilityModifier } from "../../lib/dice";
 import type { D20Result } from "../../lib/dice";
+import { computeLevel, XP_BY_DIFFICULTY } from "../../lib/xp";
 
 // ─── Input sanitization ───────────────────────────────────────────────────────
 
@@ -163,6 +164,8 @@ interface TurnResult {
   newState?:   Record<string, unknown>;
   error?:      string;
   diceResult?: D20Result;
+  leveledUp?:  boolean;   // true if the character leveled up this turn
+  newLevel?:   number;    // the new level value if leveledUp is true
 }
 
 export async function takeTurn(gameId: string, chipText: string): Promise<TurnResult> {
@@ -248,15 +251,16 @@ export async function takeTurn(gameId: string, chipText: string): Promise<TurnRe
     ? (response.content.find((b) => b.type === "text") as Anthropic.TextBlock).text
     : "";
 
-  let parsed: { narrative: string; stateDeltas: Record<string, any>; chips: string[] };
+  let parsed: { narrative: string; stateDeltas: Record<string, any>; chips: string[]; encounterResult?: "completed" | null };
   try {
     const match = rawText.match(/\{[\s\S]*\}/);
     parsed = JSON.parse(match?.[0] ?? rawText);
   } catch {
     parsed = {
-      narrative:   rawText || "The dungeon stirs around you.",
-      stateDeltas: {},
-      chips:       ["Look around carefully", "Listen for sounds", "Check your gear"],
+      narrative:       rawText || "The dungeon stirs around you.",
+      stateDeltas:     {},
+      chips:           ["Look around carefully", "Listen for sounds", "Check your gear"],
+      encounterResult: null,
     };
   }
 
