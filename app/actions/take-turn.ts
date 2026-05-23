@@ -39,6 +39,19 @@ function detectActionType(
   return { dcType: "DC", dc: 12 };
 }
 
+// Returns the ability score used for attack rolls, keyed by class per D&D 5e.
+// DEX-primary: finesse/ranged weapons. INT/CHA: spell attack rolls.
+// Fallback: strength (melee martial default).
+function primaryAttackScore(
+  characterClass: string,
+  character: { strength: number; dexterity: number; intelligence: number; charisma: number },
+): number {
+  if (["Rogue", "Ranger", "Monk"].includes(characterClass))      return character.dexterity;
+  if (["Wizard", "Sorcerer"].includes(characterClass))           return character.intelligence;
+  if (["Warlock", "Bard"].includes(characterClass))              return character.charisma;
+  return character.strength;
+}
+
 // ─── Prompt builders ──────────────────────────────────────────────────────────
 
 function buildStaticPrompt(character: any, allMembers: any[], storyPrompt: any, mapData: any): string {
@@ -238,7 +251,9 @@ export async function takeTurn(gameId: string, chipText: string): Promise<TurnRe
 
   // Compute dice roll before the Claude narration call (D-06: code owns all rolls).
   const { dcType, dc } = detectActionType(sanitizedAction, gameState);
-  const relevantScore  = dcType === "AC" ? currentCharacter.strength : currentCharacter.wisdom;
+  const relevantScore  = dcType === "AC"
+    ? primaryAttackScore(currentCharacter.characterClass, currentCharacter)
+    : currentCharacter.wisdom;
   const modifier       = abilityModifier(relevantScore);
   const diceResult     = rollD20Check(modifier, dc, dcType);
 

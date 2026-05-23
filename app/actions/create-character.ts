@@ -24,20 +24,28 @@ export async function createCharacter(formData: FormData): Promise<ActionRespons
   const name = formData.get("name") as string;
   const characterClass = formData.get("class") as string;
 
-  // Fallback is 8, matching the D&D 5e Point Buy baseline (not 10, which is the
-  // "standard array" default — a different system).
-  const strength     = parseInt(formData.get("strength")     as string) || 8;
-  const dexterity    = parseInt(formData.get("dexterity")    as string) || 8;
-  const constitution = parseInt(formData.get("constitution") as string) || 8;
-  const intelligence = parseInt(formData.get("intelligence") as string) || 8;
-  const wisdom       = parseInt(formData.get("wisdom")       as string) || 8;
-  const charisma     = parseInt(formData.get("charisma")     as string) || 8;
+  function parseAbilityScore(raw: FormDataEntryValue | null): number | null {
+    const n = parseInt(raw as string, 10);
+    if (isNaN(n) || n < 1 || n > 20) return null;
+    return n;
+  }
+
+  const strength     = parseAbilityScore(formData.get("strength"));
+  const dexterity    = parseAbilityScore(formData.get("dexterity"));
+  const constitution = parseAbilityScore(formData.get("constitution"));
+  const intelligence = parseAbilityScore(formData.get("intelligence"));
+  const wisdom       = parseAbilityScore(formData.get("wisdom"));
+  const charisma     = parseAbilityScore(formData.get("charisma"));
 
   if (!name || name.trim().length === 0) {
     return { success: false, error: "Character name cannot be blank." };
   }
   if (!characterClass) {
     return { success: false, error: "You must choose a character class." };
+  }
+  if (strength === null || dexterity === null || constitution === null ||
+      intelligence === null || wisdom === null || charisma === null) {
+    return { success: false, error: "All ability scores must be between 1 and 20." };
   }
 
   try {
