@@ -49,8 +49,9 @@ model Map {
   // { width, height, tiles[][], playerStart: {x,y}, rooms[], pois[] }
   data Json
 
-  stories StoryPrompt[]
-  games   Game[]
+  stories          StoryPrompt[]
+  games            Game[]
+  equippableItems  EquippableItem[]
 }
 
 model StoryPrompt {
@@ -150,6 +151,25 @@ model Message {
 enum MessageRole {
   PLAYER
   DUNGEON_MASTER
+}
+
+// ─── Equippable Items ─────────────────────────────────────────────────────────
+
+// Loot available in a given map. Seeded per-map; instances are referenced by
+// the game's inventory JSON when a player picks one up.
+model EquippableItem {
+  id                String  @id @default(uuid())
+  mapId             String
+  map               Map     @relation(fields: [mapId], references: [id], onDelete: Cascade)
+
+  name              String
+  category          String  // "Weapon" | "Armor" | "Consumable"
+  weightLbs         Float
+  quantity          Int     @default(1)
+  isEquipped        Boolean @default(false)
+  combatImpactLabel String  // e.g. "+5 Damage", "+2 AC", "Heal 8 HP"
+
+  @@index([mapId])
 }
 
 // ─── Class Progression ───────────────────────────────────────────────────────
