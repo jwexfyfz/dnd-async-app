@@ -218,13 +218,13 @@ export async function takeTurn(gameId: string, chipText: string): Promise<TurnRe
 
   // Verify it's this user's turn when the game has a party.
   const callerMember = game.partyMembers.find((m) => m.userId === user.id);
-  if (game.partyMembers.length > 0 && game.currentTurnCharacterId) {
+  if (game.partyMembers.length > 0) {
     if (!callerMember) return { success: false, error: "You are not in this game." };
+    if (!game.currentTurnCharacterId) return { success: false, error: "The adventure has not started yet." };
     if (game.currentTurnCharacterId !== callerMember.characterId) {
       return { success: false, error: "It's not your turn." };
     }
   } else if (game.character.userId !== user.id) {
-    // Legacy solo game fallback.
     return { success: false, error: "Access denied." };
   }
 
