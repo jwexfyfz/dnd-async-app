@@ -52,6 +52,8 @@ interface CharacterData {
   charisma:       number;
   xp:             number;
   level:          number;
+  currentHp:      number;
+  maxHp:          number;
 }
 
 interface PartyMemberData {
@@ -158,6 +160,13 @@ export default function GamePage() {
         setGameData(data);
         setLocalMessages(data.messages);
         setLocalState(data.state);
+        const initHp: Record<string, number> = {};
+        if (data.partyMembers.length > 0) {
+          for (const m of data.partyMembers) initHp[m.characterId] = m.character.currentHp;
+        } else {
+          initHp[data.character.id] = data.character.currentHp;
+        }
+        setLocalHpOverrides(initHp);
       } else {
         setLoadError(res.error ?? "Game not found.");
       }
@@ -238,10 +247,18 @@ export default function GamePage() {
         }
       }
 
-      // Re-fetch to get the updated currentTurnCharacterId.
+      // Re-fetch to get the updated currentTurnCharacterId and settle HP from DB.
       getGame(gameId).then((res) => {
         if (res.success && res.data) {
-          setGameData(res.data as unknown as GameFull);
+          const fresh = res.data as unknown as GameFull;
+          setGameData(fresh);
+          const freshHp: Record<string, number> = {};
+          if (fresh.partyMembers.length > 0) {
+            for (const m of fresh.partyMembers) freshHp[m.characterId] = m.character.currentHp;
+          } else {
+            freshHp[fresh.character.id] = fresh.character.currentHp;
+          }
+          setLocalHpOverrides((prev) => ({ ...prev, ...freshHp }));
         }
       });
     } else {
@@ -743,7 +760,7 @@ function MemberStatsPane({ char }: { char: CharacterData }) {
       </div>
 
       {/* Proficient legend — own row, right-aligned, above stats */}
-      <div className="flex justify-end">
+      <div className="flex justify-end mt-2">
         <div className="flex items-center gap-1">
           <span className="inline-block w-2.5 h-2.5 rounded-sm bg-green-500" />
           <span className="text-[10px] text-slate-400">Proficient</span>
