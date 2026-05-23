@@ -8,6 +8,7 @@ import { getGame } from "../../actions/get-game";
 import { takeTurn } from "../../actions/take-turn";
 import { initializeGame } from "../../actions/initialize-game";
 import MapRenderer, { type MapData, type PartyMarker } from "../../../components/map-renderer";
+import UserMenu from "../../../components/user-menu";
 import { classEmoji } from "../../../lib/class-emoji";
 import type { D20Result } from "../../../lib/dice";
 import { xpForNextLevel, XP_THRESHOLDS } from "../../../lib/xp";
@@ -130,8 +131,10 @@ export default function GamePage() {
   const [isInitializing, setIsInitializing] = useState(false);
   const [isTakingTurn,   setIsTakingTurn]   = useState(false);
   const [diceResult,     setDiceResult]     = useState<D20Result | null>(null);
-  const [levelUpResult, setLevelUpResult] = useState<LevelUpResult | null>(null);
-  const [turnError,      setTurnError]      = useState<string | null>(null);
+  const [levelUpResult,    setLevelUpResult]    = useState<LevelUpResult | null>(null);
+  const [turnError,        setTurnError]        = useState<string | null>(null);
+  const [localHpOverrides, setLocalHpOverrides] = useState<Record<string, number>>({});
+  const [hpFlashing,       setHpFlashing]       = useState(false);
 
   const initCalledRef = useRef(false);
 
@@ -220,6 +223,21 @@ export default function GamePage() {
       setDiceResult(result.diceResult ?? null);
       setLevelUpResult(result.levelUpResult ?? null);
 
+      if (result.combatEffects && result.combatEffects.length > 0) {
+        const overrides: Record<string, number> = {};
+        const myCharId = myMember?.characterId ?? gameData?.character.id;
+        let myCharAffected = false;
+        for (const eff of result.combatEffects) {
+          overrides[eff.targetId] = eff.newHp;
+          if (myCharId && eff.targetId === myCharId) myCharAffected = true;
+        }
+        setLocalHpOverrides((prev) => ({ ...prev, ...overrides }));
+        if (myCharAffected) {
+          setHpFlashing(true);
+          setTimeout(() => setHpFlashing(false), 800);
+        }
+      }
+
       // Re-fetch to get the updated currentTurnCharacterId.
       getGame(gameId).then((res) => {
         if (res.success && res.data) {
@@ -258,7 +276,14 @@ export default function GamePage() {
   }
 
   const { character, storyPrompt, map, partyMembers } = gameData;
-  const isPartyGame = partyMembers.length > 1;
+  const isPartyGame  = partyMembers.length > 1;
+  const myCharId     = myMember?.characterId ?? character.id;
+  const displayHp    = localHpOverrides[myCharId]
+    ?? (isPartyGame ? localState.partyHp?.[myCharId] : localState.hp)
+    ?? localState.hp;
+  const displayMaxHp = isPartyGame
+    ? (localState.partyMaxHp?.[myCharId] ?? localState.maxHp)
+    : localState.maxHp;
 
   // Build party markers for the map — one emoji per character.
   const partyMarkers: PartyMarker[] = partyMembers.map((m) => ({
@@ -306,17 +331,27 @@ export default function GamePage() {
             <p className="text-sm font-semibold text-slate-800">{storyPrompt.title}</p>
             <p className="text-xs text-slate-400">{isPartyGame ? `${partyMembers.length} players` : character.name}</p>
           </div>
-          {/* Solo HP in header; party games show it in the Party tab */}
-          {!isPartyGame && (
-            <div className="text-right">
-              <p className="text-[10px] text-slate-400 uppercase tracking-widest">HP</p>
-              <p className={`text-sm font-bold ${hpTextColor(localState.hp, localState.maxHp)}`}>
-                {localState.hp} / {localState.maxHp}
-              </p>
-            </div>
-          )}
-          {isPartyGame && <div className="w-10" />}
+          <UserMenu />
         </header>
+
+        {/* HP HUD — character level + animated HP bar, visible across all tabs */}
+        <div
+          className="px-4 py-2 bg-white border-b border-slate-100 flex items-center gap-3"
+          style={hpFlashing ? { animation: "hp-flash 0.8s ease-out forwards" } : undefined}
+        >
+          <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest shrink-0 w-10">
+            Lv {(myMember?.character ?? character).level}
+          </span>
+          <div className="flex-1 h-2.5 bg-slate-200 rounded-full overflow-hidden">
+            <div
+              className={`h-full rounded-full transition-[width] duration-500 ease-out ${hpBarColor(displayHp, displayMaxHp)}`}
+              style={{ width: `${Math.max(0, Math.min(100, (displayHp / displayMaxHp) * 100))}%` }}
+            />
+          </div>
+          <span className={`text-xs font-mono font-semibold shrink-0 tabular-nums ${hpTextColor(displayHp, displayMaxHp)}`}>
+            {displayHp} / {displayMaxHp}
+          </span>
+        </div>
 
         {/* Tab bar */}
         <nav className="flex border-b border-slate-200 bg-white">
@@ -361,6 +396,7 @@ export default function GamePage() {
             state={localState}
             currentTurnCharacterId={gameData.currentTurnCharacterId}
             currentUserId={currentUserId}
+            hpOverrides={localHpOverrides}
           />
         )}
         {activeTab === "chronicle" && (
@@ -561,12 +597,13 @@ const CLASS_FEATURES: Record<string, string[]> = {
 };
 
 function PartyTab({
-  partyMembers, state, currentTurnCharacterId, currentUserId,
+  partyMembers, state, currentTurnCharacterId, currentUserId, hpOverrides,
 }: {
   partyMembers:           PartyMemberData[];
   state:                  GameState;
   currentTurnCharacterId: string | null;
   currentUserId:          string | null;
+  hpOverrides:            Record<string, number>;
 }) {
   const [subTab, setSubTab] = useState<PartySubTab>("stats");
 
@@ -596,7 +633,7 @@ function PartyTab({
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         {ordered.map((m) => {
           const isMe     = m.userId === currentUserId;
-          const hp       = state.partyHp?.[m.characterId] ?? state.hp;
+          const hp       = hpOverrides[m.characterId] ?? state.partyHp?.[m.characterId] ?? state.hp;
           const maxHp    = state.partyMaxHp?.[m.characterId] ?? state.maxHp;
           const hpPct    = Math.max(0, Math.min(100, (hp / maxHp) * 100));
           const isActive = m.characterId === currentTurnCharacterId;

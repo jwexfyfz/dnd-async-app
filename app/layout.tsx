@@ -29,7 +29,9 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">
-        <UserMenu />
+        <div id="global-user-menu" className="fixed top-3 right-3 z-50">
+          <UserMenu />
+        </div>
         {children}
       </body>
     </html>

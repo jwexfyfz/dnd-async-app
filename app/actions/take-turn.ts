@@ -12,6 +12,7 @@ import { rollD20Check, abilityModifier } from "../../lib/dice";
 import type { D20Result } from "../../lib/dice";
 import { computeLevel, XP_BY_DIFFICULTY } from "../../lib/xp";
 import { maxHpAtLevel, proficiencyBonus } from "../../lib/leveling";
+import { parseCombatEffects, clampHp } from "../../lib/combat-effect";
 
 // ─── Input sanitization ───────────────────────────────────────────────────────
 
@@ -46,9 +47,9 @@ function buildStaticPrompt(character: any, allMembers: any[], storyPrompt: any, 
 
   const partyLines = allMembers.length > 1
     ? allMembers.map((m: any) =>
-        `  ${m.character.name} (${m.character.characterClass}): STR${m.character.strength} DEX${m.character.dexterity} CON${m.character.constitution} INT${m.character.intelligence} WIS${m.character.wisdom} CHA${m.character.charisma}`
+        `  ${m.character.name} [id:${m.character.id}] (${m.character.characterClass}): STR${m.character.strength} DEX${m.character.dexterity} CON${m.character.constitution} INT${m.character.intelligence} WIS${m.character.wisdom} CHA${m.character.charisma}`
       ).join("\n")
-    : `  ${character.name} (${character.characterClass}): STR${character.strength} DEX${character.dexterity} CON${character.constitution} INT${character.intelligence} WIS${character.wisdom} CHA${character.charisma}`;
+    : `  ${character.name} [id:${character.id}] (${character.characterClass}): STR${character.strength} DEX${character.dexterity} CON${character.constitution} INT${character.intelligence} WIS${character.wisdom} CHA${character.charisma}`;
 
   return `You are a skilled, atmospheric Dungeon Master running an async D&D 5e campaign. Your prose is vivid but concise — 2–4 sentences of present-tense narration per turn. You create tension, wonder, and consequence without overwrought description.
 
@@ -81,7 +82,15 @@ chips: 3–5 options, each under 6 words. Situationally specific to what just ha
 encounterResult: set to "completed" ONLY when a combat encounter fully resolves this turn — enemy defeated, fled, or room cleared. Set to null on all other turns including exploration, dialogue, and non-combat actions. Do not set "completed" for partial victories or ongoing combat.
 
 DICE RULES — YOU MUST FOLLOW THESE EXACTLY
-The DICE RESULT in your context is code-generated and final. You MUST narrate around it — never contradict, alter, or invent a different outcome. The roll is a mechanical fact.`;
+The DICE RESULT in your context is code-generated and final. You MUST narrate around it — never contradict, alter, or invent a different outcome. The roll is a mechanical fact.
+
+COMBAT EFFECT TAG — ENGINE SIGNAL, HIDDEN FROM PLAYERS
+Whenever the narrative causes HP to change for any character (damage or healing), append one self-closing XML tag per affected character on its own line, placed after the closing brace of the JSON object:
+<combat_effect target_id="CHAR_ID" delta="N" type="TYPE" />
+  • target_id — the [id:…] value for that character from the PARTY list above
+  • delta     — integer HP change; negative for damage (e.g. "-8"), positive for healing (e.g. "5")
+  • type      — short source label: "damage" | "healing" | "poison" | "fire" | "fall" | etc.
+If multiple characters are affected in one turn, emit one tag per character. If no HP changes this turn, omit the tag entirely — do not emit it for exploration, dialogue, or non-HP events.`;
 }
 
 function buildDynamicStatePrompt(
@@ -182,6 +191,7 @@ interface TurnResult {
   leveledUp?:    boolean;          // true if the character leveled up this turn
   newLevel?:     number;           // the new level value if leveledUp is true
   levelUpResult?: LevelUpResult;   // full level-up payload; undefined when no level-up occurred
+  combatEffects?: { targetId: string; delta: number; type: string; newHp: number }[];
 }
 
 export async function takeTurn(gameId: string, chipText: string): Promise<TurnResult> {
@@ -276,6 +286,25 @@ export async function takeTurn(gameId: string, chipText: string): Promise<TurnRe
     };
   }
 
+  // ─── Combat Effects — resolve HP deltas from AI tags ─────────────────────
+  const rawEffects = parseCombatEffects(rawText);
+  let resolvedEffects: { targetId: string; delta: number; type: string; newHp: number }[] = [];
+
+  if (rawEffects.length > 0) {
+    const affectedIds  = [...new Set(rawEffects.map((e) => e.targetId))];
+    const affectedChars = await prisma.character.findMany({
+      where:  { id: { in: affectedIds } },
+      select: { id: true, currentHp: true, maxHp: true },
+    });
+    const charMap = new Map(affectedChars.map((c) => [c.id, c]));
+    resolvedEffects = rawEffects
+      .filter((e) => charMap.has(e.targetId))
+      .map((e) => {
+        const c = charMap.get(e.targetId)!;
+        return { ...e, newHp: clampHp(c.currentHp, e.delta, c.maxHp) };
+      });
+  }
+
   // ─── XP Award ─────────────────────────────────────────────────────────────
   const encounterCompleted = parsed.encounterResult === "completed";
   const xpAwarded = encounterCompleted
@@ -354,6 +383,12 @@ export async function takeTurn(gameId: string, chipText: string): Promise<TurnRe
         where: { id: gameId },
         data:  { state: newState, currentTurnCharacterId: nextCharId, version: { increment: 1 } },
       });
+      for (const eff of resolvedEffects) {
+        await tx.character.update({
+          where: { id: eff.targetId },
+          data:  { currentHp: eff.newHp },
+        });
+      }
     });
   } catch (err: any) {
     if (err.message === "STALE_TURN") {
@@ -377,5 +412,6 @@ export async function takeTurn(gameId: string, chipText: string): Promise<TurnRe
       newMaxHp:         committedMaxHp,
       proficiencyBonus: proficiencyBonus(newLevel),
     } : undefined,
+    combatEffects: resolvedEffects.length > 0 ? resolvedEffects : undefined,
   };
 }

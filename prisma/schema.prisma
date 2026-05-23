@@ -35,6 +35,7 @@ model Character {
   xp           Int @default(0)
   level        Int @default(1)
   maxHp        Int @default(10)
+  currentHp    Int @default(10)
 
   games            Game[]
   partyMemberships PartyMember[]
