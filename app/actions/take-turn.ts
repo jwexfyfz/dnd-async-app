@@ -269,9 +269,8 @@ export async function takeTurn(gameId: string, chipText: string): Promise<TurnRe
     return { success: false, error: "The DM is temporarily unavailable." };
   }
 
-  const rawText = response.content.find((b) => b.type === "text")
-    ? (response.content.find((b) => b.type === "text") as Anthropic.TextBlock).text
-    : "";
+  const textBlock = response.content.find((b): b is Anthropic.TextBlock => b.type === "text");
+  const rawText   = textBlock?.text ?? "";
 
   let parsed: { narrative: string; stateDeltas: Record<string, any>; chips: string[]; encounterResult?: "completed" | null };
   try {
