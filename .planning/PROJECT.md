@@ -27,7 +27,7 @@ A solo or small-group D&D experience that fits into a busy life — drop in for 
 - [ ] Server-side prompt injection fix in `take-turn.ts` — sanitize `chipText` input
 - [ ] DB transaction on turn state mutation — prevent race conditions on concurrent turn submissions
 - ✓ XP system — grant experience at encounter end, track totals on `Character`, display progress — Validated in Phase 02: xp-system
-- [ ] Leveling — auto-level-up when XP crosses D&D Basic Rules threshold (levels 1–5); recalculate proficiency bonus and max HP
+- ✓ Leveling — auto-level-up when XP crosses D&D Basic Rules threshold (levels 1–5); recalculate proficiency bonus and max HP — Validated in Phase 03: leveling
 - [ ] Skill proficiency tracking — store which skills a character is proficient in; apply to d20 checks
 - [ ] In-game skill checks — parse player intent → identify relevant skill → roll d20 + ability modifier + proficiency bonus if applicable
 - [ ] Test coverage — unit tests for dice engine, XP math, level-up thresholds, and proficiency bonus application

@@ -2,35 +2,35 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
-stopped_at: Phase 3 context gathered
-last_updated: "2026-05-22T20:54:37.851Z"
+status: ready_to_plan
+stopped_at: Phase 3 complete (4/4) — ready to discuss Phase 4
+last_updated: 2026-05-23T03:27:49.716Z
 progress:
   total_phases: 4
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 12
-  completed_plans: 8
-  percent: 50
+  completed_plans: 12
+  percent: 75
 ---
 
 # Project State
 
 ## Status
 
-Phase 2 complete. All 3 plans delivered.
+Phase 3 complete. All 4 plans delivered and verified.
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-05-21)
+See: .planning/PROJECT.md (updated 2026-05-22)
 
 **Core value:** A solo or small-group D&D experience that fits into a busy life.
-**Current focus:** Phase 03 — leveling
+**Current focus:** Phase 04 — Skills
 
 ## Active Phase
 
-Phase: 3
-Name: Leveling
-Status: Executing Phase 03
+Phase: 4
+Name: Skills
+Status: Ready to discuss / plan
 
 ## Phases
 
@@ -38,7 +38,7 @@ Status: Executing Phase 03
 |---|------|--------|
 | 1 | Dice Engine & Critical Bug Fixes | ✅ Complete |
 | 2 | XP System | ✅ Complete (3/3 plans done) |
-| 3 | Leveling | not started |
+| 3 | Leveling | ✅ Complete (4/4 plans done) |
 | 4 | Skills | not started |
 
 ## Key Decisions
@@ -53,13 +53,18 @@ Status: Executing Phase 03
 - XP bar value import (not type import) — xpForNextLevel and XP_THRESHOLDS used at runtime in JSX
 - within-level XP progress: (xp - XP_THRESHOLDS[level-1]) / (nextThreshold - XP_THRESHOLDS[level-1]) * 100
 - xpPct clamped to [0, 100] via Math.max/Math.min before style interpolation (T-02-09)
+- Character.maxHp stored as a schema column — canonical, persists across games
+- maxHpAtLevel pure function in lib/leveling.ts with Math.max(1, hp) floor
+- LevelUpCard indigo component — ephemeral state, follows diceResult pattern
+- PLAYER message inside $transaction — safe against STALE_TURN orphan rows
+- partyMaxHp patched in game state on level-up — HP bars reflect new cap immediately
 
 ## Last Action
 
-2026-05-22 — Phase 2 Plan 3 complete: XP progress bar added to PartyTab — CharacterData extended with xp/level, lib/xp value import, slim blue bar (h-1.5 bg-blue-500) below HP bar, within-level progress calculation, human verification approved.
+2026-05-22 — Phase 3 complete: Leveling system — maxHp DB column, lib/leveling.ts (maxHpAtLevel + proficiencyBonus), atomic level-up in take-turn, LevelUpCard indigo UI, 5 code review bugs fixed, 7/7 verification checks passed.
 
 ## Session Continuity
 
-Last session: 2026-05-22T20:05:20.005Z
-Stopped at: Phase 3 context gathered
-Resume file: .planning/phases/03-leveling/03-CONTEXT.md
+Last session: 2026-05-22
+Stopped at: Phase 3 complete — ready to begin Phase 4 (Skills)
+Resume file: none
