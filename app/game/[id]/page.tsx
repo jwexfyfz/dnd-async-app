@@ -905,12 +905,75 @@ function MemberInventoryPane({
   if (loading) return <p className="text-[11px] text-slate-400 py-2">Loading…</p>;
   if (items.length === 0) return <p className="text-[11px] text-slate-400 italic">No items in this area.</p>;
 
+  // ── Slot resolution ──────────────────────────────────────────────────────────
+  // Category heuristic: "Shield" in name → Off-Hand; Weapon → Main Hand;
+  // non-Shield Armor → Body Armor; Consumable → Active Ring.
+  const equipped = items.filter((i) => i.isEquipped);
+  const slotMainHand  = equipped.find((i) => i.category === "Weapon" && !i.name.toLowerCase().includes("shield")) ?? null;
+  const slotOffHand   = equipped.find((i) => i.name.toLowerCase().includes("shield") || (i.category === "Weapon" && i.id !== slotMainHand?.id)) ?? null;
+  const slotBodyArmor = equipped.find((i) => i.category === "Armor"  && !i.name.toLowerCase().includes("shield")) ?? null;
+  const slotRing      = equipped.find((i) => i.category === "Consumable") ?? null;
+
+  const slottedIds = new Set([slotMainHand?.id, slotOffHand?.id, slotBodyArmor?.id, slotRing?.id].filter(Boolean) as string[]);
+  const backpack   = items.filter((i) => !slottedIds.has(i.id));
+
+  const SLOTS = [
+    { key: "main",  label: "Main Hand",   placeholder: "Empty weapon slot",  item: slotMainHand  },
+    { key: "off",   label: "Off-Hand",    placeholder: "Empty shield slot",   item: slotOffHand   },
+    { key: "body",  label: "Body Armor",  placeholder: "Empty armor slot",    item: slotBodyArmor },
+    { key: "ring",  label: "Active Ring", placeholder: "Empty consumable slot", item: slotRing    },
+  ];
+
   return (
     <div className="space-y-2">
 
-      {/* ── Item rows ── */}
-      <div className="divide-y divide-slate-100">
-        {items.map((item) => {
+      {/* ── Equipment slots grid ── */}
+      <div>
+        <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1.5">Equipped</p>
+        <div className="grid grid-cols-2 gap-1.5">
+          {SLOTS.map(({ key, label, placeholder, item }) => (
+            <div
+              key={key}
+              className={`rounded-lg px-2 py-1.5 flex flex-col gap-0.5 min-h-[48px] justify-between ${
+                item
+                  ? "bg-amber-50 border border-amber-200"
+                  : "border border-dashed border-slate-200 bg-slate-50"
+              }`}
+            >
+              <span className="text-[9px] font-bold uppercase tracking-widest text-slate-400 leading-none">
+                {label}
+              </span>
+              {item ? (
+                <div className="flex items-end justify-between gap-1">
+                  <p className="text-[11px] font-semibold text-slate-800 leading-tight truncate flex-1">
+                    {item.name}
+                  </p>
+                  {isMe && (
+                    <button
+                      onClick={() => toggleEquipped(item)}
+                      disabled={pending.has(item.id)}
+                      className="shrink-0 text-[9px] font-bold text-amber-600 hover:text-red-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed leading-none"
+                    >
+                      Unequip
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <p className="text-[10px] text-slate-300 italic leading-tight">{placeholder}</p>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ── Backpack rows (equipped items filtered out) ── */}
+      <div>
+        <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-0.5">Backpack</p>
+        {backpack.length === 0 ? (
+          <p className="text-[10px] text-slate-300 italic py-0.5">All items are equipped.</p>
+        ) : (
+          <div className="divide-y divide-slate-100">
+            {backpack.map((item) => {
           const isBusy = pending.has(item.id);
           const dimmed = item.quantity === 0 ? "opacity-40" : "";
           return (
@@ -975,7 +1038,9 @@ function MemberInventoryPane({
               ) : null}
             </div>
           );
-        })}
+            })}
+          </div>
+        )}
       </div>
 
       {/* ── Weight summary ── */}
