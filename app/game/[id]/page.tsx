@@ -7,6 +7,8 @@ import { supabaseBrowser } from "../../../lib/supabase-client";
 import { getGame } from "../../actions/get-game";
 import { takeTurn } from "../../actions/take-turn";
 import { initializeGame } from "../../actions/initialize-game";
+import { getMapItems, type EquippableItemData } from "../../actions/get-map-items";
+import { updateItem } from "../../actions/update-item";
 import MapRenderer, { type MapData, type PartyMarker } from "../../../components/map-renderer";
 import UserMenu from "../../../components/user-menu";
 import { classEmoji } from "../../../lib/class-emoji";
@@ -81,7 +83,7 @@ interface GameFull {
   state:                 GameState;
   character:             CharacterData;
   storyPrompt:           { title: string; description: string };
-  map:                   { name: string; data: MapData };
+  map:                   { id: string; name: string; data: MapData };
   messages:              MessageData[];
   partyMembers:          PartyMemberData[];
 }
@@ -414,6 +416,7 @@ export default function GamePage() {
             currentTurnCharacterId={gameData.currentTurnCharacterId}
             currentUserId={currentUserId}
             hpOverrides={localHpOverrides}
+            mapId={gameData.map.id}
           />
         )}
         {activeTab === "chronicle" && (
@@ -614,13 +617,14 @@ const CLASS_FEATURES: Record<string, string[]> = {
 };
 
 function PartyTab({
-  partyMembers, state, currentTurnCharacterId, currentUserId, hpOverrides,
+  partyMembers, state, currentTurnCharacterId, currentUserId, hpOverrides, mapId,
 }: {
   partyMembers:           PartyMemberData[];
   state:                  GameState;
   currentTurnCharacterId: string | null;
   currentUserId:          string | null;
   hpOverrides:            Record<string, number>;
+  mapId:                  string;
 }) {
   const [subTab, setSubTab] = useState<PartySubTab>("stats");
 
@@ -706,7 +710,13 @@ function PartyTab({
 
               {/* Sub-tab content */}
               {subTab === "stats"     && <MemberStatsPane char={m.character} />}
-              {subTab === "inventory" && <MemberInventoryPane isMe={isMe} state={state} />}
+              {subTab === "inventory" && (
+                <MemberInventoryPane
+                  isMe={isMe}
+                  mapId={mapId}
+                  strength={m.character.strength}
+                />
+              )}
               {subTab === "abilities" && <MemberAbilitiesPane char={m.character} />}
             </div>
           );
@@ -847,35 +857,146 @@ function MemberStatsPane({ char }: { char: CharacterData }) {
   );
 }
 
-function MemberInventoryPane({ isMe, state }: { isMe: boolean; state: GameState }) {
-  if (!isMe) return <p className="text-xs text-slate-400 italic">Inventory is private.</p>;
+const CATEGORY_STYLE: Record<string, string> = {
+  Weapon:     "bg-red-100 text-red-700",
+  Armor:      "bg-sky-100 text-sky-700",
+  Consumable: "bg-emerald-100 text-emerald-700",
+};
+
+function MemberInventoryPane({
+  isMe, mapId, strength,
+}: {
+  isMe:     boolean;
+  mapId:    string;
+  strength: number;
+}) {
+  const [items,    setItems]    = useState<EquippableItemData[]>([]);
+  const [loading,  setLoading]  = useState(true);
+  const [pending,  setPending]  = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    getMapItems(mapId).then((data) => { setItems(data); setLoading(false); });
+  }, [mapId]);
+
+  const maxCapacity = strength * 15;
+  const totalWeight = items.reduce((sum, it) => sum + it.weightLbs * it.quantity, 0);
+  const overCapacity = totalWeight > maxCapacity;
+
+  function markPending(id: string, on: boolean) {
+    setPending((prev) => { const s = new Set(prev); on ? s.add(id) : s.delete(id); return s; });
+  }
+
+  async function toggleEquipped(item: EquippableItemData) {
+    const next = !item.isEquipped;
+    setItems((prev) => prev.map((i) => i.id === item.id ? { ...i, isEquipped: next } : i));
+    markPending(item.id, true);
+    await updateItem(item.id, { isEquipped: next });
+    markPending(item.id, false);
+  }
+
+  async function adjustQty(item: EquippableItemData, delta: number) {
+    const next = Math.max(0, item.quantity + delta);
+    setItems((prev) => prev.map((i) => i.id === item.id ? { ...i, quantity: next } : i));
+    markPending(item.id, true);
+    await updateItem(item.id, { quantity: next });
+    markPending(item.id, false);
+  }
+
+  if (loading) return <p className="text-[11px] text-slate-400 py-2">Loading…</p>;
+  if (items.length === 0) return <p className="text-[11px] text-slate-400 italic">No items in this area.</p>;
+
   return (
     <div className="space-y-2">
-      <div>
-        <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">Equipped</p>
-        <div className="space-y-1">
-          <div className="flex gap-2 text-xs">
-            <span className="text-slate-500 w-12 shrink-0">Weapon</span>
-            <span className="text-slate-800 font-medium">{state.equipped.weapon ?? "—"}</span>
-          </div>
-          <div className="flex gap-2 text-xs">
-            <span className="text-slate-500 w-12 shrink-0">Armor</span>
-            <span className="text-slate-800 font-medium">{state.equipped.armor ?? "—"}</span>
-          </div>
-        </div>
+
+      {/* ── Item rows ── */}
+      <div className="divide-y divide-slate-100">
+        {items.map((item) => {
+          const isBusy = pending.has(item.id);
+          const dimmed = item.quantity === 0 ? "opacity-40" : "";
+          return (
+            <div key={item.id} className={`flex items-center gap-1.5 py-1 ${dimmed}`}>
+
+              {/* Category initial badge */}
+              <span className={`shrink-0 w-4 text-center text-[9px] font-black rounded py-px uppercase ${CATEGORY_STYLE[item.category] ?? "bg-slate-100 text-slate-500"}`}>
+                {item.category[0]}
+              </span>
+
+              {/* Name + combat stat */}
+              <div className="flex-1 min-w-0">
+                <p className="text-[11px] font-semibold text-slate-800 leading-tight truncate">{item.name}</p>
+                <p className="text-[10px] font-medium text-emerald-700 leading-none">{item.combatImpactLabel}</p>
+              </div>
+
+              {/* Weight */}
+              <span className="shrink-0 text-[10px] font-mono text-slate-400 tabular-nums">
+                {item.weightLbs % 1 === 0 ? item.weightLbs : item.weightLbs.toFixed(1)}lb
+              </span>
+
+              {/* Quantity counter */}
+              <div className="flex items-center gap-0.5 shrink-0">
+                {isMe ? (
+                  <>
+                    <button
+                      onClick={() => adjustQty(item, -1)}
+                      disabled={item.quantity === 0 || isBusy}
+                      className="w-4 h-4 flex items-center justify-center rounded bg-slate-100 hover:bg-slate-200 text-slate-600 text-[11px] leading-none disabled:opacity-30 disabled:cursor-not-allowed"
+                    >−</button>
+                    <span className="w-5 text-center text-[10px] font-mono font-bold text-slate-700 tabular-nums">
+                      {item.quantity}
+                    </span>
+                    <button
+                      onClick={() => adjustQty(item, +1)}
+                      disabled={isBusy}
+                      className="w-4 h-4 flex items-center justify-center rounded bg-slate-100 hover:bg-slate-200 text-slate-600 text-[11px] leading-none disabled:opacity-30 disabled:cursor-not-allowed"
+                    >+</button>
+                  </>
+                ) : (
+                  <span className="w-5 text-center text-[10px] font-mono text-slate-500">×{item.quantity}</span>
+                )}
+              </div>
+
+              {/* Equipped toggle */}
+              {isMe ? (
+                <button
+                  onClick={() => toggleEquipped(item)}
+                  disabled={isBusy}
+                  className={`shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded-full transition-colors disabled:cursor-not-allowed ${
+                    item.isEquipped
+                      ? "bg-amber-400 text-white"
+                      : "bg-slate-100 text-slate-400 hover:bg-slate-200"
+                  }`}
+                >
+                  {item.isEquipped ? "Eqpd" : "Equip"}
+                </button>
+              ) : item.isEquipped ? (
+                <span className="shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-600">
+                  Eqpd
+                </span>
+              ) : null}
+            </div>
+          );
+        })}
       </div>
-      <div>
-        <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">Bag</p>
-        {state.inventory.length === 0 ? (
-          <p className="text-xs text-slate-400 italic">Empty.</p>
-        ) : (
-          <ul className="space-y-0.5">
-            {state.inventory.map((item, i) => (
-              <li key={i} className="text-xs text-slate-700">· {item}</li>
-            ))}
-          </ul>
+
+      {/* ── Weight summary ── */}
+      <div className="pt-1 border-t border-slate-100 space-y-0.5">
+        <div className="flex justify-between items-baseline">
+          <span className="text-[10px] text-slate-500">Total weight</span>
+          <span className={`text-[10px] font-mono font-semibold tabular-nums ${overCapacity ? "text-red-600" : "text-slate-600"}`}>
+            {totalWeight.toFixed(1)} / {maxCapacity} lb
+          </span>
+        </div>
+        <div className="h-1 w-full bg-slate-200 rounded-full overflow-hidden">
+          <div
+            className={`h-full rounded-full transition-[width] duration-300 ${overCapacity ? "bg-red-500" : "bg-slate-400"}`}
+            style={{ width: `${Math.min(100, (totalWeight / maxCapacity) * 100)}%` }}
+          />
+        </div>
+        {overCapacity && (
+          <p className="text-[9px] text-red-500 font-medium">Over capacity — movement is reduced.</p>
         )}
       </div>
+
     </div>
   );
 }
