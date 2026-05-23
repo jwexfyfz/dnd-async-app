@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { prisma } from "../../lib/prisma";
 import { createSupabaseServerClient } from "../../lib/supabase-server";
-import { maxHpAtLevel } from "../../lib/leveling";
+import { maxHpAtLevel, HIT_DIE_BY_CLASS } from "../../lib/leveling";
 
 interface ActionResponse {
   success: boolean;
@@ -43,6 +43,9 @@ export async function createCharacter(formData: FormData): Promise<ActionRespons
   if (!characterClass) {
     return { success: false, error: "You must choose a character class." };
   }
+  if (!(characterClass in HIT_DIE_BY_CLASS)) {
+    return { success: false, error: "Invalid character class." };
+  }
   if (strength === null || dexterity === null || constitution === null ||
       intelligence === null || wisdom === null || charisma === null) {
     return { success: false, error: "All ability scores must be between 1 and 20." };
@@ -78,6 +81,7 @@ export async function createCharacter(formData: FormData): Promise<ActionRespons
         wisdom,
         charisma,
         maxHp,
+        currentHp: maxHp,
       },
     });
 

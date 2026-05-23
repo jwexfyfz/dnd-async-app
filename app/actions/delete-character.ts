@@ -10,7 +10,7 @@ export async function deleteCharacter(characterId: string) {
 
   const character = await prisma.character.findUnique({
     where:   { id: characterId },
-    include: { games: { where: { status: "ACTIVE" } } },
+    include: { games: true },
   });
   if (!character)                      return { success: false, error: "Character not found." };
   if (character.userId !== user.id)    return { success: false, error: "Not your character." };

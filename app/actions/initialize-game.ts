@@ -26,17 +26,22 @@ export async function initializeGame(gameId: string): Promise<InitResult> {
   const game = await prisma.game.findUnique({
     where:   { id: gameId },
     include: {
-      character:   true,
-      storyPrompt: true,
-      map:         true,
-      messages:    { take: 1 }, // Only need to confirm there are no messages
+      character:    true,
+      storyPrompt:  true,
+      map:          true,
+      messages:     { take: 1 },
+      partyMembers: { select: { userId: true } },
     },
   });
 
   if (!game) return { success: false, error: "Game not found." };
-  if (game.character.userId !== user.id) return { success: false, error: "Access denied." };
+
+  const isHost   = game.character.userId === user.id;
+  const isMember = game.partyMembers.some((m) => m.userId === user.id);
+  if (!isHost && !isMember) return { success: false, error: "Access denied." };
 
   // Guard against double-initialization (e.g. React strict mode firing twice).
+  // Any party member or host can retrieve the existing opening scene.
   if (game.messages.length > 0) {
     const firstMsg = await prisma.message.findFirst({
       where: { gameId, role: "DUNGEON_MASTER" },
@@ -48,6 +53,9 @@ export async function initializeGame(gameId: string): Promise<InitResult> {
       chips:     (firstMsg?.chips as string[] | null) ?? [],
     };
   }
+
+  // Only the host can generate the opening scene.
+  if (!isHost) return { success: false, error: "Access denied." };
 
   const client  = new Anthropic();
   const mapData = game.map.data as Record<string, any>;
@@ -86,9 +94,8 @@ export async function initializeGame(gameId: string): Promise<InitResult> {
     return { success: false, error: "The DM is temporarily unavailable." };
   }
 
-  const rawText = response.content.find((b) => b.type === "text")
-    ? (response.content.find((b) => b.type === "text") as Anthropic.TextBlock).text
-    : "";
+  const textBlock = response.content.find((b): b is Anthropic.TextBlock => b.type === "text");
+  const rawText   = textBlock?.text ?? "";
 
   let parsed: { narrative: string; stateDeltas: Record<string, any>; chips: string[] };
   try {
@@ -158,10 +165,19 @@ function buildDynamicStatePrompt(gameState: any): string {
   const inv   = gameState.inventory?.length ? gameState.inventory.join(", ") : "empty";
   const flags = gameState.plotFlags?.length ? gameState.plotFlags.join(", ") : "none";
 
+  const isParty = gameState.partyHp != null;
+  const hpLine  = isParty
+    ? Object.entries(gameState.partyHp as Record<string, number>)
+        .map(([id, hp]) => `${id}: ${hp}/${(gameState.partyMaxHp as Record<string, number>)?.[id] ?? "?"}`)
+        .join(", ")
+    : `${gameState.hp ?? "?"}/${gameState.maxHp ?? "?"}`;
+  const posX = gameState.playerPos?.x ?? 0;
+  const posY = gameState.playerPos?.y ?? 0;
+
   return `CURRENT STATE
-Position: (${gameState.playerPos?.x ?? 0}, ${gameState.playerPos?.y ?? 0})
-HP: ${gameState.hp}/${gameState.maxHp}
+Position: (${posX}, ${posY})
+HP: ${hpLine}
 Inventory: ${inv}
-Objective: ${gameState.activeObjective}
+Objective: ${gameState.activeObjective ?? "Begin the adventure"}
 Plot flags: ${flags}`;
 }

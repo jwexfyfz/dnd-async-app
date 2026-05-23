@@ -35,9 +35,8 @@ export async function startGame(
   });
   if (!storyPrompt) return { success: false, error: "Story not found." };
 
-  const conModifier = Math.floor((character.constitution - 10) / 2);
-  const startingHp  = 10 + conModifier;
-  const mapData     = storyPrompt.map.data as { playerStart: { x: number; y: number } };
+  const startingHp = character.maxHp;
+  const mapData    = storyPrompt.map.data as { playerStart: { x: number; y: number } };
 
   const initialState = {
     playerPos:       mapData.playerStart,
