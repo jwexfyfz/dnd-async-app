@@ -720,10 +720,10 @@ const STAT_FULL_NAME: Record<string, string> = {
 function MemberStatsPane({ char }: { char: CharacterData }) {
   const sheet = getCharacterSheetData(char);
 
-  const level    = char.level;
+  const level    = Math.max(1, Math.min(5, char.level));
   const atCap    = level >= 5;
   const nextXp   = atCap ? null : xpForNextLevel(level);
-  const prevXp   = XP_THRESHOLDS[level - 1];
+  const prevXp   = XP_THRESHOLDS[level - 1] ?? 0;
   const xpInLvl  = char.xp - prevXp;
   const xpNeeded = nextXp !== null ? nextXp - prevXp : 1;
   const xpPct    = atCap ? 100 : Math.max(0, Math.min(100, (xpInLvl / xpNeeded) * 100));

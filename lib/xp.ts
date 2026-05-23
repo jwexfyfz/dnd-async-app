@@ -67,6 +67,6 @@ export function computeLevel(xp: number): number {
  * @returns Cumulative XP threshold for the next level, or null at level cap
  */
 export function xpForNextLevel(level: number): number | null {
-  if (level >= XP_THRESHOLDS.length) return null; // level 5 = cap
+  if (level <= 0 || level >= XP_THRESHOLDS.length) return null; // invalid or at cap
   return XP_THRESHOLDS[level]; // XP_THRESHOLDS[level] is the threshold for (level + 1)
 }
