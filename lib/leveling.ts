@@ -55,7 +55,7 @@ export function maxHpAtLevel(
   for (let l = 2; l <= level; l++) {
     hp += hitDie.avg + conMod;
   }
-  return hp;
+  return Math.max(1, hp);
 }
 
 // ─── Re-exports ───────────────────────────────────────────────────────────────

@@ -221,10 +221,6 @@ export async function takeTurn(gameId: string, chipText: string): Promise<TurnRe
   const currentCharId   = callerMember?.characterId ?? game.characterId;
   const expectedVersion = game.version;
 
-  await prisma.message.create({
-    data: { gameId, role: "PLAYER", content: sanitizedAction },
-  });
-
   const contextWindow     = game.messages.slice(-ROLLING_WINDOW_SIZE);
   const gameState         = game.state as Record<string, any>;
   const mapData           = game.map.data as Record<string, any>;
@@ -330,26 +326,34 @@ export async function takeTurn(gameId: string, chipText: string): Promise<TurnRe
   }
 
   // Atomic write with optimistic lock — concurrent submissions return STALE_TURN.
+  // committedMaxHp is hoisted so the return block can reuse it without a second maxHpAtLevel call.
+  let committedMaxHp = currentCharacter.maxHp;
   try {
     await prisma.$transaction(async (tx) => {
       const current = await tx.game.findUnique({ where: { id: gameId }, select: { version: true } });
       if (!current || current.version !== expectedVersion) throw new Error("STALE_TURN");
       await tx.message.create({
+        data: { gameId, role: "PLAYER", content: sanitizedAction },
+      });
+      await tx.message.create({
         data: { gameId, role: "DUNGEON_MASTER", content: parsed.narrative, chips: parsed.chips },
       });
+      if (xpAwarded > 0 || didLevelUp) {
+        committedMaxHp = didLevelUp
+          ? maxHpAtLevel(currentCharacter.characterClass, currentCharacter.constitution, newLevel)
+          : currentCharacter.maxHp;
+        if (didLevelUp && newState.partyMaxHp) {
+          newState.partyMaxHp = { ...newState.partyMaxHp, [currentCharId]: committedMaxHp };
+        }
+        await tx.character.update({
+          where: { id: currentCharId },
+          data:  { xp: currentXp, level: newLevel, maxHp: committedMaxHp },
+        });
+      }
       await tx.game.update({
         where: { id: gameId },
         data:  { state: newState, currentTurnCharacterId: nextCharId, version: { increment: 1 } },
       });
-      if (xpAwarded > 0 || didLevelUp) {
-        const newMaxHp = didLevelUp
-          ? maxHpAtLevel(currentCharacter.characterClass, currentCharacter.constitution, newLevel)
-          : currentCharacter.maxHp;
-        await tx.character.update({
-          where: { id: currentCharId },
-          data:  { xp: currentXp, level: newLevel, maxHp: newMaxHp },
-        });
-      }
     });
   } catch (err: any) {
     if (err.message === "STALE_TURN") {
@@ -370,7 +374,7 @@ export async function takeTurn(gameId: string, chipText: string): Promise<TurnRe
       oldLevel:         previousLevel,
       newLevel,
       oldMaxHp:         currentCharacter.maxHp,
-      newMaxHp:         maxHpAtLevel(currentCharacter.characterClass, currentCharacter.constitution, newLevel),
+      newMaxHp:         committedMaxHp,
       proficiencyBonus: proficiencyBonus(newLevel),
     } : undefined,
   };

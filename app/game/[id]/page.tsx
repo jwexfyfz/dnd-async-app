@@ -11,6 +11,7 @@ import MapRenderer, { type MapData, type PartyMarker } from "../../../components
 import { classEmoji } from "../../../lib/class-emoji";
 import type { D20Result } from "../../../lib/dice";
 import { xpForNextLevel, XP_THRESHOLDS } from "../../../lib/xp";
+import { proficiencyBonus } from "../../../lib/leveling";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -524,7 +525,7 @@ function DiceCard({ result }: { result: D20Result }) {
 // ─── Level-up card ────────────────────────────────────────────────────────────
 
 function LevelUpCard({ result }: { result: LevelUpResult }) {
-  const profChanged = result.newLevel === 5;
+  const profChanged = proficiencyBonus(result.newLevel) !== proficiencyBonus(result.oldLevel);
   return (
     <div className="flex items-center gap-2 bg-indigo-50 border border-indigo-200 rounded-lg px-3 py-2 text-sm">
       <span className="text-base">⬆</span>
