@@ -35,13 +35,13 @@
 
 ### Phase 3: Leveling
 
-- [ ] **LVL-01**: `lib/leveling.ts` exports `maxHpAtLevel(characterClass, constitution, level): number` (class-aware hit die: Fighter d10/6, Rogue d8/5, Cleric d8/5, Wizard d6/4; level 1 = max die + CON mod; subsequent levels = average die + CON mod); `proficiencyBonus(level)` moved here or re-exported from `lib/dice.ts`
-- [ ] **LVL-02**: Level-up logic runs synchronously inside the `take-turn` Prisma transaction: when XP crosses a threshold, `character.level` increments, `character.maxHp` increases by the correct class hit die average + CON mod, and if multiple thresholds are crossed the loop processes each level individually
-- [ ] **LVL-03**: Character creation correctly calculates starting max HP per class (Fighter: 10 + CON mod, Rogue: 8 + CON mod, Cleric: 8 + CON mod, Wizard: 6 + CON mod) instead of hardcoding 10 for all classes
-- [ ] **LVL-04**: Claude's `stateDeltas` response is validated against an allowlist before being applied; keys `hp`, `maxHp`, `xp`, `level` are rejected if present in `stateDeltas` — the rules engine owns these exclusively
+- [x] **LVL-01**: `lib/leveling.ts` exports `maxHpAtLevel(characterClass, constitution, level): number` (class-aware hit die: Fighter d10/6, Rogue d8/5, Cleric d8/5, Wizard d6/4; level 1 = max die + CON mod; subsequent levels = average die + CON mod); `proficiencyBonus(level)` moved here or re-exported from `lib/dice.ts`
+- [x] **LVL-02**: Level-up logic runs synchronously inside the `take-turn` Prisma transaction: when XP crosses a threshold, `character.level` increments, `character.maxHp` increases by the correct class hit die average + CON mod, and if multiple thresholds are crossed the loop processes each level individually
+- [x] **LVL-03**: Character creation correctly calculates starting max HP per class (Fighter: 10 + CON mod, Rogue: 8 + CON mod, Cleric: 8 + CON mod, Wizard: 6 + CON mod) instead of hardcoding 10 for all classes
+- [x] **LVL-04**: Claude's `stateDeltas` response is validated against an allowlist before being applied; keys `hp`, `maxHp`, `xp`, `level` are rejected if present in `stateDeltas` — the rules engine owns these exclusively
 
 **Tests (Leveling phase):**
-- [ ] **LVL-05**: Unit tests cover `maxHpAtLevel` for all 4 classes at levels 1–5 with edge-case CON modifiers (−2, 0, +3); multi-level-up path (XP jump from 0 to 6500 processes 4 level-ups)
+- [x] **LVL-05**: Unit tests cover `maxHpAtLevel` for all 4 classes at levels 1–5 with edge-case CON modifiers (−2, 0, +3); multi-level-up path (XP jump from 0 to 6500 processes 4 level-ups)
 
 ---
 

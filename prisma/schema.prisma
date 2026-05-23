@@ -150,3 +150,37 @@ enum MessageRole {
   PLAYER
   DUNGEON_MASTER
 }
+
+// ─── Class Progression ───────────────────────────────────────────────────────
+
+// Lookup table: one row per (characterClass, level) pair, levels 1–20.
+// Logical link to Character: JOIN ON characterClass = Character.characterClass
+//                                AND level = Character.level
+model ClassProgression {
+  id               String @id @default(uuid())
+  characterClass   String           // "Fighter" | "Rogue" | "Cleric" | "Wizard"
+  level            Int              // 1–20
+  proficiencyBonus Int
+  featuresUnlocked String[]         // feature name slugs unlocked at this level
+  resourcePoolMax  Int?             // spell slots, rage charges, etc. (null = none)
+
+  features ClassFeature[]
+
+  @@unique([characterClass, level])
+  @@index([characterClass])
+}
+
+// ─── Class Feature ───────────────────────────────────────────────────────────
+
+// Detail record for a single feature unlocked at a given class + level.
+model ClassFeature {
+  id             String @id @default(uuid())
+  characterClass String
+  level          Int
+  name           String
+  description    String
+
+  classProgression ClassProgression @relation(fields: [characterClass, level], references: [characterClass, level])
+
+  @@index([characterClass, level])
+}

@@ -11,7 +11,7 @@
 
 - [x] **Phase 1: Dice Engine & Critical Bug Fixes** - Replace AI-invented rolls with a deterministic TypeScript engine; fix prompt injection and race condition; establish test infrastructure.
 - [x] **Phase 2: XP System** - Players earn XP at encounter end via code; XP persists on Character; level computed from cumulative total; progress visible in UI.
-- [ ] **Phase 3: Leveling** - Characters auto-level when XP crosses D&D Basic Rules thresholds (levels 1–5); max HP and proficiency bonus update per class hit die; Claude locked out of HP/XP/level via stateDeltas allowlist.
+- [x] **Phase 3: Leveling** - Characters auto-level when XP crosses D&D Basic Rules thresholds (levels 1–5); max HP and proficiency bonus update per class hit die; Claude locked out of HP/XP/level via stateDeltas allowlist. (completed 2026-05-23)
 - [ ] **Phase 4: Skills** - Characters have skill proficiencies; skill checks resolve via code (d20 + ability mod + proficiency bonus if applicable) and feed results to Claude for narration.
 
 ---
@@ -78,7 +78,7 @@ Plans:
 4. A Claude response that includes `hp`, `maxHp`, `xp`, or `level` in its `stateDeltas` payload is rejected; the rules engine applies no change for those keys.
 5. Unit tests cover `maxHpAtLevel` for all 4 classes at levels 1–5 with CON modifiers of −2, 0, and +3.
 
-**Plans:** 3/4 plans executed
+**Plans:** 4/4 plans complete
 
 Plans:
 **Wave 1**
@@ -92,7 +92,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 03-04-PLAN.md — LevelUpCard UI in FieldTab: indigo info card showing level/HP/proficiency deltas (LVL-02 user-facing slice)
+- [x] 03-04-PLAN.md — LevelUpCard UI in FieldTab: indigo info card showing level/HP/proficiency deltas (LVL-02 user-facing slice)
 
 ### Phase 4: Skills
 
@@ -119,5 +119,5 @@ Plans:
 |-------|----------------|--------|-----------|
 | 1. Dice Engine & Critical Bug Fixes | 5/5 | Complete | 2026-05-22 |
 | 2. XP System | 3/3 | Complete | 2026-05-22 |
-| 3. Leveling | 3/4 | In Progress|  |
+| 3. Leveling | 4/4 | Complete    | 2026-05-23 |
 | 4. Skills | 0/? | Not started | - |
