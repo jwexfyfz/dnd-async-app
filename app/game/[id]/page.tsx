@@ -12,6 +12,7 @@ import { classEmoji } from "../../../lib/class-emoji";
 import type { D20Result } from "../../../lib/dice";
 import { xpForNextLevel, XP_THRESHOLDS } from "../../../lib/xp";
 import { proficiencyBonus } from "../../../lib/leveling";
+import { getCharacterSheetData } from "../../../lib/character-sheet";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -85,11 +86,6 @@ interface GameFull {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const CHRONICLE_LIMIT = 20;
-
-function mod(score: number): string {
-  const m = Math.floor((score - 10) / 2);
-  return m >= 0 ? `+${m}` : `${m}`;
-}
 
 function hpBarColor(hp: number, max: number): string {
   const p = hp / max;
@@ -328,10 +324,10 @@ export default function GamePage() {
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`px-5 py-3 text-sm font-medium transition-colors ${
+              className={`flex-1 py-3 text-sm font-bold tracking-wide transition-colors ${
                 activeTab === tab.id
-                  ? "text-slate-900 border-b-2 border-amber-500"
-                  : "text-slate-400 hover:text-slate-700"
+                  ? "text-amber-900 border-b-[3px] border-amber-500 bg-amber-50"
+                  : "text-slate-500 hover:text-slate-800 border-b-[3px] border-transparent"
               }`}
             >
               {tab.label}
@@ -364,6 +360,7 @@ export default function GamePage() {
             partyMembers={partyMembers}
             state={localState}
             currentTurnCharacterId={gameData.currentTurnCharacterId}
+            currentUserId={currentUserId}
           />
         )}
         {activeTab === "chronicle" && (
@@ -546,49 +543,86 @@ function LevelUpCard({ result }: { result: LevelUpResult }) {
 
 // ─── Tab: Party ───────────────────────────────────────────────────────────────
 
-const STAT_KEYS: { key: keyof CharacterData; label: string }[] = [
-  { key: "strength",     label: "STR" },
-  { key: "dexterity",    label: "DEX" },
-  { key: "constitution", label: "CON" },
-  { key: "intelligence", label: "INT" },
-  { key: "wisdom",       label: "WIS" },
-  { key: "charisma",     label: "CHA" },
-];
+type PartySubTab = "stats" | "inventory" | "abilities";
+
+const CLASS_FEATURES: Record<string, string[]> = {
+  Barbarian: ["Rage (2/day)", "Unarmored Defense", "Reckless Attack"],
+  Bard:      ["Bardic Inspiration (d6)", "Jack of All Trades", "Song of Rest"],
+  Cleric:    ["Divine Domain", "Channel Divinity", "Spellcasting"],
+  Druid:     ["Wild Shape", "Druidic", "Spellcasting"],
+  Fighter:   ["Action Surge", "Second Wind", "Fighting Style"],
+  Monk:      ["Martial Arts", "Ki Points", "Unarmored Defense"],
+  Paladin:   ["Divine Smite", "Lay on Hands", "Aura of Protection"],
+  Ranger:    ["Favored Enemy", "Natural Explorer", "Spellcasting"],
+  Rogue:     ["Sneak Attack", "Cunning Action", "Thieves' Cant"],
+  Sorcerer:  ["Sorcerous Origin", "Metamagic", "Spellcasting"],
+  Warlock:   ["Pact Magic", "Eldritch Invocations", "Patron Feature"],
+  Wizard:    ["Arcane Recovery", "Spellcasting", "Spell Mastery"],
+};
 
 function PartyTab({
-  partyMembers, state, currentTurnCharacterId,
+  partyMembers, state, currentTurnCharacterId, currentUserId,
 }: {
   partyMembers:           PartyMemberData[];
   state:                  GameState;
   currentTurnCharacterId: string | null;
+  currentUserId:          string | null;
 }) {
-  // Solo games show a single character card.
-  const members = partyMembers.length > 0
-    ? partyMembers
-    : [];
+  const [subTab, setSubTab] = useState<PartySubTab>("stats");
+
+  const myMember = partyMembers.find((m) => m.userId === currentUserId);
+  const others   = partyMembers.filter((m) => m.userId !== currentUserId);
+  const ordered  = myMember ? [myMember, ...others] : partyMembers;
 
   return (
-    <div className="p-4 sm:p-6">
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-2xl">
-        {members.map((m) => {
-          const hp    = state.partyHp?.[m.characterId] ?? state.hp;
-          const maxHp = state.partyMaxHp?.[m.characterId] ?? state.maxHp;
-          const hpPct = Math.max(0, Math.min(100, (hp / maxHp) * 100));
+    <div className="p-4 sm:p-6 max-w-2xl">
+      {/* Sub-tab switcher */}
+      <div className="flex gap-1 mb-5 bg-slate-100 rounded-xl p-1">
+        {(["stats", "inventory", "abilities"] as const).map((t) => (
+          <button
+            key={t}
+            onClick={() => setSubTab(t)}
+            className={`flex-1 py-2 text-xs font-bold uppercase tracking-wider rounded-lg transition-colors ${
+              subTab === t
+                ? "bg-slate-900 text-white shadow-sm"
+                : "text-slate-500 hover:text-slate-700"
+            }`}
+          >
+            {t}
+          </button>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        {ordered.map((m) => {
+          const isMe     = m.userId === currentUserId;
+          const hp       = state.partyHp?.[m.characterId] ?? state.hp;
+          const maxHp    = state.partyMaxHp?.[m.characterId] ?? state.maxHp;
+          const hpPct    = Math.max(0, Math.min(100, (hp / maxHp) * 100));
           const isActive = m.characterId === currentTurnCharacterId;
 
           return (
             <div
               key={m.id}
               className={`bg-white border rounded-xl p-4 shadow-sm space-y-3 ${
-                isActive ? "border-green-300 ring-1 ring-green-200" : "border-slate-200"
+                isActive
+                  ? "border-green-300 ring-1 ring-green-200"
+                  : isMe
+                    ? "border-amber-300 ring-1 ring-amber-100"
+                    : "border-slate-200"
               }`}
             >
-              {/* Sprite + identity */}
+              {/* Identity */}
               <div className="flex items-start gap-3">
                 <span className="text-4xl leading-none">{classEmoji(m.character.characterClass)}</span>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <p className="font-semibold text-slate-900 text-sm">{m.character.name}</p>
+                    {isMe && (
+                      <span className="text-[10px] font-bold px-1.5 py-0.5 bg-amber-100 text-amber-800 rounded-full border border-amber-200">
+                        You
+                      </span>
+                    )}
                     {isActive && (
                       <span className="text-[10px] font-semibold px-1.5 py-0.5 bg-green-100 text-green-700 rounded-full">
                         Their turn
@@ -602,7 +636,7 @@ function PartyTab({
                 </div>
               </div>
 
-              {/* HP bar */}
+              {/* HP bar — always visible */}
               <div className="space-y-1">
                 <div className="flex justify-between text-xs text-slate-500">
                   <span>HP</span>
@@ -616,48 +650,204 @@ function PartyTab({
                 </div>
               </div>
 
-              {/* XP bar */}
-              {(() => {
-                const xp       = m.character.xp;
-                const level    = m.character.level;
-                const atCap    = level >= 5;
-                const nextXp   = atCap ? null : xpForNextLevel(level);
-                const prevXp   = XP_THRESHOLDS[level - 1];
-                const xpInLevel = xp - prevXp;
-                const xpNeeded  = nextXp !== null ? nextXp - prevXp : 1;
-                const xpPct     = atCap ? 100 : Math.max(0, Math.min(100, (xpInLevel / xpNeeded) * 100));
-                const label     = atCap
-                  ? "Level 5  ·  MAX"
-                  : "Level " + level + "  ·  XP: " + xp + " / " + nextXp;
-                return (
-                  <div className="space-y-1">
-                    <div className="text-xs text-slate-500">{label}</div>
-                    <div className="h-1.5 w-full bg-slate-200 rounded-full overflow-hidden">
-                      <div
-                        className="h-full rounded-full bg-blue-500"
-                        style={{ width: xpPct + "%" }}
-                      />
-                    </div>
-                  </div>
-                );
-              })()}
-
-              {/* Compact 6-stat row */}
-              <div className="grid grid-cols-6 gap-1 text-center">
-                {STAT_KEYS.map(({ key, label }) => {
-                  const score = m.character[key] as number;
-                  return (
-                    <div key={key}>
-                      <div className="text-[9px] text-slate-400 font-medium">{label}</div>
-                      <div className="text-xs font-bold text-slate-800">{score}</div>
-                      <div className="text-[9px] text-slate-400">{mod(score)}</div>
-                    </div>
-                  );
-                })}
-              </div>
+              {/* Sub-tab content */}
+              {subTab === "stats"     && <MemberStatsPane char={m.character} />}
+              {subTab === "inventory" && <MemberInventoryPane isMe={isMe} state={state} />}
+              {subTab === "abilities" && <MemberAbilitiesPane char={m.character} />}
             </div>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+const STAT_EMOJI: Record<string, string> = {
+  strength:     "💪",
+  dexterity:    "🤸",
+  constitution: "🛡️",
+  intelligence: "🧠",
+  wisdom:       "🌲",
+  charisma:     "💬",
+};
+
+const STAT_FULL_NAME: Record<string, string> = {
+  strength:     "Strength",
+  dexterity:    "Dexterity",
+  constitution: "Constitution",
+  intelligence: "Intelligence",
+  wisdom:       "Wisdom",
+  charisma:     "Charisma",
+};
+
+function MemberStatsPane({ char }: { char: CharacterData }) {
+  const sheet = getCharacterSheetData(char);
+
+  const level    = char.level;
+  const atCap    = level >= 5;
+  const nextXp   = atCap ? null : xpForNextLevel(level);
+  const prevXp   = XP_THRESHOLDS[level - 1];
+  const xpInLvl  = char.xp - prevXp;
+  const xpNeeded = nextXp !== null ? nextXp - prevXp : 1;
+  const xpPct    = atCap ? 100 : Math.max(0, Math.min(100, (xpInLvl / xpNeeded) * 100));
+  const xpLabel  = atCap ? "Level 5  ·  MAX" : `Level ${level}  ·  XP: ${char.xp} / ${nextXp}`;
+  const fmtMod   = (n: number) => (n >= 0 ? `+${n}` : `${n}`);
+  const profBg   = "bg-green-50";
+
+  return (
+    <div className="space-y-2">
+
+      {/* XP bar */}
+      <div className="space-y-1">
+        <div className="text-xs text-slate-500">{xpLabel}</div>
+        <div className="h-1.5 w-full bg-slate-200 rounded-full overflow-hidden">
+          <div className="h-full rounded-full bg-blue-500" style={{ width: `${xpPct}%` }} />
+        </div>
+      </div>
+
+      {/* Proficient legend — own row, right-aligned, above stats */}
+      <div className="flex justify-end">
+        <div className="flex items-center gap-1">
+          <span className="inline-block w-2.5 h-2.5 rounded-sm bg-green-500" />
+          <span className="text-[10px] text-slate-400">Proficient</span>
+        </div>
+      </div>
+
+      {/* Stat table: row-header col + 6 stat cols */}
+      <div className="grid gap-x-0.5 gap-y-0" style={{ gridTemplateColumns: "auto repeat(6, 1fr)" }}>
+
+        {/* Row 1 — emoji + stat abbreviation headers */}
+        <div /> {/* empty corner */}
+        {sheet.stats.map(({ key, label }) => (
+          <div key={`h-${key}`} className="flex flex-col items-center pb-1 gap-0.5">
+            <span className="text-sm leading-none">{STAT_EMOJI[key]}</span>
+            <span className="text-[9px] font-semibold text-slate-500 uppercase tracking-wide">{label}</span>
+          </div>
+        ))}
+
+        {/* Row 2 — Combat Bonus */}
+        <div className="flex items-center pr-2">
+          <span className="text-[9px] text-slate-400 leading-tight">Combat<br />Bonus</span>
+        </div>
+        {sheet.stats.map(({ key, saveMod, saveProficient }) => (
+          <div key={`s-${key}`} className={`flex justify-center items-center rounded-t-md pt-2 pb-1 ${saveProficient ? profBg : ""}`}>
+            <span className={`text-lg font-bold leading-tight ${saveProficient ? "text-green-900" : "text-slate-800"}`}>
+              {fmtMod(saveMod)}
+            </span>
+          </div>
+        ))}
+
+        {/* Row 3 — Raw Score */}
+        <div className="flex items-center pr-2">
+          <span className="text-[9px] text-slate-400 leading-tight">Raw<br />Score</span>
+        </div>
+        {sheet.stats.map(({ key, score, saveProficient }) => (
+          <div key={`r-${key}`} className={`flex justify-center items-center rounded-b-md pb-2 pt-1 ${saveProficient ? profBg : ""}`}>
+            <span className={`text-xs font-medium ${saveProficient ? "text-green-500" : "text-slate-400"}`}>
+              {score}
+            </span>
+          </div>
+        ))}
+
+      </div>
+
+      {/* Actions & Skills — grouped by stat */}
+      <div className="space-y-2 pt-2">
+        <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-widest">
+          Actions &amp; Skills
+        </p>
+        {sheet.stats
+          .filter(({ key }) => sheet.skills.some((s) => s.ability === key))
+          .map(({ key }) => {
+            const groupSkills = sheet.skills.filter((s) => s.ability === key);
+            return (
+              <div key={key} className="bg-slate-50 border border-slate-100 rounded-lg p-2 space-y-1">
+                <p className="text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">
+                  {STAT_EMOJI[key]} {STAT_FULL_NAME[key]}
+                </p>
+                {groupSkills.map(({ name, modifier, proficient }) => (
+                  <div
+                    key={name}
+                    className={`flex items-center justify-between px-2.5 py-1 rounded-full border text-xs ${
+                      proficient
+                        ? `${profBg} border-green-200`
+                        : "bg-white border-slate-200"
+                    }`}
+                  >
+                    <span className={`truncate mr-1 ${proficient ? "font-bold text-green-900" : "text-slate-600"}`}>
+                      {name}
+                    </span>
+                    <span className={`shrink-0 font-mono text-[11px] ${
+                      proficient ? "font-bold text-green-900" : "text-slate-500"
+                    }`}>
+                      {fmtMod(modifier)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            );
+          })}
+      </div>
+
+    </div>
+  );
+}
+
+function MemberInventoryPane({ isMe, state }: { isMe: boolean; state: GameState }) {
+  if (!isMe) return <p className="text-xs text-slate-400 italic">Inventory is private.</p>;
+  return (
+    <div className="space-y-2">
+      <div>
+        <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">Equipped</p>
+        <div className="space-y-1">
+          <div className="flex gap-2 text-xs">
+            <span className="text-slate-500 w-12 shrink-0">Weapon</span>
+            <span className="text-slate-800 font-medium">{state.equipped.weapon ?? "—"}</span>
+          </div>
+          <div className="flex gap-2 text-xs">
+            <span className="text-slate-500 w-12 shrink-0">Armor</span>
+            <span className="text-slate-800 font-medium">{state.equipped.armor ?? "—"}</span>
+          </div>
+        </div>
+      </div>
+      <div>
+        <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">Bag</p>
+        {state.inventory.length === 0 ? (
+          <p className="text-xs text-slate-400 italic">Empty.</p>
+        ) : (
+          <ul className="space-y-0.5">
+            {state.inventory.map((item, i) => (
+              <li key={i} className="text-xs text-slate-700">· {item}</li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function MemberAbilitiesPane({ char }: { char: CharacterData }) {
+  const prof  = proficiencyBonus(char.level);
+  const feats = CLASS_FEATURES[char.characterClass] ?? [];
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2 text-xs">
+        <span className="text-slate-500">Proficiency Bonus</span>
+        <span className="font-bold text-slate-900">+{prof}</span>
+      </div>
+      <div>
+        <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">
+          {char.characterClass} Features
+        </p>
+        {feats.length === 0 ? (
+          <p className="text-xs text-slate-400 italic">No features recorded.</p>
+        ) : (
+          <ul className="space-y-0.5">
+            {feats.map((f) => (
+              <li key={f} className="text-xs text-slate-700">· {f}</li>
+            ))}
+          </ul>
+        )}
       </div>
     </div>
   );
