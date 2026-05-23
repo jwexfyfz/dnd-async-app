@@ -1,171 +1,168 @@
-<!-- refreshed: 2026-05-21 -->
+<!-- refreshed: 2026-05-23 -->
 # Architecture
 
-**Analysis Date:** 2026-05-21
+**Analysis Date:** 2026-05-23
 
 ## System Overview
 
 ```text
 ┌─────────────────────────────────────────────────────────────┐
-│              Next.js 16 App Router (Vercel)                  │
-│                                                              │
-│  Client Components ("use client")   Server Actions          │
-│  ┌──────────────────────────┐       ┌───────────────────┐   │
-│  │  app/page.tsx            │──────▶│  app/actions/     │   │
-│  │  components/             │       │  get-characters   │   │
-│  │  (auth state, UI state)  │       │  create-character │   │
-│  └──────────────────────────┘       │  start-game       │   │
-│                                     │  get-story-prompts│   │
-│                                     └────────┬──────────┘   │
-└────────────────────────────────────────────┬─┴──────────────┘
-                                             │
-                    ┌────────────────────────┼────────────────┐
-                    │                        │                │
-                    ▼                        ▼                │
-       ┌────────────────────┐   ┌────────────────────┐       │
-       │  Supabase Auth     │   │  Prisma ORM        │       │
-       │  lib/supabase-     │   │  lib/prisma.ts     │       │
-       │  server.ts         │   │  (Neon adapter)    │       │
-       │  lib/supabase-     │   └────────┬───────────┘       │
-       │  client.ts         │            │                    │
-       └────────────────────┘            ▼                    │
-                                ┌────────────────────┐       │
-                                │  Supabase          │       │
-                                │  PostgreSQL (Neon) │       │
-                                └────────────────────┘       │
-└───────────────────────────────────────────────────────────┘
+│                  Next.js 16 App Router (Client)              │
+│   app/page.tsx  app/game/[id]/page.tsx  app/game/[id]/lobby │
+└──────────────────────┬──────────────────────────────────────┘
+                       │ server actions ("use server")
+                       ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    app/actions/                              │
+│  take-turn.ts · initialize-game.ts · get-game.ts            │
+│  start-adventure.ts · create-character.ts · join-game.ts    │
+└────────────────┬──────────────────┬─────────────────────────┘
+                 │                  │
+                 ▼                  ▼
+┌───────────────────────┐  ┌──────────────────────────────┐
+│  Anthropic SDK         │  │  Prisma 7 + Neon adapter      │
+│  claude-haiku-4-5     │  │  lib/prisma.ts (singleton)    │
+│  (DM narration)        │  │  PostgreSQL via Neon          │
+└───────────────────────┘  └──────────────────────────────┘
 ```
 
-## Pattern
+## Component Responsibilities
 
-**Overall:** Next.js full-stack monolith with App Router, serverless-optimized.
+| Component | Responsibility | File |
+|-----------|----------------|------|
+| Home page | Auth lifecycle + character roster | `app/page.tsx` |
+| Game page | Turn loop, HP HUD, tab UI (Field/Party/Chronicle) | `app/game/[id]/page.tsx` |
+| Lobby page | Party assembly, ready-check, start adventure | `app/game/[id]/lobby/page.tsx` |
+| MapRenderer | ASCII tile grid render, party markers | `components/map-renderer.tsx` |
+| CharacterList | Character cards with active-game status | `components/character-list.tsx` |
+| CharacterForm | Character creation form | `components/character-form.tsx` |
+| LoginScreen | Google OAuth sign-in prompt | `components/login-screen.tsx` |
+| UserMenu | Auth session menu | `components/user-menu.tsx` |
 
-- No separate API layer. All data mutations go through **Next.js Server Actions** (`"use server"`).
-- Client components handle auth state and UI interactivity only; they never call the database directly.
-- Database access is exclusive to server actions via `lib/prisma.ts`.
-- Auth identity is verified at the top of every server action via `createSupabaseServerClient()` before any DB operation.
+## Pattern Overview
 
-## Frontend
+**Overall:** Next.js App Router with server actions as the API layer. No separate REST API — all mutations go through `"use server"` functions. Client components hold optimistic UI state; server is the source of truth.
 
-**Routing:**
-- App Router (Next.js 16). Single route at `/` (`app/page.tsx`).
-- Auth callback handled by `app/auth/callback/route.ts` — a Route Handler that redirects to `/` and lets `page.tsx` pick up the hash token.
+**Key Characteristics:**
+- All data mutations are server actions, not API routes (one exception: `/api/auth` callback and `/api/resolveCombat`)
+- Game state lives entirely in `Game.state` as a JSON blob; the DB is the single source of truth
+- Client optimistically applies AI responses before re-fetching from DB to settle HP
 
-**State Management:**
-- Local `useState` only — no global state library (no Redux, Zustand, etc.).
-- Auth state lives in `page.tsx` via `useState<user>`, synced with `supabaseBrowser.auth.onAuthStateChange()`.
-- Character roster state also lives in `page.tsx` and is passed down as props.
-- `useCallback` used for the `loadCharacters` refresh function so it can safely be passed as a prop to `CharacterForm`.
+## Layers
 
-**Data Fetching:**
-- Read operations: Server Actions returning `{ success, data, error }` objects (e.g., `getCharacters()`, `getStoryPrompts()`).
-- Write operations: Server Actions called directly from client event handlers (e.g., `createCharacter(formData)`).
-- No `fetch()` calls, no SWR/React Query. All data fetching is direct server action invocation.
-- `revalidatePath("/")` called after mutations to invalidate Next.js cache.
+**Client Layer:**
+- Purpose: Renders UI, manages ephemeral display state (tabs, loading flags, dice cards)
+- Location: `app/game/[id]/page.tsx`, `app/game/[id]/lobby/page.tsx`, `app/page.tsx`
+- Contains: React state, effects, derived values, tab sub-components defined in the same file
+- Depends on: server actions (for data), Supabase browser client (for auth identity)
+- Used by: End user browser
 
-**Auth Flow (Client):**
-1. User clicks "Sign in with Google" in `components/login-screen.tsx`.
-2. Browser is redirected to Supabase OAuth URL (`/auth/v1/authorize?provider=google`).
-3. Supabase redirects to `app/auth/callback/route.ts`, which redirects to `/?#access_token=...`.
-4. `page.tsx` `useEffect` detects the hash token, calls `supabaseBrowser.auth.setSession()`, strips hash from URL.
-5. `onAuthStateChange` listener keeps session in sync across tabs.
+**Server Actions Layer:**
+- Purpose: Auth guard, DB reads, AI calls, atomic DB writes
+- Location: `app/actions/`
+- Contains: All game mutations and queries
+- Depends on: `lib/prisma.ts`, `lib/supabase-server.ts`, Anthropic SDK, pure lib utilities
+- Used by: Client components via direct async function calls
 
-## Backend / API
-
-**Server Actions** (`app/actions/`) — 13 total:
-
-| Action | Auth | Purpose |
-|--------|------|---------|
-| `create-character.ts` | Yes | Upserts User, creates Character |
-| `delete-character.ts` | Yes | Deletes a character owned by the user |
-| `get-characters.ts` | Yes | Fetches all characters for current user |
-| `get-story-prompts.ts` | No | Returns seeded StoryPrompt rows (public) |
-| `start-game.ts` | Yes | Creates a new Game in LOBBY state |
-| `join-game.ts` | Yes | Adds a character to an existing lobby |
-| `leave-game.ts` | Yes | Removes a character from a lobby |
-| `kick-player.ts` | Yes | Host removes another player from lobby |
-| `set-ready.ts` | Yes | Marks a player as ready in lobby |
-| `start-adventure.ts` | Yes | Host transitions lobby → ACTIVE, builds initial state |
-| `initialize-game.ts` | Yes | Builds initial AI narrative for the game start |
-| `take-turn.ts` | Yes | Processes a player turn through the AI + state mutation |
-| `get-game.ts` | Yes | Fetches full game state + message history |
-
-All actions marked `"use server"`. Auth-gated actions call `createSupabaseServerClient()` first. Actions return `{ success: boolean, data?, error? }`.
-
-**Auth on the Server:**
-- `lib/supabase-server.ts` exports `createSupabaseServerClient()`, which creates a per-request Supabase client that reads/writes session tokens from HTTP cookies.
-- Auth is validated via `supabase.auth.getUser()` — the server validates the session JWT directly, not from client-supplied state.
-
-**Database Access:**
-- `lib/prisma.ts` exports a singleton `PrismaClient` using `@prisma/adapter-neon` for serverless-compatible connection pooling.
-- Global singleton pattern (`globalThis`) prevents connection pool exhaustion under hot-reload in dev.
-- All Prisma calls are directly in server actions — no repository or service layer.
-
-**Route Handlers:**
-- `app/auth/callback/route.ts`: Single GET handler that redirects to `/`. No logic beyond the redirect.
-- `app/api/auth/` directory exists but is empty (no NextAuth routes present).
-
-**Pages:**
-- `app/page.tsx`: Home — auth gate, character roster, start/join game entry point.
-- `app/create-character/page.tsx`: Dedicated character creation page.
-- `app/game/[id]/page.tsx`: Active game view — chat feed, turn input, game state display.
-- `app/game/[id]/lobby/page.tsx`: Pre-game lobby — player list, ready checks, host controls.
-- `app/play/page.tsx`: Game browser / join existing game.
+**Pure Logic Layer:**
+- Purpose: Deterministic game mechanics — dice, XP, leveling, HP, character sheet, combat parsing
+- Location: `lib/dice.ts`, `lib/xp.ts`, `lib/leveling.ts`, `lib/combat-effect.ts`, `lib/character-sheet.ts`
+- Contains: Zero framework dependencies, fully testable
+- Depends on: Nothing (stdlib only)
+- Used by: Server actions
 
 ## Data Flow
 
-### Character Creation (Write Path)
+### Primary Turn Flow
 
-1. User fills form in `components/character-form.tsx` (`"use client"`)
-2. `handleSubmit` constructs a `FormData` and calls `createCharacter(formData)` (`app/actions/create-character.ts`)
-3. Server action calls `createSupabaseServerClient()` → `supabase.auth.getUser()` to verify identity
-4. Upserts `User` row in Postgres (keyed by Supabase user ID)
-5. Inserts `Character` row via `prisma.character.create()`
-6. Calls `revalidatePath("/")`, returns `{ success: true }`
-7. `CharacterForm` calls `onCharacterCreated()` callback → `page.tsx` re-fetches roster
+1. Player clicks action chip → `handleChipClick()` in `app/game/[id]/page.tsx`
+2. Optimistic player message appended to `localMessages` immediately
+3. `takeTurn(gameId, chip)` server action called (`app/actions/take-turn.ts`)
+4. Server sanitizes input, fetches game + party from DB
+5. Turn ownership checked: `game.currentTurnCharacterId === callerMember.characterId`
+6. `detectActionType()` classifies action as AC (attack) or DC (skill) check
+7. `rollD20Check()` executes — **dice math is always code, never AI** (`lib/dice.ts`)
+8. Anthropic `messages.create()` called with two-part system prompt (static cached + dynamic state)
+9. AI returns JSON `{ narrative, stateDeltas, chips, encounterResult }` + optional `<combat_effect>` XML tags
+10. `parseCombatEffects()` extracts HP deltas from raw text (`lib/combat-effect.ts`)
+11. XP awarded if `encounterResult === "completed"`; `computeLevel()` checks for level-up
+12. Prisma `$transaction` atomically: writes two messages, updates character XP/level, updates `Game.state`, applies HP deltas, advances `currentTurnCharacterId`, increments `version`
+13. Server returns `{ narrative, chips, newState, diceResult, combatEffects, levelUpResult }`
+14. Client appends DM message to `localMessages`, updates `localState`, applies `localHpOverrides`
+15. `getGame()` refetch settles HP overrides from DB into `localHpOverrides`
 
-### Character Load (Read Path)
+### Game Initialization Flow
 
-1. `page.tsx` `useEffect` fires when `user` state is set
-2. Calls `loadCharacters()` → `getCharacters()` (`app/actions/get-characters.ts`)
-3. Server action verifies session, queries `prisma.character.findMany({ where: { userId } })` with `include: { games: { where: { status: "ACTIVE" } } }`
-4. Returns `{ success: true, data: characters[] }`
-5. `page.tsx` sets state → `CharacterList` re-renders
+1. Game page loads → `getGame(gameId)` fetches full game data
+2. If `phase === "LOBBY"`, router redirects to `/game/[id]/lobby`
+3. If `messages.length === 0`, `initializeGame(gameId)` is called once (guarded by `initCalledRef`)
+4. Opening DM narration + chips saved to DB and displayed
 
-### Game Start
+### Party Lobby Flow
 
-1. `startGame(characterId, storyPromptId)` called from client
-2. Verifies auth, checks for existing active game (idempotent — returns existing if found)
-3. Verifies character ownership: `character.userId !== user.id`
-4. Loads `StoryPrompt` with its `Map`, computes starting HP (`10 + conModifier`)
-5. Builds `initialState` JSON (player position, HP, empty inventory, plot flags)
-6. Creates `Game` row with `state` JSON blob
+1. Host creates game → redirected to lobby URL
+2. Others visit lobby URL; unauthenticated users see sign-in prompt
+3. Members join via `joinGame(gameId, characterId)`, toggle ready with `setReady()`
+4. Lobby polls `getGame()` every 3 seconds to detect new members
+5. Host calls `startAdventure()`: sorts party by DEX desc, assigns `turnOrder`, initialises `partyPositions`/`partyHp`/`partyMaxHp` in `Game.state`, sets `phase = ACTIVE`, sets `currentTurnCharacterId`
 
-**State Management:**
-- Canonical game world state is a JSON blob (`Game.state`) in PostgreSQL.
-- Message history is stored as `Message` rows linked to `Game` — role is `PLAYER` or `DUNGEON_MASTER`.
-- DM messages carry a `chips` JSON field for quick-action chips shown to the player next turn.
+## AI Integration
 
-## Key Design Decisions
+**Prompt Architecture** (two-part system, `app/actions/take-turn.ts`):
+- **Static block** (cache_control: ephemeral): Party stats, scenario description, map rooms/POIs, response format rules, `<combat_effect>` tag instructions. Built by `buildStaticPrompt()`. Cached by Anthropic's prompt caching to reduce cost.
+- **Dynamic block**: Current game state (positions, HP, inventory, plot flags), dice result, consecutive-miss count. Built by `buildDynamicStatePrompt()`. Regenerated each turn.
+- **Conversation messages**: Rolling window of last 15 messages (`ROLLING_WINDOW_SIZE`). Older messages stored in DB for Chronicle display but excluded from AI context.
 
-**1. Server Actions over API Routes**
-No REST or tRPC layer. Server Actions provide type-safe RPC from client to server with minimal boilerplate. The entire backend surface is `app/actions/`.
+**Model:** `claude-haiku-4-5` (`lib/ai-config.ts`), 600 max tokens per response.
 
-**2. Supabase ID as Prisma User PK**
-`User.id` in Prisma matches the Supabase auth UID directly. No join table. `createCharacter` upserts the `User` row on first character creation rather than requiring a separate registration step.
+**Rules Engine Keys:** The server strips `hp`, `maxHp`, `xp`, `level`, `proficiencyBonus` from AI-returned `stateDeltas` — the AI cannot override mechanical values.
 
-**3. Neon Serverless Adapter**
-`@prisma/adapter-neon` replaces the standard `pg` connection pool with a WebSocket-based pool optimized for serverless cold starts (Vercel edge functions). Configured in `lib/prisma.ts` and `prisma.config.ts`.
+## Combat Effects: `<combat_effect>` Tag Flow
 
-**4. Game State as JSON Blob**
-`Game.state` stores the full current world state as JSON rather than normalized columns. This allows the AI DM to read a single compact snapshot per turn without replaying the full message history. The schema comment documents the exact shape: `{ playerPos, hp, maxHp, inventory, equipped, npcsEncountered, plotFlags, activeObjective }`.
+1. AI appends self-closing XML tags after the JSON object: `<combat_effect target_id="CHAR_ID" delta="-8" type="damage" />`
+2. `parseCombatEffects(rawText)` in `lib/combat-effect.ts` extracts all tags with regex
+3. Server fetches current HP for each affected character from DB
+4. `clampHp(currentHp, delta, maxHp)` enforces floor 0 / ceiling maxHp
+5. `resolvedEffects` (`{ targetId, delta, type, newHp }`) written to DB inside the same transaction
+6. Client receives `combatEffects` in the turn result, applies `localHpOverrides` immediately
+7. Subsequent `getGame()` refetch settles overrides from the DB-committed values
 
-**5. Point Buy Enforced Client-Side with Server Re-validation**
-D&D 5e point-buy rules (8–15 stat range, 27 points, 2-cost tier at 14+) are enforced in `components/character-form.tsx` with inline rule hints. The server action (`create-character.ts`) accepts the submitted values but relies on client-side enforcement — there is no server-side point-buy validation at this stage.
+## HP State Management
 
-**6. Auth Callback via Hash Token**
-Supabase OAuth uses hash-fragment tokens (`#access_token=...`) rather than query params. The callback route at `app/auth/callback/route.ts` simply redirects to `/`; `page.tsx` handles token extraction from the hash, calls `setSession()`, then strips the hash from the browser URL.
+Three layers of HP state coexist on the client (`app/game/[id]/page.tsx`):
+
+| Layer | Variable | Source | When updated |
+|-------|----------|--------|--------------|
+| Optimistic display | `localHpOverrides` | `combatEffects` from `takeTurn` | Immediately after AI response |
+| Settled display | `localHpOverrides` | `getGame()` refetch | ~100ms after turn completes |
+| Game blob state | `localState.hp` / `localState.partyHp` | `takeTurn` `newState` | Same frame as DM message |
+
+`displayHp` resolves as: `localHpOverrides[myCharId] ?? localState.partyHp?.[myCharId] ?? localState.hp`
+
+HP flash animation (`hpFlashing` state, 800ms) fires when the acting character's HP changes.
+
+## Auth Flow
+
+**Browser:** `supabaseBrowser` (`lib/supabase-client.ts`) reads session from localStorage/cookies. Used only for reading the current user's ID client-side.
+
+**Server:** `createSupabaseServerClient()` (`lib/supabase-server.ts`) reconstructs session from HTTP cookies per request. Called at the top of every server action to validate the acting user before any DB access.
+
+**OAuth:** Google OAuth redirect. After callback, tokens arrive in URL hash on `app/page.tsx`, extracted and set via `supabaseBrowser.auth.setSession()`. Lobby pages redirect unauthenticated users through `sessionStorage.setItem("auth-return-to")` to return them after sign-in.
+
+## Optimistic Lock (Concurrency)
+
+`Game.version` is an integer incremented on every state write. `takeTurn` reads the version before calling the AI, then checks it inside a Prisma `$transaction`. If another request modified the game first, the transaction throws `"STALE_TURN"` and the action returns `{ error: "STALE_TURN" }`. The client surfaces this as a human-readable error message.
+
+## Error Handling
+
+**Strategy:** Fail fast and return typed error objects. No global error boundaries.
+
+**Patterns:**
+- Server actions return `{ success: false, error: string }` on all failures
+- AI call wrapped in try/catch; failures return "DM temporarily unavailable" to client
+- Stale turn lock returns `STALE_TURN` string sentinel, translated to UI text client-side
+- Prisma transaction errors for STALE_TURN are caught by message check; all others re-thrown
 
 ---
 
-*Architecture analysis: 2026-05-20*
+*Architecture analysis: 2026-05-23*

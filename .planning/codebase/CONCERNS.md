@@ -1,111 +1,140 @@
-<!-- refreshed: 2026-05-21 -->
-# Concerns & Technical Debt
+# Codebase Concerns
 
-**Analysis Date:** 2026-05-21
-
----
-
-## High Priority
-
-### [CRITICAL] No Dice Engine — AI Controls All Mechanical Outcomes
-`app/actions/take-turn.ts` passes player input directly to Claude with no code-side dice roll. Claude generates outcomes including combat results. This directly violates the CLAUDE.md spec ("Never let AI invent the roll result") and the Gameplay Transaction Loop (Step 4: Dice Roll Engine must be pure code). The game is mechanically broken at its core.
-
-### [CRITICAL] Prompt Injection Risk in `takeTurn`
-`app/actions/take-turn.ts` embeds raw `chipText` user input directly into the Claude system prompt with no sanitization or length limit. An adversarial user can override DM instructions or exhaust token budgets via the chip text input.
-
-### [CRITICAL] No DB Transaction on Turn State Mutation
-`app/actions/take-turn.ts` reads game state, calls Claude, then writes updated state as separate DB operations with no transaction. A concurrent turn submission causes a race condition that can corrupt HP values and turn order.
-
-### [CRITICAL] `initializeGame` Broken for Party Games
-`app/actions/initialize-game.ts` uses wrong prompt builders and wrong access checks for multi-player scenarios. Party games that transition from lobby will fail to initialize correctly.
-
-### [HIGH] No Real-Time Updates on Game Page
-`app/game/[id]/page.tsx` has no polling, WebSocket, or Supabase Realtime subscription. Party players never see turn changes after the page loads. The async turn loop is effectively non-functional for multiplayer.
-
-### [HIGH] No Notification System
-Resend (email) and Discord webhook integrations are specified in CLAUDE.md but not implemented anywhere. The async turn loop has no way to alert players when it's their turn.
-
-### [HIGH] No Server-Side Stat Validation
-`app/actions/create-character.ts` accepts stat values and class names from the client without server-side validation. Illegal stat distributions (totals > 27 points, values outside 8–15) and arbitrary class strings can be written to the DB. Client-side enforcement in `character-form.tsx` is the only guard.
+**Analysis Date:** 2026-05-23
 
 ---
 
-## Medium Priority
+## High — Blocks Correctness or Production Safety
 
-### [MEDIUM] Duplicate Prompt Builder Functions
-Prompt builder logic is copy-pasted across `app/actions/initialize-game.ts` and `app/actions/take-turn.ts`. These will drift apart as the game evolves, producing inconsistent AI behavior.
+### HP formula mismatch between `start-game.ts` and `leveling.ts`
 
-### [MEDIUM] Unbounded Message Loads
-`app/actions/get-game.ts` and `app/actions/take-turn.ts` load all `Message` rows for a game with no pagination or limit. Long-running games will exceed Claude's context window and cause increasingly slow DB queries.
+Solo games initialize HP using a hard-coded d10 formula instead of `maxHpAtLevel`:
 
-### [MEDIUM] No Prisma Indexes on Foreign Keys
-`Character.userId`, `Message.gameId`, and `Game`'s player join table lack explicit indexes in `prisma/schema.prisma`. Query performance will degrade as data grows.
+```ts
+// app/actions/start-game.ts:38-45
+const conModifier = Math.floor((character.constitution - 10) / 2);
+const startingHp  = 10 + conModifier;
+```
 
-### [MEDIUM] `useState<any>` for Auth User
-`app/page.tsx` (line 24) and at least two other files use `useState<any>(null)` for the Supabase user object. No TypeScript safety on auth state.
+`maxHpAtLevel` in `lib/leveling.ts` uses class-specific hit dice (Fighter d10, Wizard d6, Rogue d8, Cleric d8). A Wizard with CON 10 gets `hp=10` from `start-game.ts` but `hp=6` from `maxHpAtLevel`. The `Character.currentHp` column also defaults to `10` in `prisma/schema.prisma:38`, compounding this for characters who never start a game. Party games (via `start-adventure.ts`) do use `character.maxHp`, which was set correctly at creation by `create-character.ts`. Solo game state HP is therefore wrong for all non-Fighter classes.
 
-### [MEDIUM] `as unknown as GameFull` Double Casts
-Type assertions `as unknown as GameFull` in the game page hide mismatches between Prisma's generated types and the app's local `GameFull` interface. Runtime shape errors won't be caught at compile time.
+### `initializeGame` auth guard only checks host ownership, not party membership
 
-### [MEDIUM] Open Redirect in `create-character` Page
-`app/create-character/page.tsx` reads a `returnUrl` from `sessionStorage` and redirects to it after character creation without validating the URL. An attacker can redirect users to arbitrary external URLs.
+```ts
+// app/actions/initialize-game.ts:37
+if (game.character.userId !== user.id) return { success: false, error: "Access denied." };
+```
 
-### [MEDIUM] `sessionStorage` Return URL Not Validated
-Related to the above — the `returnUrl` written to `sessionStorage` before auth is not validated as a relative URL, enabling open redirect attacks.
+Any authenticated user can call `initializeGame` for a party game they did not create, since `game.character` is the host's character. The opening scene would be generated and the first DM message would be written by a non-host user.
 
-### [MEDIUM] Non-Atomic Character Deletion
-`app/actions/delete-character.ts` deletes related records (games, messages) in a loop before deleting the character, with no transaction. A mid-loop error leaves orphaned records.
+### `deleteCharacter` only deletes games with `status: "ACTIVE"`, not `COMPLETED`
 
-### [MEDIUM] `leaveGame` Leaves Game Stuck if Active Player Departs
-`app/actions/leave-game.ts` does not handle the case where the departing player is the active turn holder. The game's `active_turn_player_id` is not advanced, leaving the game permanently stalled.
+```ts
+// app/actions/delete-character.ts:13
+include: { games: { where: { status: "ACTIVE" } } },
+```
 
-### [MEDIUM] Debug `console.log` in Production Path
-`app/actions/get-game.ts` contains a `console.log` statement in the normal (non-error) code path that will emit to Vercel function logs in production.
+COMPLETED host games are not cleaned up. The associated `Message` and `PartyMember` rows stay in the database. The character row deletion will fail with a foreign-key constraint error if Prisma's referential integrity is enforced, or silently leave orphaned game records.
 
----
+### Unvalidated `characterClass` in `create-character.ts`
 
-## Low Priority
+The action checks that `characterClass` is not blank but does not validate it against the known class list (`HIT_DIE_BY_CLASS` in `lib/leveling.ts`). An arbitrary string such as `"Dragon"` is written to the database. `maxHpAtLevel` will then `throw new Error("Unknown class: Dragon")` at game-start, producing an unhandled 500 for the user.
 
-### [LOW] Inconsistent `@/` Alias Usage
-Some files use `@/app/actions/...` while others use relative paths (`../../lib/prisma`). No enforced standard.
+### No character name length or content constraint
 
-### [LOW] `Character` Interface Duplicated
-The `Character` interface is defined separately in `app/page.tsx` and `components/character-list.tsx`. No shared `lib/types.ts` exists yet.
-
-### [LOW] No `types/` or `lib/types.ts` Directory
-All interfaces are file-local. As the codebase grows this will cause duplication and drift.
+`create-character.ts` only checks `name.trim().length === 0`. A 10,000-character name or a name containing SQL-injection-style content passes validation and is stored. No `@db.VarChar(N)` constraint is applied in `prisma/schema.prisma:24`.
 
 ---
 
-## Incomplete Features
+## Medium — Degrades Quality or Maintainability
 
-| Feature | Status | Location |
-|---------|--------|----------|
-| Dice Roll Engine | Missing entirely | — |
-| Notification system (Resend/Discord) | Not implemented | — |
-| Host disband / end game | Not implemented | — |
-| Game completion states (victory/death) | Not implemented | — |
-| `TurnSessions` / `ActionLogs` tables | In schema, unused | `prisma/schema.prisma` |
-| Map coordinate labels (A–T, 1–20) | Not implemented | — |
-| Initiative tracker bar | Not implemented | — |
-| Notification settings panel | Not implemented | — |
-| "It's Your Turn" badge | Not implemented | — |
-| Perception filtering (`DiscoveredObjects`) | In schema, unused | — |
+### Inconsistent party-size threshold in `take-turn.ts`
+
+The solo/party branch is decided with two different conditions:
+
+```ts
+// Line 234 — auth path
+if (game.partyMembers.length > 0) { ... }
+
+// Lines 121, 336, 364 — state / delta routing
+if (game.partyMembers.length > 1 && gameState.partyHp) { ... }
+```
+
+A single-player party game (one member, i.e. the host who has not invited anyone) follows the "party" auth path but the "solo" state path. Whether this is intentional or a latent edge-case bug is not documented.
+
+### Prompt builders duplicated between `take-turn.ts` and `initialize-game.ts`
+
+`buildStaticPrompt` and `buildDynamicStatePrompt` exist in two separate files with diverging implementations. The `initialize-game.ts` versions do not support party state (`partyHp`, `partyPositions`) and use a different `CHARACTER` section format. A change to the DM prompt contract requires editing both files.
+
+### `any` typing in the critical action path
+
+`buildStaticPrompt` and `buildDynamicStatePrompt` in both `take-turn.ts` (lines 57, 110) and `initialize-game.ts` (lines 126, 157) accept `character: any`, `storyPrompt: any`, `mapData: any`, `partyMembers: any[]`. A property rename on the Prisma model will silently produce an `undefined` value injected into the AI prompt with no compile-time signal.
+
+### `app/api/resolveCombat/route.ts` is unauthenticated
+
+The POST route applies HP deltas to any character by ID without checking the caller's session. It is not called anywhere in the current codebase (no callers found), suggesting it is dead/experimental code, but it presents a data integrity risk if exposed publicly.
+
+### `game/[id]/page.tsx` is 963 lines
+
+The single file contains the main page component plus six sub-components (`FieldTab`, `PartyTab`, `ChronicleTab`, `MemberStatsPane`, `MemberInventoryPane`, `MemberAbilitiesPane`). Extracting sub-components to `components/` would reduce cognitive load and enable per-component testing.
 
 ---
 
-## Dependency Risks
+## Low — Nice to Fix, Not Urgent
 
-### [MEDIUM] Unused Packages in `dependencies`
-- `@supabase/auth-ui-react` and `@supabase/auth-ui-shared` — imported nowhere; a custom `LoginScreen` component is used instead. Adds ~40KB to bundle.
-- `@prisma/adapter-pg` — present alongside `@prisma/adapter-neon`; only the Neon adapter is actually used.
+### `console.error` in server actions exposes internal error messages to logs
 
-### [LOW] `dotenv` in Runtime Dependencies
-`dotenv` is listed under `dependencies` (not `devDependencies`). It's only needed at build/dev time via `prisma.config.ts`.
+All server actions pass raw `error.message` or `err.message` to `console.error`. In production this may surface Prisma error details (table names, constraint violations) to the server log. Use a structured logger or scrub messages before logging.
 
-### [LOW] Unverified `next` Version
-`package.json` specifies `next: "16.2.6"`. As of 2026-05-21 this version string doesn't match a known published Next.js release — may be a typo or pre-release pinned version. Verify against the npm registry.
+- `app/actions/create-character.ts:89` — logs `error.message` verbatim
+- `app/actions/start-game.ts:90` — logs `error.message` verbatim, and returns it directly to the client: `return { success: false, error: error.message }`
+
+### `CLASS_FEATURES` hard-coded in the page component
+
+```ts
+// app/game/[id]/page.tsx:601-614
+const CLASS_FEATURES: Record<string, string[]> = {
+  Barbarian: ["Rage (2/day)", ...],
+  ...
+};
+```
+
+The database has a `ClassFeature` table seeded with authoritative feature data. The page ignores it and renders a static string list instead. The `ClassProgression` and `ClassFeature` models in `prisma/schema.prisma` are never queried by the game page.
+
+### `hpBarColor` and `hpTextColor` divide by `max` without guarding `max === 0`
+
+```ts
+// app/game/[id]/page.tsx:93-105
+function hpBarColor(hp: number, max: number): string {
+  const p = hp / max;  // NaN if maxHp is ever 0
+```
+
+If `maxHp` is ever 0 (e.g., extreme negative CON modifier bug), `p` becomes `NaN`, all comparisons return `false`, and the bar color falls through to `"bg-red-500"` silently. Not currently reachable through normal play, but `Math.max(1, hp)` in `leveling.ts` does not prevent `maxHp=0` if `maxHpAtLevel` is bypassed.
 
 ---
 
-*Concerns analysis: 2026-05-21*
+## Known Gaps
+
+### `ClassProgression` and `ClassFeature` tables are seeded but never surfaced in-game
+
+The Prisma schema defines `ClassProgression` and `ClassFeature` models. The game page renders a hard-coded `CLASS_FEATURES` object instead. No action reads from these tables during gameplay.
+
+### No real-time turn notification for party games
+
+When Player A takes their turn, Player B's browser does not receive any push event. Player B must manually reload or re-navigate to see the updated state. There is no polling, WebSocket, or Supabase Realtime subscription in `app/game/[id]/page.tsx`.
+
+### Opening scene not generated for party games
+
+`initializeGame` checks `game.character.userId !== user.id` (host-only) but the function does not account for party structure at all. `buildDynamicStatePrompt` in `initialize-game.ts` reads `gameState.hp` and `gameState.playerPos`, which do not exist in the party-game state shape (which uses `partyHp`, `partyPositions`). The opening scene for a party game will inject `undefined` values into the AI prompt.
+
+### `PAUSED` game status is defined but never set or handled
+
+`prisma/schema.prisma:101` defines `GameStatus.PAUSED`. No action sets a game to `PAUSED` and no UI handles it. Dead schema value.
+
+### `MemberInventoryPane` shows "Inventory is private" for all non-self members
+
+Party inventory is shared (stored in `gameState.inventory`), but the component shows all other members' inventory as private. This is inconsistent with the game design where inventory is a shared resource.
+
+---
+
+*Concerns audit: 2026-05-23*

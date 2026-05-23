@@ -1,91 +1,162 @@
-# Testing
+# Testing Patterns
 
-**Analysis Date:** 2026-05-20
+**Analysis Date:** 2026-05-23
 
-## Framework
+## Test Framework
 
-**Runner:** None installed.
+**Runner:** Vitest 4.1.7
+**Config:** `vitest.config.ts` (project root)
+**Assertion library:** Vitest built-in (`expect`)
+**Plugin:** `vite-tsconfig-paths` — enables the `@/*` path alias in tests
 
-No test framework is present in the project. `package.json` lists no test runner (`jest`, `vitest`, `mocha`, etc.) in either `dependencies` or `devDependencies`. No config files were found:
-- `jest.config.*` — absent
-- `vitest.config.*` — absent
-- `.mocharc.*` — absent
+**Key config settings:**
+- `environment: 'node'` — no DOM simulation
+- `globals: false` — all vitest symbols must be explicitly imported
+- `coverage.provider: 'v8'`
 
-**Test script:** The `package.json` `scripts` block has no `"test"` key. The `CLAUDE.md` references `npm run test` as the verification command, but this script does not exist — running it will produce an `npm error Missing script: "test"`.
+**Run Commands:**
+```bash
+npm test              # Watch mode (vitest)
+npm run test:run      # Single run (vitest run)
+npm run test:coverage # Coverage report (vitest run --coverage)
+```
 
-## Test Types & Organization
+## Test File Locations
 
-**Unit tests:** None.
+**Pattern:** Test files live alongside the source file they test.
 
-**Integration tests:** None.
+```
+lib/
+  dice.ts
+  dice.test.ts        ← co-located
+  xp.ts
+  xp.test.ts          ← co-located
+  leveling.ts
+  leveling.test.ts    ← co-located
 
-**E2E tests:** None.
+app/actions/
+  create-character.ts
+  create-character.test.ts   ← co-located
+```
 
-**Test files found:** Zero files matching `*.test.ts`, `*.test.tsx`, `*.spec.ts`, or `*.spec.tsx` exist anywhere in the repository outside of `node_modules`.
+**Naming:** `<source-file-name>.test.ts` — no `.spec.ts` files exist.
 
-## Coverage Areas
+## Test File Header Convention
 
-No code has automated test coverage. The following logic areas exist in the codebase with no tests:
+Every test file opens with a multi-line banner comment documenting:
+- The test scope and ticket ID (e.g., `DICE-05`, `XP-05`, `LVL-01 + LVL-05`)
+- What is and is not mocked
+- The vitest globals requirement
 
-**Server Actions (`app/actions/`):**
-- `create-character.ts` — Point Buy stat validation, auth guard, Prisma upsert + create flow
-- `get-characters.ts` — Auth guard, Prisma query with relation include
-- `get-story-prompts.ts` — Prisma findMany, unauthenticated access
-- `start-game.ts` — Auth guard, duplicate game prevention, character ownership check, HP calculation (`conModifier = Math.floor((constitution - 10) / 2)`), initial game state construction
+Example:
+```typescript
+// ─── Dice Engine Unit Tests (DICE-05) ────────────────────────────────────────
+// Tests all five exports of lib/dice.ts at boundary conditions.
+// Uses injectable rollFn for all rollD20Check tests — no vi.spyOn or vi.mock.
+// Requires explicit vitest imports (globals: false in vitest.config.ts).
+```
 
-**Game Logic:**
-- `getStatCost()` in `components/character-form.tsx` — D&D 5e Point Buy cost table (1 point per level up to 13, 2 points per level for 14-15)
-- `handleStatChange()` — Boundary enforcement (min 8, max 15, pool exhaustion)
+## Test Structure
 
-**Auth Flow (`app/page.tsx`):**
-- OAuth hash token extraction and `setSession` call
-- `onAuthStateChange` subscription lifecycle
+**Suite organization:** `describe` blocks group tests by function name. One `describe` block per exported function.
 
-**Database Utilities (`lib/`):**
-- `lib/prisma.ts` — Singleton pattern, adapter initialization
-- `lib/supabase-server.ts` — Cookie read/write integration
+**Test naming:** `it(...)` descriptions are full human-readable sentences that include the input values and expected output, often with explanatory notes inline:
+```typescript
+it('score 9 → -1 (borderline: floor((9-10)/2) = floor(-0.5) = -1)', () => { ... })
+it('level 5 → null (at level cap — no next level)', () => { ... })
+```
 
-## Gaps
+**Imports:**
+```typescript
+import { describe, it, expect } from 'vitest'   // always explicit — no globals
+import { functionUnderTest } from './module'
+```
 
-Every feature in the application is untested. High-priority gaps by risk level:
+## What Is Tested
 
-**Critical — pure logic with no side effects (easiest to add unit tests):**
-- `getStatCost(currentValue, isIncrementing)` in `components/character-form.tsx` — Six boundary cases (increment from 13, 14; decrement from 14, 15; normal increment; normal decrement)
-- HP calculation in `app/actions/start-game.ts` — `Math.floor((constitution - 10) / 2)` across stat range 8–15
+**`lib/dice.ts`** — `lib/dice.test.ts` (199 lines, ~30 test cases)
+- `rollDie`: boundary values over 100 iterations
+- `rollDice`: roll count, total sum correctness
+- `abilityModifier`: all D&D 5e boundary scores (1, 8, 9, 10, 11, 12, 15, 20)
+- `proficiencyBonus`: levels 1–5 with step-function boundary at L4→L5
+- `rollD20Check`: success/failure at DC boundary, critical/fumble flags, dcType preservation, edge cases (nat 20 no auto-succeed on skill checks, fumble with high total)
 
-**High — server action validation logic:**
-- `createCharacter`: blank name, missing class, invalid stat values, unauthenticated call
-- `startGame`: duplicate game guard, character ownership mismatch, missing story prompt
+**`lib/xp.ts`** — `lib/xp.test.ts` (116 lines, ~20 test cases)
+- `computeLevel`: all 5 threshold boundaries (one below, exactly at, one above), cap behavior, negative XP
+- `xpForNextLevel`: all levels 1–5 including null at cap
+- `XP_THRESHOLDS`: length and exact values
+- `XP_BY_DIFFICULTY`: all three difficulty keys
 
-**Medium — integration paths:**
-- Auth callback route (`app/auth/callback/route.ts`) — redirects to `/`
-- Prisma singleton initialization when `DATABASE_URL` is missing (throws immediately)
+**`lib/leveling.ts`** — `lib/leveling.test.ts` (355 lines, ~70 test cases)
+- `HIT_DIE_BY_CLASS`: all 4 classes (Fighter, Rogue, Cleric, Wizard) verify `{ die, avg }`
+- `maxHpAtLevel`: level-1 base cases for all 4 classes; full 4×5×3 fixture grid (4 classes × 5 levels × 3 CON modifiers: -2, 0, +3); multi-level-up integration path; unknown class throws with descriptive message
+- `proficiencyBonus` re-export: levels 1–5
 
-**Low — UI rendering:**
-- `CharacterList` empty state, loading state
-- `CharacterForm` error display states
+**`app/actions/create-character.test.ts`** — (37 lines, 5 test cases)
+- Does NOT import or call `createCharacter` directly — tests the underlying `maxHpAtLevel` computation that `create-character.ts` must use at level 1.
+- Serves as an integration contract test: the action must call `maxHpAtLevel(characterClass, constitution, 1)`.
 
-## Running Tests
+## Mocking
 
-No test command is available. To add testing:
+**No mocks for lib functions.** `lib/dice.ts`, `lib/xp.ts`, and `lib/leveling.ts` are all pure functions with no side effects — no `vi.mock` or `vi.spyOn` anywhere.
 
-1. Install a test runner (Vitest is recommended for Next.js/ESM projects):
-   ```bash
-   npm install --save-dev vitest @vitejs/plugin-react
-   ```
+**Injectable rollFn pattern:** `rollD20Check` accepts an optional `rollFn: () => number` parameter. Tests pass a deterministic arrow function instead of mocking:
+```typescript
+const result = rollD20Check(3, 14, 'AC', () => 14)  // fixed roll of 14
+```
 
-2. Add a script to `package.json`:
-   ```json
-   "scripts": {
-     "test": "vitest run",
-     "test:watch": "vitest"
-   }
-   ```
+**No database mocking:** The `create-character.test.ts` test avoids calling the actual server action (which requires Prisma + Supabase). It tests the math function directly.
 
-3. Create a `vitest.config.ts` at the project root.
+## Coverage Configuration
 
-The `CLAUDE.md` instruction `npm run test` will fail until a test framework is installed and a `"test"` script is added to `package.json`.
+**Coverage scope (included):**
+- `lib/**` — all lib files
+- `app/actions/**` — all server actions
+
+**Coverage scope (excluded):**
+- `lib/prisma.ts` — infrastructure singleton
+- `lib/supabase-*.ts` — auth infrastructure
+- `lib/ai-config.ts` — constants file
+- `**/*.d.ts` — type declarations
+
+## What Is NOT Tested
+
+**Client components** — no tests exist for:
+- `components/character-form.tsx`
+- `components/character-list.tsx`
+- `components/login-screen.tsx`
+- `components/map-renderer.tsx`
+- `components/user-menu.tsx`
+
+**Server actions with I/O** — no tests exist for:
+- `app/actions/take-turn.ts` (requires Anthropic SDK + Prisma + Supabase)
+- `app/actions/initialize-game.ts`
+- `app/actions/start-game.ts`
+- `app/actions/join-game.ts`
+- `app/actions/delete-character.ts`
+- `app/actions/get-characters.ts`
+- All other actions in `app/actions/`
+
+**Pages** — no tests for any `app/**/page.tsx` files.
+
+**E2E** — no Playwright or Cypress setup detected.
+
+## Test Count Summary
+
+| File | Test Cases (approx.) |
+|------|---------------------|
+| `lib/dice.test.ts` | ~30 |
+| `lib/xp.test.ts` | ~20 |
+| `lib/leveling.test.ts` | ~70 |
+| `app/actions/create-character.test.ts` | 5 |
+| **Total** | **~125** |
+
+## Known Test Gaps
+
+- All server actions that call Prisma or Supabase are untested. The pattern for adding tests would require either: (a) integration tests with a real test database, or (b) dependency injection refactors to allow mock DB clients.
+- `lib/combat-effect.ts` and `lib/character-sheet.ts` have no test files despite containing business logic.
+- `lib/ai-config.ts` is excluded from coverage — its constants are tested indirectly via action behavior.
 
 ---
 
-*Testing analysis: 2026-05-20*
+*Testing analysis: 2026-05-23*

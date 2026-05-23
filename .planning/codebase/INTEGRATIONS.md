@@ -1,85 +1,170 @@
 # External Integrations
 
-**Analysis Date:** 2026-05-20
+**Analysis Date:** 2026-05-23
 
-## Services
+## Supabase Auth
 
-| Service | Purpose | SDK/Client |
-|---------|---------|------------|
-| Supabase Auth | User authentication — Google OAuth provider, session management via cookies | `@supabase/ssr` 0.10.3 |
-| Supabase PostgreSQL | Hosted PostgreSQL — pooled connection for runtime queries | Prisma 7.8.0 via `@prisma/adapter-neon` |
-| Neon Serverless | WebSocket database transport layer (underlies Supabase Postgres connection) | `@neondatabase/serverless` 1.1.0 |
-| Anthropic API | AI Dungeon Master — generates opening narration and turn-by-turn narrative responses | `@anthropic-ai/sdk` 0.97.1 |
-| Google OAuth | Login identity provider (routed through Supabase, no direct Google SDK) | Supabase auth endpoint redirect |
-| Google Fonts | Typography — Geist Sans and Geist Mono served via CDN | `next/font/google` (Next.js built-in) |
-| Vercel | Frontend hosting and serverless function execution environment | Next.js deploy target (no SDK) |
+**Purpose:** User authentication (Google OAuth + email/password)
 
-**Planned but not yet implemented (per CLAUDE.md):**
-- Resend — transactional email turn notifications (no `resend` package in `package.json`, no implementation found)
-- Discord Webhooks — turn notifications (no implementation found in any source file)
+**Package:** `@supabase/ssr` ^0.10.3
 
-## Environment Variables
+**Server client** — `lib/supabase-server.ts`:
+- Uses `createServerClient` from `@supabase/ssr`
+- Creates a fresh instance per request (not a singleton)
+- Reads session from HTTP cookies via `next/headers` `cookies()` store
+- Writes refreshed session tokens back via `cookieStore.set()` — silently no-ops in server components where writes are blocked
+- Used by every server action to verify the caller before any DB access:
+  ```ts
+  const supabase = await createSupabaseServerClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { success: false, error: "Not authenticated." };
+  ```
 
-All variables are loaded from `.env.local` (file is present; contents not read). No `.env.example` file exists — variable names are inferred from source code references.
+**Browser client** — `lib/supabase-client.ts`:
+- Uses `createBrowserClient` from `@supabase/ssr`
+- Singleton exported as `supabaseBrowser`
+- Used for auth state management in React components
 
-| Variable | Usage | Scope | Source File |
-|----------|-------|-------|-------------|
-| `NEXT_PUBLIC_SUPABASE_URL` | Supabase project base URL — used to construct OAuth redirect and by both auth clients | Public (browser-exposed) | `lib/supabase-client.ts`, `lib/supabase-server.ts`, `components/login-screen.tsx` |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anonymous key — used by both browser and server auth clients | Public (browser-exposed) | `lib/supabase-client.ts`, `lib/supabase-server.ts` |
-| `DATABASE_URL` | Neon WebSocket connection string — used by Prisma runtime client | Server-only secret | `lib/prisma.ts`, `prisma/seed.mjs` |
-| `DIRECT_URL` | Direct TCP connection string (port 5432) — used by Prisma CLI for migrations | Server-only secret | `prisma.config.ts` |
+**Auth callback** — `app/auth/callback/route.ts`:
+- GET handler at `/auth/callback`
+- Redirects to `origin/` to allow the homepage inline script to capture the `#access_token=` fragment
 
-**Note:** `ANTHROPIC_API_KEY` is not explicitly referenced in source code — the `@anthropic-ai/sdk` reads it automatically from the environment via its default behavior (`new Anthropic()` with no constructor args in `app/actions/take-turn.ts` and `app/actions/initialize-game.ts`).
+**Environment vars:**
+- `NEXT_PUBLIC_SUPABASE_URL` — Supabase project URL (exposed to browser)
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY` — public anon key (exposed to browser)
 
-## Auth Flow
-
-**Provider:** Google OAuth via Supabase
-
-**Flow:**
-1. User clicks "Sign in with Google" in `components/login-screen.tsx`
-2. Browser is redirected to `{NEXT_PUBLIC_SUPABASE_URL}/auth/v1/authorize?provider=google&redirect_to={origin}/auth/callback`
-3. After Google authenticates, Supabase redirects to `GET /auth/callback`
-4. `app/auth/callback/route.ts` immediately redirects browser to `/` (homepage) — preserving `#access_token=...` in the URL hash
-5. Homepage (`app/page.tsx`) detects the hash fragment and calls `supabaseBrowser.auth.setSession()` to write session cookies
-6. All server actions call `createSupabaseServerClient()` from `lib/supabase-server.ts` to verify the session via HTTP cookies before any database operation
-
-**Session management:**
-- Browser-side: `lib/supabase-client.ts` — singleton `supabaseBrowser` (`createBrowserClient`)
-- Server-side: `lib/supabase-server.ts` — per-request client (`createServerClient`) reading and writing HTTP cookies; cookie writes fail silently in server components (only succeed in server actions and route handlers)
-
-## Database Connection Architecture
-
-Two separate connection strings serve distinct purposes:
-
-| Variable | Transport | Used By | Purpose |
-|----------|-----------|---------|---------|
-| `DATABASE_URL` | Neon WebSocket (`PrismaNeon` adapter) | `lib/prisma.ts`, `prisma/seed.mjs` | Runtime queries from serverless functions |
-| `DIRECT_URL` | Standard TCP (`pg`, port 5432) | `prisma.config.ts` | Prisma CLI — migrations, `db push`, introspection |
-
-The Prisma singleton in `lib/prisma.ts` uses `globalThis` caching to prevent connection pool exhaustion during Next.js hot module reloading in development.
-
-## AI Integration Details
-
-**Client instantiation:** `new Anthropic()` with no arguments — API key read from `ANTHROPIC_API_KEY` environment variable automatically.
-
-**Model:** `claude-haiku-4-5` (set in `lib/ai-config.ts` as `DM_MODEL`)
-
-**Usage pattern:** Two server actions call the Anthropic API:
-- `app/actions/initialize-game.ts` — generates opening scene narration when a game's message log is empty
-- `app/actions/take-turn.ts` — generates narrative response and state deltas per player turn
-
-**Prompt caching:** Static system prompt block sent with `cache_control: { type: "ephemeral" }` to reuse the Anthropic cache across turns for the same game.
-
-**Response format:** Structured JSON (`{ narrative, stateDeltas, chips }`) — raw text fallback if JSON parse fails.
-
-## Webhooks / Callbacks
-
-**Incoming:**
-- `GET /auth/callback` — `app/auth/callback/route.ts` — OAuth redirect receiver from Supabase after Google login; redirects immediately to `/`
-
-**Outgoing:**
-- None currently implemented. Discord webhooks planned per CLAUDE.md; no code exists.
+**No middleware:** There is no `middleware.ts` in this project. Route protection is handled per-action via `supabase.auth.getUser()` checks inside each server action.
 
 ---
 
-*Integration audit: 2026-05-20*
+## Prisma + Neon
+
+**Purpose:** PostgreSQL ORM over Neon serverless Postgres
+
+**Packages:** `@prisma/client` ^7.8.0, `@prisma/adapter-neon` ^7.8.0, `@neondatabase/serverless` ^1.1.0
+
+**Client singleton** — `lib/prisma.ts`:
+- Adapter: `PrismaNeon({ connectionString })` — uses WebSocket connection, not a pg pool
+- Global var pattern (`globalForPrisma`) prevents multiple Prisma instances during Next.js hot reload
+- Throws immediately at module load if `DATABASE_URL` is missing
+
+**Prisma CLI config** — `prisma.config.ts`:
+- Loads `.env.local` via `dotenv` before Prisma CLI reads env vars
+- Uses `DIRECT_URL` (not `DATABASE_URL`) for migrations — Neon's pooled URL does not support migrations
+
+**Schema** — `prisma/schema.prisma`:
+- Provider: `postgresql`
+- 9 models: `User`, `Character`, `Map`, `StoryPrompt`, `Game`, `PartyMember`, `Message`, `ClassProgression`, `ClassFeature`
+- Game state stored as `Json` column on `Game.state`; AI writes `stateDeltas` into it each turn
+- Optimistic concurrency: `Game.version Int` — incremented every state write; `takeTurn` throws `STALE_TURN` if version changed since read
+
+**next.config.ts:**
+- `serverExternalPackages: ["pg", "dotenv"]` — prevents bundling of native pg and dotenv by Next.js
+
+**Environment vars:**
+- `DATABASE_URL` — Neon pooled connection string (runtime queries)
+- `DIRECT_URL` — Neon direct connection string (Prisma CLI migrations only)
+
+---
+
+## Anthropic SDK (AI DM)
+
+**Purpose:** Powers the Dungeon Master narrative engine
+
+**Package:** `@anthropic-ai/sdk` ^0.97.1
+
+**Client** — module-level singleton in `app/actions/take-turn.ts`:
+```ts
+const anthropic = new Anthropic({ maxRetries: 4 });
+```
+- `maxRetries: 4` provides SDK exponential backoff for 529 overload errors
+- API key read from `ANTHROPIC_API_KEY` env var (SDK default)
+
+**Model config** — `lib/ai-config.ts`:
+- Model: `claude-haiku-4-5`
+- Max tokens per response: `600`
+- Rolling context window: last `15` messages sent to the API
+
+**How it's called** — `app/actions/take-turn.ts`:
+- `anthropic.messages.create()` with a two-block `system` prompt:
+  1. Static block (character sheet + map + scenario + response rules) — marked `cache_control: { type: "ephemeral" }` for prompt caching
+  2. Dynamic block (current game state + dice result)
+- `messages` array: last 15 `Message` rows, mapped `PLAYER → user`, `DUNGEON_MASTER → assistant`
+- Response format: raw JSON object `{ narrative, stateDeltas, chips, encounterResult }` optionally followed by `<combat_effect>` XML tags
+- Dice rolls happen in code before the API call; AI is required to narrate around the result, never invent one
+
+**Environment vars:**
+- `ANTHROPIC_API_KEY` — secret, server-side only (no `NEXT_PUBLIC_` prefix)
+
+---
+
+## Next.js App Router
+
+**Route structure:**
+
+| Route | File | Type |
+|-------|------|------|
+| `/` | `app/page.tsx` | Server component (homepage) |
+| `/play` | `app/play/page.tsx` | Character/game selection |
+| `/create-character` | `app/create-character/page.tsx` | Character creation form |
+| `/game/[id]` | `app/game/[id]/page.tsx` | Active game view |
+| `/game/[id]/lobby` | `app/game/[id]/lobby/page.tsx` | Pre-game lobby |
+| `/auth/callback` | `app/auth/callback/route.ts` | GET — OAuth redirect handler |
+| `/api/resolveCombat` | `app/api/resolveCombat/route.ts` | POST — apply combat HP delta |
+
+**Layout files:**
+- `app/layout.tsx` — root layout
+- `app/game/layout.tsx` — game section layout
+
+**Server actions** — `app/actions/`:
+
+| Action | Purpose |
+|--------|---------|
+| `take-turn.ts` | Main game loop: dice → AI DM → state write |
+| `initialize-game.ts` | Create a new `Game` record |
+| `start-game.ts` | Start game from character select |
+| `start-adventure.ts` | Transition LOBBY → ACTIVE, assign turn order by DEX |
+| `join-game.ts` | Add a player to a party |
+| `leave-game.ts` | Remove caller from party |
+| `kick-player.ts` | Host removes another player |
+| `set-ready.ts` | Mark caller as READY in lobby |
+| `create-character.ts` | Create a new `Character` |
+| `delete-character.ts` | Delete a `Character` |
+| `get-characters.ts` | Fetch characters for current user |
+| `get-game.ts` | Fetch a single game with messages |
+| `get-story-prompts.ts` | Fetch available `StoryPrompt` rows |
+| `get-class-reference.ts` | Fetch `ClassProgression` + `ClassFeature` for a class |
+
+**All server actions:**
+- Begin with `"use server"` directive
+- Call `createSupabaseServerClient()` and `supabase.auth.getUser()` for auth verification
+- Access the database via the `prisma` singleton from `lib/prisma.ts`
+
+---
+
+## Environment Variables
+
+All secrets are stored in `.env.local` (not committed). Five variables are required at runtime:
+
+| Variable | Scope | Purpose |
+|----------|-------|---------|
+| `DATABASE_URL` | Server | Neon pooled connection string — runtime queries |
+| `DIRECT_URL` | CLI only | Neon direct connection — Prisma migrations |
+| `NEXT_PUBLIC_SUPABASE_URL` | Browser + Server | Supabase project endpoint |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Browser + Server | Supabase public anon key |
+| `ANTHROPIC_API_KEY` | Server | Anthropic API secret |
+
+---
+
+## Webhooks & Callbacks
+
+**Incoming:**
+- `GET /auth/callback` — Supabase OAuth redirect, redirects to `/` for fragment capture
+- `POST /api/resolveCombat` — internal endpoint to apply a `<combat_effect>` HP delta directly (used for testing; production path goes through `take-turn` transaction)
+
+**Outgoing:**
+- Anthropic `messages.create` API call from `take-turn` server action
+
+---
+
+*Integration audit: 2026-05-23*

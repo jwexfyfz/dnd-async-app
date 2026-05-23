@@ -1,176 +1,133 @@
 # Coding Conventions
 
-**Analysis Date:** 2026-05-20
+**Analysis Date:** 2026-05-23
 
-## Code Style
+## Hard Rules (from CLAUDE.md)
 
-**Formatting:**
-- No Prettier config detected. Formatting is not enforced by tooling — code is manually consistent.
-- Indentation: 2 spaces throughout all `.ts` and `.tsx` files.
-- Trailing commas used in multi-line objects and function args.
-- Single quotes used in `lib/` files (`lib/prisma.ts`); double quotes used in `app/` and `components/`. No enforced standard.
-
-**Linting:**
-- ESLint 9 with flat config format: `eslint.config.mjs`
-- Extends `eslint-config-next/core-web-vitals` and `eslint-config-next/typescript`
-- No custom rule overrides beyond the default Next.js ignores (`.next/`, `out/`, `build/`)
-- Run: `npm run lint` (calls `eslint` with no explicit target path — relies on default detection)
-
-**Semicolons:** Always used.
-
-**Line length:** No enforced limit. Some lines are long (e.g., inline ternary chains in JSX).
+- Never alter `prisma/schema.prisma` or run `prisma db push/migrate` unless the task explicitly requires it.
+- Never suppress or comment out TypeScript/build errors — fix the root cause.
+- Never let AI generate dice roll results — dice math is pure code only (see `lib/dice.ts`).
+- Surgical edits only — don't reformat or refactor files outside the active task.
 
 ## TypeScript Patterns
 
-**Strict mode:** Enabled — `tsconfig.json` has `"strict": true`.
+**Strict mode:** `strict: true` in `tsconfig.json`. All code compiles under strict null checks.
 
-**Path aliases:**
-- `@/*` maps to the project root. Used in components to import actions:
-  ```ts
-  import { createCharacter } from "@/app/actions/create-character";
-  ```
-- Relative paths (`../../lib/prisma`) are used inside `app/actions/` files when referencing `lib/`.
+**Interface definitions:** Defined locally in the file where they are consumed — not in a shared `types/` directory.
+- Action response shapes use a local `interface ActionResponse { success: boolean; error?: string; data?: ... }` pattern per action file.
+- Prop interfaces are defined just above the component they describe: `interface Props { ... }`.
+- Domain interfaces (e.g., `D20Result` in `lib/dice.ts`) live in the lib file that owns the concept.
 
-**Type definitions:**
-- Local interfaces are declared inline at the top of each file, not in a shared `types/` directory.
-- The `Character` interface is duplicated between `app/page.tsx` and `components/character-list.tsx` — no shared type file exists.
-- Props interfaces are named `Props` (not `ComponentNameProps`): `interface Props { ... }` pattern used in both `components/character-form.tsx` and `components/character-list.tsx`.
-- Server action return types are explicitly annotated: `Promise<ActionResponse>`, `Promise<StartGameResult>`.
+**Type narrowing:** Explicit null checks with early returns (`if (!user) return { success: false, error: "..." }`). `as` casts are used only for `FormDataEntryValue` parsing and JSON game state — never to silence errors.
 
-**`any` usage:**
-- `catch (error: any)` used in all four server actions — the standard pattern for untyped catch blocks.
-- `useState<any>(null)` used for the Supabase user object in `app/page.tsx` (line 24) — a known weak spot.
+**Exported constants:** Typed with `readonly` arrays where immutability matters (e.g., `export const XP_THRESHOLDS: readonly number[]` in `lib/xp.ts`).
 
-**Type assertions:** `as string` used when reading `FormData` values (unavoidable with the FormData API).
+**`type` vs `import type`:** `import type { D20Result }` is used for type-only imports to keep runtime bundles clean (seen in `app/actions/take-turn.ts`).
 
-**Generics:** Minimal — only used where React or Prisma APIs require them (e.g., `useState<"idle" | "loading" | "success" | "error">`).
+## File Naming
 
-## Component / Function Patterns
+- **Action files:** kebab-case, verb-noun pattern — `create-character.ts`, `take-turn.ts`, `get-characters.ts`
+- **Component files:** kebab-case `.tsx` — `character-form.tsx`, `character-list.tsx`, `login-screen.tsx`
+- **Lib files:** kebab-case `.ts` — `dice.ts`, `xp.ts`, `leveling.ts`, `combat-effect.ts`
+- **Test files:** same name as the file under test with `.test.ts` suffix — `dice.test.ts`, `xp.test.ts`
+- **Page files:** `page.tsx` in route directories per Next.js App Router convention
+- **CSS:** single `app/globals.css`
 
-**Directive placement:** `"use client"` and `"use server"` directives always appear as the first line of a file, before any imports. All components in `components/` use `"use client"`. All actions in `app/actions/` use `"use server"`.
+## Component Patterns
 
-**Component structure order:**
-1. Directive (`"use client"`)
-2. React/library imports
-3. Local action/component imports
-4. Module-level constants (e.g., `CLASSES`, `INITIAL_STATS`)
-5. Interface declarations (`interface Props`, `interface Character`)
-6. Default exported function component
+**"use client" vs server:** All interactive components declare `"use client"` at the top of the file. All data-fetching/mutation files declare `"use server"`. These directives are the first line of each file with no preceding comments.
 
-**Component exports:** All components use `export default function ComponentName`. No named component exports.
+**Client components:** `app/page.tsx`, `components/character-form.tsx`, `components/character-list.tsx`, `components/login-screen.tsx`, `components/user-menu.tsx`, `components/map-renderer.tsx`.
 
-**Props pattern:**
-```ts
-interface Props {
-  onCharacterCreated: () => void;
-}
-export default function CharacterForm({ onCharacterCreated }: Props) { ... }
-```
+**Server components / pages:** `app/game/[id]/page.tsx`, `app/create-character/page.tsx`, `app/play/page.tsx` — these are server-rendered pages that pass data down to client components.
 
-**State management:** Local `useState` hooks only — no global state library. Parent (`app/page.tsx`) owns shared state and passes callbacks down to children.
+**Prop interface naming:** Always `interface Props { ... }` (not `ComponentNameProps`), defined immediately before the component function.
 
-**Data lifting pattern:** Parent fetches data (`loadCharacters`) and passes it down as props. Children call parent callbacks on mutations (`onCharacterCreated`). Components do not fetch their own data.
+**Default exports:** All components use `export default function ComponentName(...)`.
 
-**`useCallback`:** Used when a stable function reference is needed as a prop dependency:
-```ts
-const loadCharacters = useCallback(async () => { ... }, []);
-```
-
-**`useEffect` pattern:** Effects are named inner `async function`s called immediately (not inline async arrow functions):
-```ts
-useEffect(() => {
-  async function handleAuthLifecycle() { ... }
-  handleAuthLifecycle();
-  return () => { subscription.unsubscribe(); };
-}, []);
-```
-
-**Module-level constants:** Uppercase snake_case for static data:
-```ts
-const CLASSES = ["Fighter", "Wizard", "Rogue", "Cleric"];
-const INITIAL_STATS = { strength: 8, ... };
-```
-
-**Server actions:** Thin async functions that: (1) authenticate the user, (2) validate input, (3) run the DB operation in a try/catch, (4) return a typed result object `{ success, error?, data? }`.
-
-## Error Handling
-
-**Server action pattern:** All four actions use the same structure:
-```ts
-try {
-  // DB operation
-  return { success: true, data: result };
-} catch (error: any) {
-  console.error("Context message:", error);
-  return { success: false, error: error.message || "Fallback message." };
+**Aligned prop formatting:** Multi-field interfaces use column-aligned values for readability:
+```typescript
+interface Character {
+  id:             string;
+  name:           string;
+  characterClass: string;
 }
 ```
 
-**Client-side error display:** Status state machine drives UI feedback:
-```ts
+## Server Action Patterns
+
+**Return shape:** Every action returns a plain object with `{ success: boolean; error?: string; data?: T }`. Data is always under the `data` key. Errors are always strings (never Error objects).
+
+**Error handling:** All async database work is wrapped in `try/catch`. On catch, `console.error` is called and `{ success: false, error: error.message }` is returned. TypeScript errors typed `error: any`.
+
+**Auth guard:** Every mutating action calls `supabase.auth.getUser()` and returns early with `{ success: false, error: "Not authenticated." }` if no user is present.
+
+**`revalidatePath`:** Called at the end of successful mutations to invalidate Next.js cache (e.g., `revalidatePath("/")` in `create-character.ts`).
+
+**`"use server"` placement:** Always the absolute first line of action files.
+
+## State Management Patterns
+
+**useState:** Used in all interactive client components. Multiple related state variables are declared with aligned formatting:
+```typescript
+const [deleteTarget,   setDeleteTarget]   = useState<Character | null>(null);
+const [confirmText,    setConfirmText]    = useState("");
+const [isDeleting,     setIsDeleting]     = useState(false);
+```
+
+**Status enum pattern:** Loading/error/success state tracked as a discriminated union:
+```typescript
 const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
-const [errorMessage, setErrorMessage] = useState("");
-```
-Error messages render as inline `<p>` elements with Tailwind utility classes (`text-red-600 bg-red-50`).
-
-**Auth guard pattern:** Every authenticated server action starts with:
-```ts
-const supabase = await createSupabaseServerClient();
-const { data: { user } } = await supabase.auth.getUser();
-if (!user) return { success: false, error: "Not authenticated." };
 ```
 
-**`console.error`:** Used in all catch blocks to log DB errors server-side. No structured logging library.
+**Optimistic updates:** Not used. All mutations call the server action, await the result, then refresh state via a `loadCharacters()` callback pattern. Only `take-turn.ts` uses a version-locked `prisma.$transaction` as an optimistic concurrency guard server-side.
 
-**Early returns on validation failure:** Guards return immediately instead of nesting:
-```ts
-if (!name || name.trim().length === 0) {
-  return { success: false, error: "Character name cannot be blank." };
-}
+**`useCallback`:** Used for data-fetching functions passed as callbacks (`loadCharacters` in `app/page.tsx`).
+
+## CSS Conventions
+
+**Framework:** Tailwind CSS v4 — imported via `@import "tailwindcss"` in `app/globals.css`.
+
+**Custom CSS:** Minimal. Only CSS custom properties for background/foreground colors and a single `@keyframes hp-flash` animation for HP damage feedback are defined in `globals.css`.
+
+**Animation:** Tailwind utility classes (`animate-pulse`, `transition-colors`, `transition-all`) for interactive feedback. The `hp-flash` keyframe is the only custom animation.
+
+**Component styling:** All styling via inline Tailwind classes on JSX elements — no CSS modules, no styled-components.
+
+**Design tokens:** Slate/blue/red color palette from Tailwind defaults. Cards use `rounded-xl`, `shadow`, `border border-slate-200 bg-white`.
+
+## Import Conventions
+
+**Path alias:** `@/*` maps to project root (defined in `tsconfig.json`). Used in client components (e.g., `import { createCharacter } from "@/app/actions/create-character"`).
+
+**Relative imports:** Used in server actions and lib files (e.g., `import { prisma } from "../../lib/prisma"`).
+
+**Import order (observed pattern):**
+1. Framework/third-party (`next/cache`, `@anthropic-ai/sdk`)
+2. Internal lib files (`../../lib/prisma`, `../../lib/supabase-server`)
+3. Types (`import type { D20Result }`)
+
+**No barrel files:** Each module is imported directly by path — no `index.ts` re-export aggregators.
+
+## Prisma Conventions
+
+**Singleton client:** `lib/prisma.ts` exports a global singleton `prisma` using `globalThis` to prevent multiple instances in dev hot-reload.
+
+**Query structure:** `findMany`/`findUnique` with inline `where`, `include`, `orderBy`, `select`, `take` options using object-literal formatting with aligned keys.
+
+**`select` vs `include`:** Use `select` to fetch minimal fields for performance; use `include` for nested relation traversal.
+
+**Transactions:** `prisma.$transaction(async (tx) => { ... })` used only for multi-write operations requiring atomicity (e.g., the optimistic-lock write in `app/actions/take-turn.ts`). Single writes use direct `prisma.model.create/update`.
+
+**Error handling:** Prisma errors bubble up to the `catch (error: any)` block in server actions — never silenced.
+
+## Section Banners
+
+Lib files and complex action files use visual section banners for readability:
+```typescript
+// ─── Section Name ────────────────────────────────────────────────────────────
 ```
-
-**Cookie write failures:** Silently swallowed in `lib/supabase-server.ts` with a `try/catch` no-op — intentional behavior for server components that can't write cookies.
-
-## Utilities
-
-**`lib/prisma.ts`:**
-- Exports a singleton `prisma` client using the `globalThis` pattern to prevent hot-reload connection leaks in development.
-- Uses `PrismaNeon` adapter (not the standard `Pool`) — required for Prisma 7 + Neon serverless.
-- Named export `prisma` and default export `prisma` both provided.
-
-**`lib/supabase-client.ts`:**
-- Single named export `supabaseBrowser` — a browser-side Supabase client for React components.
-- Used only in `app/page.tsx` for auth state lifecycle.
-
-**`lib/supabase-server.ts`:**
-- Factory function `createSupabaseServerClient()` — creates a per-request server-side Supabase client.
-- Used by all server actions that require auth: `create-character.ts`, `get-characters.ts`, `start-game.ts`.
-
-**No shared utility functions** beyond the lib clients. Game logic helpers (e.g., `getStatCost`) are defined inline within the component that uses them.
-
-## Naming Patterns
-
-**Files:** kebab-case for all files: `character-form.tsx`, `create-character.ts`, `supabase-server.ts`.
-
-**Components:** PascalCase: `CharacterForm`, `CharacterList`, `LoginScreen`.
-
-**Functions:** camelCase: `handleSubmit`, `handleStatChange`, `loadCharacters`, `createCharacter`.
-
-**Variables:** camelCase for local vars; UPPER_SNAKE_CASE for module-level constants.
-
-**Database fields:** camelCase in Prisma schema and TS code (`characterClass`, `userId`). Prisma maps to snake_case in PostgreSQL automatically.
-
-**Prisma models:** PascalCase singular: `User`, `Character`, `Game`, `Message`, `Map`, `StoryPrompt`.
-
-## Import Organization
-
-No enforced import order. Observed pattern:
-1. Framework/library imports (`next/cache`, `react`)
-2. Internal lib imports (`../../lib/prisma`)
-3. Internal component/action imports
-
-The `@/` alias is used inconsistently — `character-form.tsx` uses `@/app/actions/create-character`, while `app/page.tsx` uses relative `../lib/supabase-client`.
 
 ---
 
-*Convention analysis: 2026-05-20*
+*Convention analysis: 2026-05-23*
