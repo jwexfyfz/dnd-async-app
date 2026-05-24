@@ -8,6 +8,7 @@ import { getGame } from "../../actions/get-game";
 import { takeTurn } from "../../actions/take-turn";
 import { initializeGame } from "../../actions/initialize-game";
 import { getMapItems, type EquippableItemData } from "../../actions/get-map-items";
+import { getClassFeatures, type ClassFeatureData } from "../../actions/get-class-features";
 import { updateItem } from "../../actions/update-item";
 import MapRenderer, { type MapData, type PartyMarker } from "../../../components/map-renderer";
 import UserMenu from "../../../components/user-menu";
@@ -617,20 +618,6 @@ function LevelUpCard({ result }: { result: LevelUpResult }) {
 
 type PartySubTab = "stats" | "inventory" | "abilities";
 
-const CLASS_FEATURES: Record<string, string[]> = {
-  Barbarian: ["Rage (2/day)", "Unarmored Defense", "Reckless Attack"],
-  Bard:      ["Bardic Inspiration (d6)", "Jack of All Trades", "Song of Rest"],
-  Cleric:    ["Divine Domain", "Channel Divinity", "Spellcasting"],
-  Druid:     ["Wild Shape", "Druidic", "Spellcasting"],
-  Fighter:   ["Action Surge", "Second Wind", "Fighting Style"],
-  Monk:      ["Martial Arts", "Ki Points", "Unarmored Defense"],
-  Paladin:   ["Divine Smite", "Lay on Hands", "Aura of Protection"],
-  Ranger:    ["Favored Enemy", "Natural Explorer", "Spellcasting"],
-  Rogue:     ["Sneak Attack", "Cunning Action", "Thieves' Cant"],
-  Sorcerer:  ["Sorcerous Origin", "Metamagic", "Spellcasting"],
-  Warlock:   ["Pact Magic", "Eldritch Invocations", "Patron Feature"],
-  Wizard:    ["Arcane Recovery", "Spellcasting", "Spell Mastery"],
-};
 
 function PartyTab({
   partyMembers, state, currentTurnCharacterId, currentUserId, hpOverrides, mapId,
@@ -1205,28 +1192,62 @@ function MemberInventoryPane({
 }
 
 function MemberAbilitiesPane({ char }: { char: CharacterData }) {
-  const prof  = proficiencyBonus(char.level);
-  const feats = CLASS_FEATURES[char.characterClass] ?? [];
+  const prof = proficiencyBonus(char.level);
+  const [features, setFeatures] = useState<ClassFeatureData[]>([]);
+  const [loading,  setLoading]  = useState(true);
+
+  useEffect(() => {
+    setLoading(true);
+    getClassFeatures(char.characterClass, char.level).then((data) => {
+      setFeatures(data);
+      setLoading(false);
+    });
+  }, [char.id, char.level]);
+
+  if (loading) return <p className="text-[11px] text-slate-400 py-2">Loading…</p>;
+
+  // Group features by level
+  const byLevel = features.reduce<Map<number, ClassFeatureData[]>>((acc, f) => {
+    const group = acc.get(f.level) ?? [];
+    group.push(f);
+    acc.set(f.level, group);
+    return acc;
+  }, new Map());
+
+  const levels = Array.from(byLevel.keys()).sort((a, b) => a - b);
+
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2 text-xs">
         <span className="text-slate-500">Proficiency Bonus</span>
         <span className="font-bold text-slate-900">+{prof}</span>
       </div>
-      <div>
-        <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">
-          {char.characterClass} Features
-        </p>
-        {feats.length === 0 ? (
-          <p className="text-xs text-slate-400 italic">No features recorded.</p>
-        ) : (
-          <ul className="space-y-0.5">
-            {feats.map((f) => (
-              <li key={f} className="text-xs text-slate-700">· {f}</li>
-            ))}
-          </ul>
-        )}
-      </div>
+      {levels.length === 0 ? (
+        <p className="text-xs text-slate-400 italic">No features recorded.</p>
+      ) : (
+        <div className="space-y-3">
+          {levels.map((lvl) => (
+            <div key={lvl}>
+              <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">
+                Level {lvl}
+              </p>
+              <ul className="space-y-1">
+                {(byLevel.get(lvl) ?? []).map((f) => (
+                  <li key={f.id} className="text-xs text-slate-700">
+                    <span className="font-medium">· {f.name}</span>
+                    {f.level === char.level && (
+                      <span className="text-[10px] font-semibold bg-violet-100 text-violet-700 px-1.5 py-0.5 rounded ml-1">New</span>
+                    )}
+                    {f.description && (
+                      <span className="text-slate-500"> — {f.description}</span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
