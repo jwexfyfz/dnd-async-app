@@ -65,6 +65,11 @@ export async function createCharacter(formData: FormData): Promise<ActionRespons
     return { success: false, error: "Invalid skill proficiency data." };
   }
 
+  const deduped = [...new Set(skillProficiencies)];
+  if (deduped.length !== skillProficiencies.length) {
+    return { success: false, error: "Duplicate skills are not allowed." };
+  }
+
   const requiredCount = SKILL_PICK_COUNT[characterClass];
   if (skillProficiencies.length !== requiredCount) {
     return { success: false, error: `Choose exactly ${requiredCount} skills for ${characterClass}.` };
