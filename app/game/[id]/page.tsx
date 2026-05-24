@@ -145,7 +145,10 @@ export default function GamePage() {
   const [hpFlashing,       setHpFlashing]       = useState(false);
   const [mapItems,         setMapItems]         = useState<EquippableItemData[]>([]);
 
-  const initCalledRef = useRef(false);
+  const initCalledRef  = useRef(false);
+  // Stored so it can be cancelled on unmount, preventing a state update on an
+  // unmounted component if the user navigates away within the 800 ms flash window.
+  const flashTimerRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── Auth ──
   useEffect(() => {
@@ -153,6 +156,9 @@ export default function GamePage() {
       setCurrentUserId(user?.id ?? null);
     });
   }, []);
+
+  // ── Flash-timer cleanup ──
+  useEffect(() => () => { if (flashTimerRef.current) clearTimeout(flashTimerRef.current); }, []);
 
   // ── Load game ──
   useEffect(() => {
@@ -241,62 +247,71 @@ export default function GamePage() {
     };
     setLocalMessages((prev) => [...prev, playerMsg]);
 
-    const result = await takeTurn(gameId, chip);
-    if (result.success && result.narrative) {
-      setLocalMessages((prev) => [...prev, {
-        id:        `dm-${Date.now()}`,
-        role:      "DUNGEON_MASTER",
-        content:   result.narrative!,
-        chips:     result.chips ?? [],
-        createdAt: new Date().toISOString(),
-      }]);
-      if (result.newState) setLocalState(result.newState as unknown as GameState);
-      setDiceResult(result.diceResult ?? null);
-      setLevelUpResult(result.levelUpResult ?? null);
-      setSkillCheckResult(result.skillCheckResult ?? null);
+    try {
+      const result = await takeTurn(gameId, chip);
+      if (result.success && result.narrative) {
+        setLocalMessages((prev) => [...prev, {
+          id:        `dm-${Date.now()}`,
+          role:      "DUNGEON_MASTER",
+          content:   result.narrative!,
+          chips:     result.chips ?? [],
+          createdAt: new Date().toISOString(),
+        }]);
+        if (result.newState) setLocalState(result.newState as unknown as GameState);
+        setDiceResult(result.diceResult ?? null);
+        setLevelUpResult(result.levelUpResult ?? null);
+        setSkillCheckResult(result.skillCheckResult ?? null);
 
-      if (result.combatEffects && result.combatEffects.length > 0) {
-        const overrides: Record<string, number> = {};
-        const myCharId = myMember?.characterId ?? gameData?.character.id;
-        let myCharAffected = false;
-        for (const eff of result.combatEffects) {
-          overrides[eff.targetId] = eff.newHp;
-          if (myCharId && eff.targetId === myCharId) myCharAffected = true;
-        }
-        setLocalHpOverrides((prev) => ({ ...prev, ...overrides }));
-        if (myCharAffected) {
-          setHpFlashing(true);
-          setTimeout(() => setHpFlashing(false), 800);
-        }
-      }
-
-      // Re-fetch to get the updated currentTurnCharacterId and settle HP from DB.
-      getGame(gameId).then((res) => {
-        if (res.success && res.data) {
-          const fresh = res.data as unknown as GameFull;
-          setGameData(fresh);
-          const freshHp: Record<string, number> = {};
-          if (fresh.partyMembers.length > 0) {
-            for (const m of fresh.partyMembers) freshHp[m.characterId] = m.character.currentHp;
-          } else {
-            freshHp[fresh.character.id] = fresh.character.currentHp;
+        if (result.combatEffects && result.combatEffects.length > 0) {
+          const overrides: Record<string, number> = {};
+          const myCharId = myMember?.characterId ?? gameData?.character.id;
+          let myCharAffected = false;
+          for (const eff of result.combatEffects) {
+            overrides[eff.targetId] = eff.newHp;
+            if (myCharId && eff.targetId === myCharId) myCharAffected = true;
           }
-          setLocalHpOverrides((prev) => ({ ...prev, ...freshHp }));
+          setLocalHpOverrides((prev) => ({ ...prev, ...overrides }));
+          if (myCharAffected) {
+            setHpFlashing(true);
+            if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+            flashTimerRef.current = setTimeout(() => setHpFlashing(false), 800);
+          }
         }
-      });
-    } else {
+
+        // Re-fetch to get the updated currentTurnCharacterId and settle HP from DB.
+        getGame(gameId).then((res) => {
+          if (res.success && res.data) {
+            const fresh = res.data as unknown as GameFull;
+            setGameData(fresh);
+            const freshHp: Record<string, number> = {};
+            if (fresh.partyMembers.length > 0) {
+              for (const m of fresh.partyMembers) freshHp[m.characterId] = m.character.currentHp;
+            } else {
+              freshHp[fresh.character.id] = fresh.character.currentHp;
+            }
+            setLocalHpOverrides((prev) => ({ ...prev, ...freshHp }));
+          }
+        });
+      } else {
+        setLocalMessages((prev) => prev.filter((m) => m.id !== playerMsg.id));
+        setDiceResult(null);
+        setLevelUpResult(null);
+        setSkillCheckResult(null);
+        const msg = result.error === "STALE_TURN"
+          ? "Another action was submitted first — please try again."
+          : result.error === "It's not your turn."
+            ? "It's not your turn."
+            : "The Dungeon Master is temporarily unavailable. Please try again in a moment.";
+        setTurnError(msg);
+      }
+    } catch {
+      // Unhandled rejection (network error, Next.js serialisation error, etc.)
+      // Remove the optimistic player message and surface a generic error.
       setLocalMessages((prev) => prev.filter((m) => m.id !== playerMsg.id));
-      setDiceResult(null);
-      setLevelUpResult(null);
-      setSkillCheckResult(null);
-      const msg = result.error === "STALE_TURN"
-        ? "Another action was submitted first — please try again."
-        : result.error === "It's not your turn."
-          ? "It's not your turn."
-          : "The Dungeon Master is temporarily unavailable. Please try again in a moment.";
-      setTurnError(msg);
+      setTurnError("The Dungeon Master is temporarily unavailable. Please try again.");
+    } finally {
+      setIsTakingTurn(false);
     }
-    setIsTakingTurn(false);
   }
 
   // ── Render ──
