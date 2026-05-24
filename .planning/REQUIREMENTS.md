@@ -47,13 +47,13 @@
 
 ### Phase 4: Skills
 
-- [ ] **SKILL-01**: Prisma migration adds `skillProficiencies String[]` column to `Character` (array of skill name strings from the 18-skill canonical list)
-- [ ] **SKILL-02**: Character creation UI includes a skill selection step; player chooses the correct number of starting proficiencies for their class (Fighter: 2 from list of 8, Rogue: 4 from list of 11, Cleric: 2 from list of 5, Wizard: 2 from list of 6) — counts reflect D&D Basic Rules 2014 skill pools; see CLASS_SKILL_POOL in lib/skills.ts for exact allowed-skill lists
-- [ ] **SKILL-03**: `lib/skills.ts` exports `SKILL_ABILITY_MAP` (all 18 skills mapped to their ability score; also exported as `SKILLS` alias for literal requirement compliance), `resolveSkillCheck(skillName, character)` returning a full audit-trail object `{ skill, abilityScore, roll, modifier, proficiencyBonus, total, dc, success, proficient }`
+- [x] **SKILL-01**: Prisma migration adds `skillProficiencies String[]` column to `Character` (array of skill name strings from the 18-skill canonical list)
+- [x] **SKILL-02**: Character creation UI includes a skill selection step; player chooses the correct number of starting proficiencies for their class (Fighter: 2 from list of 8, Rogue: 4 from list of 11, Cleric: 2 from list of 5, Wizard: 2 from list of 6) — counts reflect D&D Basic Rules 2014 skill pools; see CLASS_SKILL_POOL in lib/skills.ts for exact allowed-skill lists
+- [x] **SKILL-03**: `lib/skills.ts` exports `SKILL_ABILITY_MAP` (all 18 skills mapped to their ability score; also exported as `SKILLS` alias for literal requirement compliance), `resolveSkillCheck(skillName, character)` returning a full audit-trail object `{ skill, abilityScore, roll, modifier, proficiencyBonus, total, dc, success, proficient }`
 - [ ] **SKILL-04**: In the `take-turn` loop, Claude's structured intent output identifies the relevant skill (if any); code calls `resolveSkillCheck()` and passes the result (not the raw roll request) back to Claude's narration call
 
 **Tests (Skills phase):**
-- [ ] **SKILL-05**: Unit tests cover `resolveSkillCheck` for proficient vs non-proficient characters, all 18 skill-to-ability mappings, and DC boundary conditions (exactly at DC, one below, one above)
+- [x] **SKILL-05**: Unit tests cover `resolveSkillCheck` for proficient vs non-proficient characters, all 18 skill-to-ability mappings, and DC boundary conditions (exactly at DC, one below, one above)
 
 ---
 

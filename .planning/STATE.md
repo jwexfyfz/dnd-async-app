@@ -3,21 +3,21 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 04-03-PLAN.md
-last_updated: "2026-05-24T05:16:26.324Z"
+stopped_at: Completed 04-01-PLAN.md
+last_updated: "2026-05-24T05:24:10Z"
 progress:
   total_phases: 4
   completed_phases: 3
   total_plans: 17
-  completed_plans: 13
-  percent: 75
+  completed_plans: 15
+  percent: 82
 ---
 
 # Project State
 
 ## Status
 
-Phase 3 complete. All 4 plans delivered and verified. Phase 04 executing — 04-03 complete.
+Phase 3 complete. All 4 plans delivered and verified. Phase 04 executing — 04-01 complete (4/5 plans done).
 
 ## Project Reference
 
@@ -40,7 +40,7 @@ Plans: 5 (04-01 through 04-05, 2 waves)
 | 1 | Dice Engine & Critical Bug Fixes | ✅ Complete |
 | 2 | XP System | ✅ Complete (3/3 plans done) |
 | 3 | Leveling | ✅ Complete (4/4 plans done) |
-| 4 | Skills & Abilities Integration | 🟡 Executing — 04-03 complete (3/5 plans done) |
+| 4 | Skills & Abilities Integration | 🟡 Executing — 04-01 complete (4/5 plans done) |
 
 ## Key Decisions
 
@@ -63,6 +63,10 @@ Plans: 5 (04-01 through 04-05, 2 waves)
 - SkillCharacterInput defined locally in lib/skills.ts (not imported from character-sheet.ts) — self-contained pure module
 - resolveSkillCheck throws Error on unknown skill name (T-04-03-01 mitigation)
 - proficiencyBonus imported from lib/dice.ts directly in lib/skills.ts
+- skillProficiencies appended as JSON string in FormData (client formData.append pattern)
+- Server JSON.parse wrapped in try/catch returning structured error (T-04-01-01 mitigation)
+- useEffect([selectedClass]) resets skill picks and error on class change (D-05 behavior)
+- CharacterData interface extended with skillProficiencies: string[] for downstream sub-tabs
 
 ## Last Action
 
@@ -72,8 +76,10 @@ Plans: 5 (04-01 through 04-05, 2 waves)
 
 2026-05-23 — Plan 04-03 complete: lib/skills.ts pure module — SKILL_ABILITY_MAP (18 entries), SKILLS alias, CLASS_SKILL_POOL, SKILL_PICK_COUNT, resolveSkillCheck; 33 tests pass; full suite 170 tests; build clean. TDD RED/GREEN/REFACTOR cycle complete.
 
+2026-05-24 — Plan 04-01 complete: skillProficiencies DB column migrated; character-form.tsx gets class-gated skill picker with client validation; create-character.ts server validates count + allowed-list (3 threat mitigations); CharacterData extended; 174/174 tests pass; build clean.
+
 ## Session Continuity
 
-Last session: 2026-05-23T22:15:00.000Z
-Stopped at: Completed 04-03-PLAN.md
+Last session: 2026-05-24T05:24:10Z
+Stopped at: Completed 04-01-PLAN.md
 Resume file: None
