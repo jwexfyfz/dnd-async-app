@@ -6,6 +6,7 @@ export interface EquippableItemData {
   id:                string;
   name:              string;
   category:          string;
+  description:       string;
   weightLbs:         number;
   quantity:          number;
   isEquipped:        boolean;
@@ -17,8 +18,8 @@ export async function getMapItems(mapId: string): Promise<EquippableItemData[]> 
     where:   { mapId },
     orderBy: [{ category: "asc" }, { name: "asc" }],
     select: {
-      id: true, name: true, category: true, weightLbs: true,
-      quantity: true, isEquipped: true, combatImpactLabel: true,
+      id: true, name: true, category: true, description: true,
+      weightLbs: true, quantity: true, isEquipped: true, combatImpactLabel: true,
     },
   });
 }

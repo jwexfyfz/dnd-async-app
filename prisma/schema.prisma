@@ -163,7 +163,8 @@ model EquippableItem {
   map               Map     @relation(fields: [mapId], references: [id], onDelete: Cascade)
 
   name              String
-  category          String  // "Weapon" | "Armor" | "Consumable"
+  category          String  // "Weapon" | "Armor" | "Consumable" | "Held"
+  description       String  @default("")
   weightLbs         Float
   quantity          Int     @default(1)
   isEquipped        Boolean @default(false)

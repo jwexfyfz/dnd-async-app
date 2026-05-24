@@ -139,6 +139,7 @@ export default function GamePage() {
   const [turnError,        setTurnError]        = useState<string | null>(null);
   const [localHpOverrides, setLocalHpOverrides] = useState<Record<string, number>>({});
   const [hpFlashing,       setHpFlashing]       = useState(false);
+  const [mapItems,         setMapItems]         = useState<EquippableItemData[]>([]);
 
   const initCalledRef = useRef(false);
 
@@ -176,6 +177,11 @@ export default function GamePage() {
     });
   }, [gameId, router]);
 
+  // ── Load map items for potion chip injection ──
+  useEffect(() => {
+    if (gameData?.map?.id) getMapItems(gameData.map.id).then(setMapItems);
+  }, [gameData?.map?.id]);
+
   // ── Auto-generate opening scene if no messages yet ──
   useEffect(() => {
     if (!gameData || localMessages.length > 0 || initCalledRef.current) return;
@@ -201,8 +207,17 @@ export default function GamePage() {
   const currentTurnMember = gameData?.partyMembers.find(
     (m) => m.characterId === gameData?.currentTurnCharacterId
   );
-  const currentChips: string[] =
+  const dmChips: string[] =
     [...localMessages].reverse().find((m) => m.role === "DUNGEON_MASTER")?.chips ?? [];
+  const myHp    = localState?.hp    ?? 0;
+  const myMaxHp = localState?.maxHp ?? 1;
+  const healingPotions = mapItems.filter(
+    (i) => i.category === "Consumable" && i.quantity > 0 && i.name.toLowerCase().includes("potion"),
+  );
+  const potionChip = myMaxHp > 0 && myHp / myMaxHp < 0.5 && healingPotions.length > 0
+    ? [`Use ${healingPotions[0].name}`]
+    : [];
+  const currentChips = [...potionChip, ...dmChips.filter((c) => !potionChip.includes(c))];
 
   // ── Chip handler ──
   async function handleChipClick(chip: string) {
@@ -870,9 +885,10 @@ function MemberInventoryPane({
   mapId:    string;
   strength: number;
 }) {
-  const [items,    setItems]    = useState<EquippableItemData[]>([]);
-  const [loading,  setLoading]  = useState(true);
-  const [pending,  setPending]  = useState<Set<string>>(new Set());
+  const [items,          setItems]          = useState<EquippableItemData[]>([]);
+  const [loading,        setLoading]        = useState(true);
+  const [pending,        setPending]        = useState<Set<string>>(new Set());
+  const [expandedItemId, setExpandedItemId] = useState<string | null>(null);
 
   useEffect(() => {
     getMapItems(mapId).then((data) => { setItems(data); setLoading(false); });
@@ -894,11 +910,16 @@ function MemberInventoryPane({
     markPending(item.id, false);
   }
 
-  async function adjustQty(item: EquippableItemData, delta: number) {
-    const next = Math.max(0, item.quantity + delta);
-    setItems((prev) => prev.map((i) => i.id === item.id ? { ...i, quantity: next } : i));
+  async function handleEquip(item: EquippableItemData, displaced: EquippableItemData | null) {
+    setItems((prev) => prev.map((i) => {
+      if (i.id === item.id)            return { ...i, isEquipped: true };
+      if (displaced && i.id === displaced.id) return { ...i, isEquipped: false };
+      return i;
+    }));
     markPending(item.id, true);
-    await updateItem(item.id, { quantity: next });
+    const ops: Promise<unknown>[] = [updateItem(item.id, { isEquipped: true })];
+    if (displaced) ops.push(updateItem(displaced.id, { isEquipped: false }));
+    await Promise.all(ops);
     markPending(item.id, false);
   }
 
@@ -917,6 +938,50 @@ function MemberInventoryPane({
   const slottedIds = new Set([slotMainHand?.id, slotOffHand?.id, slotBodyArmor?.id, slotRing?.id].filter(Boolean) as string[]);
   const backpack   = items.filter((i) => !slottedIds.has(i.id));
 
+  // ── Stat parser (shared by boost aggregation and diff calculation) ───────────
+  function parseStats(label: string) {
+    const ac     = label.match(/\+(\d+)\s*AC/i);
+    const damage = label.match(/\+(\d+)\s*Damage/i);
+    const hit    = label.match(/\+(\d+)\s*to\s*Hit/i);
+    const hp     = label.match(/\+(\d+)\s*(?:Temp\s*)?HP/i);
+    return {
+      ac:     ac     ? parseInt(ac[1],     10) : 0,
+      damage: damage ? parseInt(damage[1], 10) : 0,
+      hit:    hit    ? parseInt(hit[1],    10) : 0,
+      hp:     hp     ? parseInt(hp[1],     10) : 0,
+    };
+  }
+
+  function targetSlotItem(item: EquippableItemData): EquippableItemData | null {
+    const isShield = item.name.toLowerCase().includes("shield");
+    if (item.category === "Weapon"     && !isShield) return slotMainHand;
+    if (item.category === "Weapon"     &&  isShield) return slotOffHand;
+    if (item.category === "Armor"      && !isShield) return slotBodyArmor;
+    if (item.category === "Armor"      &&  isShield) return slotOffHand;
+    if (item.category === "Consumable")              return slotRing;
+    return null;
+  }
+
+  // ── Stat boost aggregation ────────────────────────────────────────────────────
+  // Parse combatImpactLabel of each equipped item for numeric modifiers.
+  // Patterns matched: "+N Damage", "+N to Hit", "+N AC", "+N Temp HP"
+  const statBoosts = equipped.reduce(
+    (acc, item) => {
+      const text = item.combatImpactLabel;
+      const acMatch     = text.match(/\+(\d+)\s*AC/i);
+      const damageMatch = text.match(/\+(\d+)\s*Damage/i);
+      const hitMatch    = text.match(/\+(\d+)\s*to\s*Hit/i);
+      const hpMatch     = text.match(/\+(\d+)\s*(?:Temp\s*)?HP/i);
+      if (acMatch)     acc.ac     += parseInt(acMatch[1],     10);
+      if (damageMatch) acc.damage += parseInt(damageMatch[1], 10);
+      if (hitMatch)    acc.hit    += parseInt(hitMatch[1],    10);
+      if (hpMatch)     acc.hp     += parseInt(hpMatch[1],     10);
+      return acc;
+    },
+    { ac: 0, damage: 0, hit: 0, hp: 0 },
+  );
+  const hasBoosts = equipped.length > 0;
+
   const SLOTS = [
     { key: "main",  label: "Main Hand",   placeholder: "Empty weapon slot",  item: slotMainHand  },
     { key: "off",   label: "Off-Hand",    placeholder: "Empty shield slot",   item: slotOffHand   },
@@ -926,6 +991,32 @@ function MemberInventoryPane({
 
   return (
     <div className="space-y-2">
+
+      {/* ── Stat boost banner ── */}
+      {hasBoosts && (
+        <div className="flex flex-wrap gap-x-3 gap-y-1 px-2 py-1.5 bg-white rounded-lg">
+          {statBoosts.ac > 0 && (
+            <span className="text-[10px] font-bold text-sky-600 leading-none">
+              <span className="text-slate-400 font-normal">Defense </span>+{statBoosts.ac} AC
+            </span>
+          )}
+          {statBoosts.damage > 0 && (
+            <span className="text-[10px] font-bold text-red-600 leading-none">
+              <span className="text-slate-400 font-normal">Damage </span>+{statBoosts.damage}
+            </span>
+          )}
+          {statBoosts.hit > 0 && (
+            <span className="text-[10px] font-bold text-amber-600 leading-none">
+              <span className="text-slate-400 font-normal">To Hit </span>+{statBoosts.hit}
+            </span>
+          )}
+          {statBoosts.hp > 0 && (
+            <span className="text-[10px] font-bold text-emerald-600 leading-none">
+              <span className="text-slate-400 font-normal">Temp HP </span>+{statBoosts.hp}
+            </span>
+          )}
+        </div>
+      )}
 
       {/* ── Equipment slots grid ── */}
       <div>
@@ -974,70 +1065,116 @@ function MemberInventoryPane({
         ) : (
           <div className="divide-y divide-slate-100">
             {backpack.map((item) => {
-          const isBusy = pending.has(item.id);
-          const dimmed = item.quantity === 0 ? "opacity-40" : "";
-          return (
-            <div key={item.id} className={`flex items-center gap-1.5 py-1 ${dimmed}`}>
+              const isBusy   = pending.has(item.id);
+              const dimmed   = item.quantity === 0 ? "opacity-40" : "";
+              const isOpen   = expandedItemId === item.id;
 
-              {/* Category initial badge */}
-              <span className={`shrink-0 w-4 text-center text-[9px] font-black rounded py-px uppercase ${CATEGORY_STYLE[item.category] ?? "bg-slate-100 text-slate-500"}`}>
-                {item.category[0]}
-              </span>
+              // "equippable" → Weapon/Armor with a target slot
+              // "consumable" → Consumable
+              // "held"       → anything else (carried but not slotted)
+              const kind: "equippable" | "consumable" | "held" =
+                item.category === "Consumable" ? "consumable"
+                : (item.category === "Weapon" || item.category === "Armor") ? "equippable"
+                : "held";
 
-              {/* Name + combat stat */}
-              <div className="flex-1 min-w-0">
-                <p className="text-[11px] font-semibold text-slate-800 leading-tight truncate">{item.name}</p>
-                <p className="text-[10px] font-medium text-emerald-700 leading-none">{item.combatImpactLabel}</p>
-              </div>
+              const slotItem = kind === "equippable" ? targetSlotItem(item) : null;
 
-              {/* Weight */}
-              <span className="shrink-0 text-[10px] font-mono text-slate-400 tabular-nums">
-                {item.weightLbs % 1 === 0 ? item.weightLbs : item.weightLbs.toFixed(1)}lb
-              </span>
+              // Stat diff — only meaningful for equippables
+              const myStats   = parseStats(item.combatImpactLabel);
+              const slotStats = slotItem ? parseStats(slotItem.combatImpactLabel) : { ac: 0, damage: 0, hit: 0, hp: 0 };
+              const diff = {
+                ac:     myStats.ac     - slotStats.ac,
+                damage: myStats.damage - slotStats.damage,
+                hit:    myStats.hit    - slotStats.hit,
+                hp:     myStats.hp     - slotStats.hp,
+              };
+              const diffEntries = (Object.entries(diff) as [string, number][]).filter(([, v]) => v !== 0);
 
-              {/* Quantity counter */}
-              <div className="flex items-center gap-0.5 shrink-0">
-                {isMe ? (
-                  <>
-                    <button
-                      onClick={() => adjustQty(item, -1)}
-                      disabled={item.quantity === 0 || isBusy}
-                      className="w-4 h-4 flex items-center justify-center rounded bg-slate-100 hover:bg-slate-200 text-slate-600 text-[11px] leading-none disabled:opacity-30 disabled:cursor-not-allowed"
-                    >−</button>
-                    <span className="w-5 text-center text-[10px] font-mono font-bold text-slate-700 tabular-nums">
-                      {item.quantity}
+              // Show quantity when there's more than one, or always for consumables
+              const showQty = kind === "consumable" || item.quantity > 1;
+
+              return (
+                <div key={item.id} className={dimmed}>
+                  {/* ── Collapsed row (always visible) ── */}
+                  <div
+                    className="flex items-center gap-1.5 py-1 cursor-pointer select-none"
+                    onClick={() => setExpandedItemId(isOpen ? null : item.id)}
+                  >
+                    <span className={`shrink-0 w-4 text-center text-[9px] font-black rounded py-px uppercase ${CATEGORY_STYLE[item.category] ?? "bg-slate-100 text-slate-500"}`}>
+                      {item.category[0]}
                     </span>
-                    <button
-                      onClick={() => adjustQty(item, +1)}
-                      disabled={isBusy}
-                      className="w-4 h-4 flex items-center justify-center rounded bg-slate-100 hover:bg-slate-200 text-slate-600 text-[11px] leading-none disabled:opacity-30 disabled:cursor-not-allowed"
-                    >+</button>
-                  </>
-                ) : (
-                  <span className="w-5 text-center text-[10px] font-mono text-slate-500">×{item.quantity}</span>
-                )}
-              </div>
 
-              {/* Equipped toggle */}
-              {isMe ? (
-                <button
-                  onClick={() => toggleEquipped(item)}
-                  disabled={isBusy}
-                  className={`shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded-full transition-colors disabled:cursor-not-allowed ${
-                    item.isEquipped
-                      ? "bg-amber-400 text-white"
-                      : "bg-slate-100 text-slate-400 hover:bg-slate-200"
-                  }`}
-                >
-                  {item.isEquipped ? "Eqpd" : "Equip"}
-                </button>
-              ) : item.isEquipped ? (
-                <span className="shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-600">
-                  Eqpd
-                </span>
-              ) : null}
-            </div>
-          );
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[11px] font-semibold text-slate-800 leading-tight truncate">{item.name}</p>
+                      <p className="text-[10px] font-medium text-emerald-700 leading-none">{item.combatImpactLabel}</p>
+                    </div>
+
+                    <span className="shrink-0 text-[10px] font-mono text-slate-400 tabular-nums">
+                      {item.weightLbs % 1 === 0 ? item.weightLbs : item.weightLbs.toFixed(1)}lb
+                    </span>
+
+                    {showQty && (
+                      <span className="shrink-0 text-[10px] font-mono font-bold text-slate-500 tabular-nums">
+                        ×{item.quantity}
+                      </span>
+                    )}
+
+                    {kind === "equippable" && (
+                      <div onClick={(e) => e.stopPropagation()}>
+                        {isMe ? (
+                          <button
+                            onClick={() => handleEquip(item, slotItem)}
+                            disabled={isBusy}
+                            className="shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-400 hover:bg-slate-200 transition-colors disabled:cursor-not-allowed"
+                          >
+                            Equip
+                          </button>
+                        ) : null}
+                      </div>
+                    )}
+
+                    <span className="shrink-0 text-[9px] text-slate-300">{isOpen ? "▲" : "▼"}</span>
+                  </div>
+
+                  {/* ── Expanded panel ── */}
+                  {isOpen && (
+                    <div className="mb-1.5 px-2 py-1.5 bg-slate-50 rounded-md space-y-1.5">
+                      {/* Description */}
+                      <p className="text-[10px] text-slate-600 italic">{item.description || item.combatImpactLabel}</p>
+
+                      {/* Stat diff — equippables only */}
+                      {kind === "equippable" && (
+                        <div>
+                          <p className="text-[9px] font-bold uppercase tracking-widest text-slate-400 mb-0.5">
+                            vs {slotItem ? slotItem.name : "empty slot"}
+                          </p>
+                          {diffEntries.length === 0 ? (
+                            <p className="text-[10px] text-slate-400 italic">No numeric difference</p>
+                          ) : (
+                            <div className="flex flex-wrap gap-x-2 gap-y-0.5">
+                              {diffEntries.map(([stat, val]) => (
+                                <span
+                                  key={stat}
+                                  className={`text-[10px] font-bold ${val > 0 ? "text-emerald-600" : "text-red-500"}`}
+                                >
+                                  {val > 0 ? "+" : ""}{val} {stat.toUpperCase()}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Equip hint — equippables only */}
+                      {kind === "equippable" && isMe && (
+                        <p className="text-[9px] text-slate-400 italic">
+                          Type &ldquo;/equip {item.name}&rdquo; to swap.
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
             })}
           </div>
         )}
