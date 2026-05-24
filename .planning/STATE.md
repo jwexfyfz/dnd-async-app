@@ -2,8 +2,8 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
-stopped_at: Completed 04-05-PLAN.md (Task 1); awaiting checkpoint:human-verify (Task 2)
+status: complete
+stopped_at: Phase 04 complete — all 5 plans delivered and human-verified
 last_updated: "2026-05-24T16:22:06.367Z"
 progress:
   total_phases: 4
@@ -17,7 +17,7 @@ progress:
 
 ## Status
 
-Phase 4 nearly complete. Plans 04-01 through 04-05 Task 1 all delivered. Awaiting human verification checkpoint (Task 2 of 04-05) to confirm Stats sub-tab proficiency highlights are DB-driven end-to-end.
+Phase 4 complete. All 5 plans (04-01 through 04-05) delivered and human-verified. Stats sub-tab proficiency highlights are DB-driven end-to-end. All 4 milestones complete.
 
 ## Project Reference
 
@@ -40,7 +40,7 @@ Plans: 5 (04-01 through 04-05, 2 waves)
 | 1 | Dice Engine & Critical Bug Fixes | ✅ Complete |
 | 2 | XP System | ✅ Complete (3/3 plans done) |
 | 3 | Leveling | ✅ Complete (4/4 plans done) |
-| 4 | Skills & Abilities Integration | 🟡 Executing — 04-05 Task 1 complete; awaiting checkpoint:human-verify (Task 2) |
+| 4 | Skills & Abilities Integration | ✅ Complete (5/5 plans done) |
 
 ## Key Decisions
 
@@ -91,10 +91,10 @@ Plans: 5 (04-01 through 04-05, 2 waves)
 
 2026-05-24 — Plan 04-04 complete: Two-call skill check architecture in take-turn.ts — skillName in JSON schema, resolveSkillCheck integration, MECHANICAL CONTEXT keyword block, finalParsed for all downstream code; SkillCheckCard in violet UI; DiceCard suppressed on skill check turns; 174/174 tests pass; build clean.
 
-2026-05-24 — Plan 04-05 Task 1 complete: SKILL_PROFS constant deleted from lib/character-sheet.ts; CharacterInput extended with skillProficiencies?: string[]; getCharacterSheetData reads char.skillProficiencies ?? []; MemberStatsPane passes skillProficiencies through structural typing; 174/174 tests pass; build clean. Awaiting Task 2 checkpoint:human-verify.
+2026-05-24 — Plan 04-05 complete: SKILL_PROFS constant deleted from lib/character-sheet.ts; CharacterInput extended with skillProficiencies?: string[]; getCharacterSheetData reads char.skillProficiencies ?? []; MemberStatsPane passes skillProficiencies through structural typing; 174/174 tests pass; build clean. Human verified: Fighter/Rogue backfill defaults correct, new character with custom picks shows only chosen skills, Abilities sub-tab loads from DB. Phase 04 fully complete.
 
 ## Session Continuity
 
-Last session: 2026-05-24T16:22:06.359Z
-Stopped at: Completed 04-04-PLAN.md
+Last session: 2026-05-24T16:37:00Z
+Stopped at: Phase 04 complete — all 5 plans delivered and human-verified
 Resume file: None

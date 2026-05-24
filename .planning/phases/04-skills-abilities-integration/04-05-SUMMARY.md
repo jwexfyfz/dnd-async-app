@@ -54,10 +54,10 @@ completed: 2026-05-24
 
 ## Performance
 
-- **Duration:** 8 min
+- **Duration:** 8 min (implementation) + human verification
 - **Started:** 2026-05-24T09:13:00Z
-- **Completed:** 2026-05-24T09:21:00Z
-- **Tasks:** 1 of 2 complete (Task 2 is a checkpoint awaiting human verification)
+- **Completed:** 2026-05-24T16:37:00Z
+- **Tasks:** 2 of 2 complete (Task 2 human-verified)
 - **Files modified:** 1
 
 ## Accomplishments
@@ -66,10 +66,12 @@ completed: 2026-05-24
 - `getCharacterSheetData` line 97 changed from `SKILL_PROFS[char.characterClass] ?? []` to `char.skillProficiencies ?? []`
 - `MemberStatsPane` in `app/game/[id]/page.tsx` passes `skillProficiencies` through structural typing automatically — no explicit cast required
 - Build clean; 174/174 tests pass
+- Human verified end-to-end: Fighter/Rogue backfill defaults correct; new character with custom picks shows only chosen skills highlighted; Abilities sub-tab loads from DB
 
 ## Task Commits
 
 1. **Task 1: Remove SKILL_PROFS fallback; extend CharacterInput; wire skillProficiencies** - `7ea06f4` (feat)
+2. **Task 2: End-to-end Stats sub-tab proficiency verification** - Human checkpoint: verified
 
 ## Files Created/Modified
 - `lib/character-sheet.ts` — SKILL_PROFS deleted, CharacterInput.skillProficiencies? added, getCharacterSheetData updated to use live DB data
@@ -100,12 +102,15 @@ None — no new network endpoints, auth paths, file access patterns, or schema c
 
 ## Next Phase Readiness
 
-Task 2 (checkpoint:human-verify) is pending. Once verified:
-- Phase 04 is fully complete — all 5 plans delivered
-- Stats sub-tab proficiency highlights are DB-driven for all characters
-- Abilities sub-tab fetches ClassFeature from DB
-- lib/skills.ts + resolveSkillCheck wired end-to-end in take-turn.ts
-- All npm run build and npm run test:run checks pass
+Phase 04 is fully complete — all 5 plans delivered and human-verified:
+
+- 04-01: skillProficiencies DB column, class-gated skill picker at character creation, backfill defaults
+- 04-02: Abilities sub-tab wired to ClassFeature DB; CLASS_FEATURES deleted
+- 04-03: lib/skills.ts pure module with SKILL_ABILITY_MAP (18 entries), resolveSkillCheck, 33 tests
+- 04-04: Two-call skill check in take-turn.ts with MECHANICAL CONTEXT keyword; SkillCheckCard UI
+- 04-05: Stats sub-tab proficiency highlights DB-driven; SKILL_PROFS deleted
+
+The codebase is in a clean state: npm run build exits 0, 174/174 tests pass, no TypeScript errors in the browser console.
 
 ---
 *Phase: 04-skills-abilities-integration*
