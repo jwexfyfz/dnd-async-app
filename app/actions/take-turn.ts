@@ -38,6 +38,10 @@ function detectActionType(
   if (attackKeywords.some((kw) => lower.includes(kw))) {
     return { dcType: "AC", dc: (gameState.targetAC as number | undefined) ?? 14 };
   }
+  // DC 12 is a deliberate design constraint for Phase 04: all non-attack actions
+  // use a uniform difficulty to keep the MVP simple. A future iteration should
+  // either request a suggestedDc field from the first AI response or use a
+  // per-skill lookup table keyed by skill tier (easy/medium/hard).
   return { dcType: "DC", dc: 12 };
 }
 
