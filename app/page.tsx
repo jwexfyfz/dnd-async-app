@@ -25,12 +25,12 @@ interface Character {
   id:             string;
   name:           string;
   characterClass: string;
-  strength:       number;
-  dexterity:      number;
-  constitution:   number;
-  intelligence:   number;
-  wisdom:         number;
-  charisma:       number;
+  baseStrength:     number;
+  baseDexterity:    number;
+  baseConstitution: number;
+  baseIntelligence: number;
+  baseWisdom:       number;
+  baseCharisma:     number;
   games:            ActiveGame[];
   partyMemberships: Array<{ game: ActiveGame }>;
 }

@@ -753,7 +753,7 @@ function PartyTab({
               </div>
 
               {/* Sub-tab content */}
-              {subTab === "stats"     && <MemberStatsPane char={m.character} />}
+              {subTab === "stats"     && <MemberStatsPane char={m.character} mapId={mapId} />}
               {subTab === "inventory" && (
                 <MemberInventoryPane
                   isMe={isMe}
@@ -788,12 +788,35 @@ const STAT_FULL_NAME: Record<string, string> = {
   charisma:     "Charisma",
 };
 
-function MemberStatsPane({ char }: { char: CharacterData }) {
+function MemberStatsPane({ char, mapId }: { char: CharacterData; mapId: string }) {
   const [equipStats, setEquipStats] = useState<CharacterStats | null>(null);
+  const [mapItems,   setMapItems]   = useState<EquippableItemData[]>([]);
 
   useEffect(() => {
     getCharacterStats(char.id).then(setEquipStats);
   }, [char.id]);
+
+  useEffect(() => {
+    getMapItems(mapId).then(setMapItems);
+  }, [mapId]);
+
+  const equipped   = mapItems.filter((i) => i.isEquipped);
+  const gearBoosts = equipped.reduce(
+    (acc, item) => {
+      const t  = item.combatImpactLabel;
+      const ac  = t.match(/\+(\d+)\s*AC/i);
+      const dmg = t.match(/\+(\d+)\s*Damage/i);
+      const hit = t.match(/\+(\d+)\s*to\s*Hit/i);
+      const hp  = t.match(/\+(\d+)\s*(?:Temp\s*)?HP/i);
+      if (ac)  acc.ac     += parseInt(ac[1],  10);
+      if (dmg) acc.damage += parseInt(dmg[1], 10);
+      if (hit) acc.hit    += parseInt(hit[1], 10);
+      if (hp)  acc.hp     += parseInt(hp[1],  10);
+      return acc;
+    },
+    { ac: 0, damage: 0, hit: 0, hp: 0 },
+  );
+  const hasGear = equipped.length > 0;
 
   const sheet = getCharacterSheetData(char);
 
@@ -882,6 +905,17 @@ function MemberStatsPane({ char }: { char: CharacterData }) {
         })}
 
       </div>
+
+      {/* Gear bonuses from equipped EquippableItems */}
+      {hasGear && (
+        <div className="flex flex-wrap gap-x-3 gap-y-1 px-2 py-1.5 bg-amber-50 border border-amber-100 rounded-lg mt-1">
+          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest w-full">Equipped Gear</span>
+          {gearBoosts.ac     > 0 && <span className="text-[10px] font-bold text-sky-600">Defense +{gearBoosts.ac} AC</span>}
+          {gearBoosts.damage > 0 && <span className="text-[10px] font-bold text-red-600">Damage +{gearBoosts.damage}</span>}
+          {gearBoosts.hit    > 0 && <span className="text-[10px] font-bold text-amber-600">To Hit +{gearBoosts.hit}</span>}
+          {gearBoosts.hp     > 0 && <span className="text-[10px] font-bold text-emerald-600">Temp HP +{gearBoosts.hp}</span>}
+        </div>
+      )}
 
       {/* Actions & Skills — grouped by stat, using equipment-adjusted ability modifier */}
       <div className="space-y-2 pt-2">

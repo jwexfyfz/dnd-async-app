@@ -26,12 +26,12 @@ interface Character {
   id:             string;
   name:           string;
   characterClass: string;
-  strength:       number;
-  dexterity:      number;
-  constitution:   number;
-  intelligence:   number;
-  wisdom:         number;
-  charisma:       number;
+  baseStrength:     number;
+  baseDexterity:    number;
+  baseConstitution: number;
+  baseIntelligence: number;
+  baseWisdom:       number;
+  baseCharisma:     number;
   // Hosted games (character is the game creator).
   games:          ActiveGame[];
   // Non-host party memberships.
@@ -285,10 +285,17 @@ function CharacterCard({
 
       {/* Ability scores */}
       <div className="grid grid-cols-3 gap-1.5 text-center text-xs">
-        {(["strength","dexterity","constitution","intelligence","wisdom","charisma"] as const).map((stat) => (
-          <div key={stat} className="bg-slate-50 border border-slate-100 rounded-md py-1.5">
-            <div className="text-slate-400 font-medium uppercase text-[10px]">{stat.slice(0,3)}</div>
-            <div className="font-bold text-slate-800 text-sm">{hero[stat]}</div>
+        {([
+          { field: "baseStrength",     label: "STR" },
+          { field: "baseDexterity",    label: "DEX" },
+          { field: "baseConstitution", label: "CON" },
+          { field: "baseIntelligence", label: "INT" },
+          { field: "baseWisdom",       label: "WIS" },
+          { field: "baseCharisma",     label: "CHA" },
+        ] as const).map(({ field, label }) => (
+          <div key={field} className="bg-slate-50 border border-slate-100 rounded-md py-1.5">
+            <div className="text-slate-400 font-medium uppercase text-[10px]">{label}</div>
+            <div className="font-bold text-slate-800 text-sm">{hero[field]}</div>
           </div>
         ))}
       </div>
