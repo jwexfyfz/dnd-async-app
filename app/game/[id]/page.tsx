@@ -14,6 +14,7 @@ import MapRenderer, { type MapData, type PartyMarker } from "../../../components
 import UserMenu from "../../../components/user-menu";
 import { classEmoji } from "../../../lib/class-emoji";
 import type { D20Result } from "../../../lib/dice";
+import type { SkillCheckResult } from "../../../lib/skills";
 import { xpForNextLevel, XP_THRESHOLDS } from "../../../lib/xp";
 import { proficiencyBonus } from "../../../lib/leveling";
 import { getCharacterSheetData } from "../../../lib/character-sheet";
@@ -136,8 +137,9 @@ export default function GamePage() {
   const [activeTab,      setActiveTab]      = useState<Tab>("field");
   const [isInitializing, setIsInitializing] = useState(false);
   const [isTakingTurn,   setIsTakingTurn]   = useState(false);
-  const [diceResult,     setDiceResult]     = useState<D20Result | null>(null);
+  const [diceResult,       setDiceResult]       = useState<D20Result | null>(null);
   const [levelUpResult,    setLevelUpResult]    = useState<LevelUpResult | null>(null);
+  const [skillCheckResult, setSkillCheckResult] = useState<SkillCheckResult | null>(null);
   const [turnError,        setTurnError]        = useState<string | null>(null);
   const [localHpOverrides, setLocalHpOverrides] = useState<Record<string, number>>({});
   const [hpFlashing,       setHpFlashing]       = useState(false);
@@ -227,6 +229,7 @@ export default function GamePage() {
     setIsTakingTurn(true);
     setDiceResult(null);
     setLevelUpResult(null);
+    setSkillCheckResult(null);
     setTurnError(null);
 
     const playerMsg: MessageData = {
@@ -250,6 +253,7 @@ export default function GamePage() {
       if (result.newState) setLocalState(result.newState as unknown as GameState);
       setDiceResult(result.diceResult ?? null);
       setLevelUpResult(result.levelUpResult ?? null);
+      setSkillCheckResult(result.skillCheckResult ?? null);
 
       if (result.combatEffects && result.combatEffects.length > 0) {
         const overrides: Record<string, number> = {};
@@ -284,6 +288,7 @@ export default function GamePage() {
       setLocalMessages((prev) => prev.filter((m) => m.id !== playerMsg.id));
       setDiceResult(null);
       setLevelUpResult(null);
+      setSkillCheckResult(null);
       const msg = result.error === "STALE_TURN"
         ? "Another action was submitted first — please try again."
         : result.error === "It's not your turn."
@@ -423,6 +428,7 @@ export default function GamePage() {
             chipsEnabled={!isPartyGame || isMyTurn}
             diceResult={diceResult}
             levelUpResult={levelUpResult}
+            skillCheckResult={skillCheckResult}
             turnError={turnError}
           />
         )}
@@ -448,21 +454,22 @@ export default function GamePage() {
 
 function FieldTab({
   state, map, storyPrompt, messages, chips, partyMarkers,
-  onChipClick, isInitializing, isTakingTurn, chipsEnabled, diceResult, levelUpResult, turnError,
+  onChipClick, isInitializing, isTakingTurn, chipsEnabled, diceResult, levelUpResult, skillCheckResult, turnError,
 }: {
-  state:          GameState;
-  map:            { name: string; data: MapData };
-  storyPrompt:    { title: string; description: string };
-  messages:       MessageData[];
-  chips:          string[];
-  partyMarkers:   PartyMarker[];
-  onChipClick:    (chip: string) => void;
-  isInitializing: boolean;
-  isTakingTurn:   boolean;
-  chipsEnabled:   boolean;
-  diceResult?:    D20Result | null;
-  levelUpResult?: LevelUpResult | null;
-  turnError?:     string | null;
+  state:             GameState;
+  map:               { name: string; data: MapData };
+  storyPrompt:       { title: string; description: string };
+  messages:          MessageData[];
+  chips:             string[];
+  partyMarkers:      PartyMarker[];
+  onChipClick:       (chip: string) => void;
+  isInitializing:    boolean;
+  isTakingTurn:      boolean;
+  chipsEnabled:      boolean;
+  diceResult?:       D20Result | null;
+  levelUpResult?:    LevelUpResult | null;
+  skillCheckResult?: SkillCheckResult | null;
+  turnError?:        string | null;
 }) {
   const lastDm        = [...messages].reverse().find((m) => m.role === "DUNGEON_MASTER");
   const situationText = lastDm?.content ?? storyPrompt.description;
@@ -493,8 +500,12 @@ function FieldTab({
             {isTakingTurn && (
               <div className="h-6 bg-amber-100 rounded animate-pulse" />
             )}
-            {!isTakingTurn && diceResult && (
-              <DiceCard result={diceResult} />
+            {!isTakingTurn && (
+              skillCheckResult ? (
+                <SkillCheckCard result={skillCheckResult} />
+              ) : (
+                diceResult && <DiceCard result={diceResult} />
+              )
             )}
             {!isTakingTurn && levelUpResult && (
               <LevelUpCard result={levelUpResult} />
@@ -588,6 +599,19 @@ function DiceCard({ result }: { result: D20Result }) {
       </span>
       <span className="text-slate-400">vs {result.dcType} {result.dc}</span>
       <span className={outcomeColor}>{outcomeText}</span>
+    </div>
+  );
+}
+
+// ─── Skill Check card ─────────────────────────────────────────────────────────
+
+function SkillCheckCard({ result }: { result: SkillCheckResult }) {
+  return (
+    <div className="flex items-center gap-2 bg-violet-50 border border-violet-200 rounded-lg px-3 py-2 text-sm">
+      <span className="text-base">⚡</span>
+      <span className="font-semibold text-violet-700">
+        {result.skill}: {result.success ? "SUCCESS" : "FAILURE"}
+      </span>
     </div>
   );
 }
