@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: Ready to discuss / plan
+status: Ready to execute
 stopped_at: context exhaustion at 75% (2026-05-23)
-last_updated: "2026-05-23T07:47:41.651Z"
+last_updated: "2026-05-23T12:00:00.000Z"
 progress:
   total_phases: 4
   completed_phases: 3
-  total_plans: 12
+  total_plans: 17
   completed_plans: 12
   percent: 75
 ---
@@ -29,8 +29,9 @@ See: .planning/PROJECT.md (updated 2026-05-22)
 ## Active Phase
 
 Phase: 4
-Name: Skills
-Status: Ready to discuss / plan
+Name: Skills & Abilities Integration
+Status: Planned — ready to execute
+Plans: 5 (04-01 through 04-05, 2 waves)
 
 ## Phases
 
@@ -39,7 +40,7 @@ Status: Ready to discuss / plan
 | 1 | Dice Engine & Critical Bug Fixes | ✅ Complete |
 | 2 | XP System | ✅ Complete (3/3 plans done) |
 | 3 | Leveling | ✅ Complete (4/4 plans done) |
-| 4 | Skills | not started |
+| 4 | Skills & Abilities Integration | 🟡 Planned — ready to execute (5 plans) |
 
 ## Key Decisions
 
@@ -62,6 +63,8 @@ Status: Ready to discuss / plan
 ## Last Action
 
 2026-05-22 — Phase 3 complete: Leveling system — maxHp DB column, lib/leveling.ts (maxHpAtLevel + proficiencyBonus), atomic level-up in take-turn, LevelUpCard indigo UI, 5 code review bugs fixed, 7/7 verification checks passed.
+
+2026-05-23 — Phase 4 scope revised: abandoned original "Skills" plan; ingested post-Phase 03 manual work (Party tab sub-tabs, ClassProgression/ClassFeature/EquippableItem schemas, character-sheet.ts). New Phase 4 name: Skills & Abilities Integration. 5 plans created across 2 waves: migration + creation (04-01, Wave 1), Abilities sub-tab DB wiring (04-02, Wave 1), lib/skills.ts + tests (04-03, Wave 1), take-turn integration + SkillCheckCard (04-04, Wave 2), Stats sub-tab live wire (04-05, Wave 2 parallel with 04-04). Verification passed.
 
 ## Session Continuity
 

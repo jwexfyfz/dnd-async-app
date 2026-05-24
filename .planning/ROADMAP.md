@@ -116,13 +116,10 @@ Plans:
 - [ ] 04-02-PLAN.md — Abilities sub-tab DB wiring: `getClassFeatures(characterClass, maxLevel)` server action returns all features unlocked up to current level, grouped by level (cumulative reference list); `MemberAbilitiesPane` reads from `ClassFeature` DB; "New" badge on features at `character.level`; removes hardcoded `CLASS_FEATURES`
 - [ ] 04-03-PLAN.md — `lib/skills.ts` pure module: `resolveSkillCheck()` with injectable `rollFn`; `SKILL_ABILITY_MAP` (18 entries); `lib/skills.test.ts` unit tests (proficient, non-proficient, all 18 mappings)
 
-**Wave 2 — depends on 04-01 + 04-03:**
+**Wave 2 — depends on 04-01 + 04-03 (04-04); depends on 04-01 only (04-05, parallel with 04-04):**
 
 - [ ] 04-04-PLAN.md — `take-turn.ts` skill check integration: Call #1 output schema extended with optional `skillName`; `resolveSkillCheck()` runs before Call #2; compact `[SKILL skill=X outcome=Y dc=N]` keyword injected into Call #2 system prompt `MECHANICAL CONTEXT` block; failed checks write a `stateDeltas` flag (e.g. `guardsAlerted: true`) — downstream consequences of flags deferred to a later phase; narration rules updated to forbid raw number exposure; `SkillCheckCard` UI component in FieldTab
-
-**Wave 3 — depends on 04-01 + 04-04:**
-
-- [ ] 04-05-PLAN.md — Stats sub-tab live proficiency wire-up: `getCharacterSheetData()` accepts `skillProficiencies` from DB; `MemberStatsPane` passes live data; `SKILL_PROFS` hardcoded fallback removed
+- [ ] 04-05-PLAN.md — Stats sub-tab live proficiency wire-up: `getCharacterSheetData()` accepts `skillProficiencies` from DB; `MemberStatsPane` passes live data; `SKILL_PROFS` hardcoded fallback removed *(can run parallel with 04-04 — no shared files)*
 
 **UI hint**: yes — Stats sub-tab proficiency highlight, Abilities sub-tab level-unlock badge, SkillCheckCard in FieldTab
 
@@ -136,3 +133,4 @@ Plans:
 | 2. XP System | 3/3 | Complete | 2026-05-22 |
 | 3. Leveling | 4/4 | Complete    | 2026-05-23 |
 | 4. Skills & Abilities Integration | 0/5 | Planned — ready to execute | - |
+
