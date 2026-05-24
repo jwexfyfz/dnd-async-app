@@ -3,21 +3,21 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 04-04-PLAN.md
-last_updated: "2026-05-24T16:18:00Z"
+stopped_at: Completed 04-05-PLAN.md (Task 1); awaiting checkpoint:human-verify (Task 2)
+last_updated: "2026-05-24T16:22:06.367Z"
 progress:
   total_phases: 4
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 17
   completed_plans: 17
-  percent: 94
+  percent: 100
 ---
 
 # Project State
 
 ## Status
 
-Phase 3 complete. All 4 plans delivered and verified. Phase 04 executing — 04-04 complete (4/5 Phase 04 plans done, 1 Wave 2 plan remains: 04-05).
+Phase 4 nearly complete. Plans 04-01 through 04-05 Task 1 all delivered. Awaiting human verification checkpoint (Task 2 of 04-05) to confirm Stats sub-tab proficiency highlights are DB-driven end-to-end.
 
 ## Project Reference
 
@@ -40,7 +40,7 @@ Plans: 5 (04-01 through 04-05, 2 waves)
 | 1 | Dice Engine & Critical Bug Fixes | ✅ Complete |
 | 2 | XP System | ✅ Complete (3/3 plans done) |
 | 3 | Leveling | ✅ Complete (4/4 plans done) |
-| 4 | Skills & Abilities Integration | 🟡 Executing — 04-04 complete (Wave 1 done + 04-04 done, 1 Wave 2 plan remains: 04-05) |
+| 4 | Skills & Abilities Integration | 🟡 Executing — 04-05 Task 1 complete; awaiting checkpoint:human-verify (Task 2) |
 
 ## Key Decisions
 
@@ -74,6 +74,8 @@ Plans: 5 (04-01 through 04-05, 2 waves)
 - Call #2 uses same buildConversationMessages as Call #1 — narration context identical except for MECHANICAL CONTEXT block
 - resolveSkillCheck wraps currentCharacter inline as SkillCharacterInput — no new type needed in take-turn.ts
 - SkillCheckCard shows only skill name and outcome — no raw numbers (roll, DC, modifier, proficiencyBonus) in JSX
+- SKILL_PROFS hardcoded constant deleted — CharacterInput.skillProficiencies? optional field reads live DB data via char.skillProficiencies ?? []
+- MemberStatsPane passes skillProficiencies through structural typing automatically — no cast required; CharacterData is superset of CharacterInput
 
 ## Last Action
 
@@ -89,8 +91,10 @@ Plans: 5 (04-01 through 04-05, 2 waves)
 
 2026-05-24 — Plan 04-04 complete: Two-call skill check architecture in take-turn.ts — skillName in JSON schema, resolveSkillCheck integration, MECHANICAL CONTEXT keyword block, finalParsed for all downstream code; SkillCheckCard in violet UI; DiceCard suppressed on skill check turns; 174/174 tests pass; build clean.
 
+2026-05-24 — Plan 04-05 Task 1 complete: SKILL_PROFS constant deleted from lib/character-sheet.ts; CharacterInput extended with skillProficiencies?: string[]; getCharacterSheetData reads char.skillProficiencies ?? []; MemberStatsPane passes skillProficiencies through structural typing; 174/174 tests pass; build clean. Awaiting Task 2 checkpoint:human-verify.
+
 ## Session Continuity
 
-Last session: 2026-05-24T16:18:50.874Z
+Last session: 2026-05-24T16:22:06.359Z
 Stopped at: Completed 04-04-PLAN.md
 Resume file: None

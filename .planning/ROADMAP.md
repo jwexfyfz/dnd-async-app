@@ -12,7 +12,7 @@
 - [x] **Phase 1: Dice Engine & Critical Bug Fixes** - Replace AI-invented rolls with a deterministic TypeScript engine; fix prompt injection and race condition; establish test infrastructure.
 - [x] **Phase 2: XP System** - Players earn XP at encounter end via code; XP persists on Character; level computed from cumulative total; progress visible in UI.
 - [x] **Phase 3: Leveling** - Characters auto-level when XP crosses D&D Basic Rules thresholds (levels 1–5); max HP and proficiency bonus update per class hit die; Claude locked out of HP/XP/level via stateDeltas allowlist. (completed 2026-05-23)
-- [ ] **Phase 4: Skills & Abilities Integration** - `Character.skillProficiencies` stored per-character; skill checks resolved in TypeScript with token-efficient keyword for Claude; Abilities sub-tab wired to ClassFeature DB; Stats sub-tab proficiency live-wired from DB.
+- [x] **Phase 4: Skills & Abilities Integration** - `Character.skillProficiencies` stored per-character; skill checks resolved in TypeScript with token-efficient keyword for Claude; Abilities sub-tab wired to ClassFeature DB; Stats sub-tab proficiency live-wired from DB. (completed 2026-05-24)
 
 ---
 
@@ -108,7 +108,7 @@ Plans:
 4. A proficient character's skill check total equals d20 roll + ability modifier + proficiency bonus; a non-proficient character's total equals d20 roll + ability modifier only — both paths confirmed by unit tests in `lib/skills.test.ts`; all 18 skill-to-ability mappings tested.
 5. The Abilities sub-tab fetches `ClassFeature` records from the DB for each character's class and level range; the hardcoded `CLASS_FEATURES` map in `page.tsx` is removed; when a character's level increases, the Abilities sub-tab on next render shows newly-unlocked features with a visual indicator.
 
-**Plans:** 4/5 plans executed
+**Plans:** 5/5 plans complete
 
 **Wave 1 — parallel (no inter-dependencies):**
 
@@ -119,7 +119,7 @@ Plans:
 **Wave 2 — depends on 04-01 + 04-03 (04-04); depends on 04-01 only (04-05, parallel with 04-04):**
 
 - [x] 04-04-PLAN.md — `take-turn.ts` skill check integration: Call #1 output schema extended with optional `skillName`; `resolveSkillCheck()` runs before Call #2; compact `[SKILL skill=X outcome=Y dc=N]` keyword injected into Call #2 system prompt `MECHANICAL CONTEXT` block; failed checks write a `stateDeltas` flag (e.g. `guardsAlerted: true`) — downstream consequences of flags deferred to a later phase; narration rules updated to forbid raw number exposure; `SkillCheckCard` UI component in FieldTab
-- [ ] 04-05-PLAN.md — Stats sub-tab live proficiency wire-up: `getCharacterSheetData()` accepts `skillProficiencies` from DB; `MemberStatsPane` passes live data; `SKILL_PROFS` hardcoded fallback removed *(can run parallel with 04-04 — no shared files)*
+- [x] 04-05-PLAN.md — Stats sub-tab live proficiency wire-up: `getCharacterSheetData()` accepts `skillProficiencies` from DB; `MemberStatsPane` passes live data; `SKILL_PROFS` hardcoded fallback removed *(can run parallel with 04-04 — no shared files)*
 
 **UI hint**: yes — Stats sub-tab proficiency highlight, Abilities sub-tab level-unlock badge, SkillCheckCard in FieldTab
 
@@ -132,5 +132,5 @@ Plans:
 | 1. Dice Engine & Critical Bug Fixes | 5/5 | Complete | 2026-05-22 |
 | 2. XP System | 3/3 | Complete | 2026-05-22 |
 | 3. Leveling | 4/4 | Complete    | 2026-05-23 |
-| 4. Skills & Abilities Integration | 4/5 | In Progress|  |
+| 4. Skills & Abilities Integration | 5/5 | Complete   | 2026-05-24 |
 
