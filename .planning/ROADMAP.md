@@ -12,7 +12,7 @@
 - [x] **Phase 1: Dice Engine & Critical Bug Fixes** - Replace AI-invented rolls with a deterministic TypeScript engine; fix prompt injection and race condition; establish test infrastructure.
 - [x] **Phase 2: XP System** - Players earn XP at encounter end via code; XP persists on Character; level computed from cumulative total; progress visible in UI.
 - [x] **Phase 3: Leveling** - Characters auto-level when XP crosses D&D Basic Rules thresholds (levels 1–5); max HP and proficiency bonus update per class hit die; Claude locked out of HP/XP/level via stateDeltas allowlist. (completed 2026-05-23)
-- [ ] **Phase 4: Skills** - Characters have skill proficiencies; skill checks resolve via code (d20 + ability mod + proficiency bonus if applicable) and feed results to Claude for narration.
+- [ ] **Phase 4: Skills & Abilities Integration** - `Character.skillProficiencies` stored per-character; skill checks resolved in TypeScript with token-efficient keyword for Claude; Abilities sub-tab wired to ClassFeature DB; Stats sub-tab proficiency live-wired from DB.
 
 ---
 
@@ -94,22 +94,37 @@ Plans:
 
 - [x] 03-04-PLAN.md — LevelUpCard UI in FieldTab: indigo info card showing level/HP/proficiency deltas (LVL-02 user-facing slice)
 
-### Phase 4: Skills
+### Phase 4: Skills & Abilities Integration
 
-**Goal:** Characters hold skill proficiencies chosen at creation; in-game skill checks resolve as d20 + ability modifier + proficiency bonus (if proficient) entirely in TypeScript; Claude receives the completed result object and narrates the outcome without knowing the raw numbers.
+**Goal:** Integrate Skills and Abilities mechanics into the existing Party tab sub-tabs. `Character.skillProficiencies` stores per-character picks chosen at creation; in-game skill checks resolve as d20 + ability modifier + proficiency bonus in TypeScript and reach Claude as a compact token-efficient keyword — not raw numbers; the Abilities sub-tab is wired to the `ClassFeature` DB table and surfaces newly-unlocked features on level-up.
 **Mode:** mvp
-**Depends on:** Phase 3
+**Depends on:** Phase 3 + post-Phase 03 manual work (Party tab sub-tabs, ClassProgression/ClassFeature tables, EquippableItem)
 **Requirements:** SKILL-01, SKILL-02, SKILL-03, SKILL-04, SKILL-05
 **Success Criteria:**
 
-1. During character creation, a Fighter can select exactly 2 skills from the Fighter-allowed list; attempting to submit more than 2 is rejected server-side.
-2. When a player action triggers a Stealth check, the system calls `resolveSkillCheck("Stealth", character)` and the returned audit trail `{ skill, abilityScore, roll, modifier, proficiencyBonus, total, dc, success, proficient }` is logged — Claude's narration call receives this object, not a roll request.
-3. A proficient character's skill check total equals d20 roll + ability modifier + proficiency bonus; a non-proficient character's total equals d20 roll + ability modifier only — both paths confirmed by unit tests.
-4. All 18 skill-to-ability mappings are tested; each skill routes to the correct governing ability score.
-5. Claude's narration does not include the raw roll number, DC value, or proficiency bonus in its output — the narrative describes the outcome without exposing mechanical internals.
+1. A Fighter character's Stats sub-tab shows their 2 chosen skills highlighted with proficiency bonus applied — proficiency data is read from `Character.skillProficiencies` in the DB, not the hardcoded `SKILL_PROFS` fallback in `lib/character-sheet.ts`.
+2. During character creation, a Fighter can select exactly 2 skills from the Fighter-allowed list; attempting to submit more than 2 is rejected server-side; the selection is persisted to `Character.skillProficiencies`.
+3. When a player action triggers a Stealth check, `resolveSkillCheck("Stealth", character)` runs in `take-turn.ts` and Claude's narration call receives a compact metadata keyword `[SKILL skill=Stealth outcome=SUCCESS]` — Claude's narrative describes the result without mentioning the roll number, DC, or proficiency bonus.
+4. A proficient character's skill check total equals d20 roll + ability modifier + proficiency bonus; a non-proficient character's total equals d20 roll + ability modifier only — both paths confirmed by unit tests in `lib/skills.test.ts`; all 18 skill-to-ability mappings tested.
+5. The Abilities sub-tab fetches `ClassFeature` records from the DB for each character's class and level range; the hardcoded `CLASS_FEATURES` map in `page.tsx` is removed; when a character's level increases, the Abilities sub-tab on next render shows newly-unlocked features with a visual indicator.
 
-**Plans:** TBD
-**UI hint**: yes
+**Plans:** 5 plans
+
+**Wave 1 — parallel (no inter-dependencies):**
+
+- [ ] 04-01-PLAN.md — `Character.skillProficiencies String[]` migration; inline class-gated skill-pick at character creation (multi-select, count enforced, class change resets picks, server-side allowed-list validation); backfill script seeds existing characters with thematic class defaults (e.g. Fighter → Athletics + Intimidation, Rogue → Stealth + Perception)
+- [ ] 04-02-PLAN.md — Abilities sub-tab DB wiring: `getClassFeatures(characterClass, maxLevel)` server action returns all features unlocked up to current level, grouped by level (cumulative reference list); `MemberAbilitiesPane` reads from `ClassFeature` DB; "New" badge on features at `character.level`; removes hardcoded `CLASS_FEATURES`
+- [ ] 04-03-PLAN.md — `lib/skills.ts` pure module: `resolveSkillCheck()` with injectable `rollFn`; `SKILL_ABILITY_MAP` (18 entries); `lib/skills.test.ts` unit tests (proficient, non-proficient, all 18 mappings)
+
+**Wave 2 — depends on 04-01 + 04-03:**
+
+- [ ] 04-04-PLAN.md — `take-turn.ts` skill check integration: Call #1 output schema extended with optional `skillName`; `resolveSkillCheck()` runs before Call #2; compact `[SKILL skill=X outcome=Y dc=N]` keyword injected into Call #2 system prompt `MECHANICAL CONTEXT` block; failed checks write a `stateDeltas` flag (e.g. `guardsAlerted: true`) — downstream consequences of flags deferred to a later phase; narration rules updated to forbid raw number exposure; `SkillCheckCard` UI component in FieldTab
+
+**Wave 3 — depends on 04-01 + 04-04:**
+
+- [ ] 04-05-PLAN.md — Stats sub-tab live proficiency wire-up: `getCharacterSheetData()` accepts `skillProficiencies` from DB; `MemberStatsPane` passes live data; `SKILL_PROFS` hardcoded fallback removed
+
+**UI hint**: yes — Stats sub-tab proficiency highlight, Abilities sub-tab level-unlock badge, SkillCheckCard in FieldTab
 
 ---
 
@@ -120,4 +135,4 @@ Plans:
 | 1. Dice Engine & Critical Bug Fixes | 5/5 | Complete | 2026-05-22 |
 | 2. XP System | 3/3 | Complete | 2026-05-22 |
 | 3. Leveling | 4/4 | Complete    | 2026-05-23 |
-| 4. Skills | 0/? | Not started | - |
+| 4. Skills & Abilities Integration | 0/5 | Planned — ready to execute | - |
