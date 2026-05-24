@@ -36,6 +36,7 @@ model Character {
   level        Int @default(1)
   maxHp        Int @default(10)
   currentHp    Int @default(10)
+  skillProficiencies String[] @default([])
 
   games            Game[]
   partyMemberships PartyMember[]
