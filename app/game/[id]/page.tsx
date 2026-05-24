@@ -43,19 +43,20 @@ interface LevelUpResult {
 }
 
 interface CharacterData {
-  id:             string;
-  name:           string;
-  characterClass: string;
-  strength:       number;
-  dexterity:      number;
-  constitution:   number;
-  intelligence:   number;
-  wisdom:         number;
-  charisma:       number;
-  xp:             number;
-  level:          number;
-  currentHp:      number;
-  maxHp:          number;
+  id:                  string;
+  name:                string;
+  characterClass:      string;
+  strength:            number;
+  dexterity:           number;
+  constitution:        number;
+  intelligence:        number;
+  wisdom:              number;
+  charisma:            number;
+  xp:                  number;
+  level:               number;
+  currentHp:           number;
+  maxHp:               number;
+  skillProficiencies:  string[];
 }
 
 interface PartyMemberData {

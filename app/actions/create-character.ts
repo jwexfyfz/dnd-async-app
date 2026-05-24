@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "../../lib/prisma";
 import { createSupabaseServerClient } from "../../lib/supabase-server";
 import { maxHpAtLevel, HIT_DIE_BY_CLASS } from "../../lib/leveling";
+import { CLASS_SKILL_POOL, SKILL_PICK_COUNT } from "../../lib/skills";
 
 interface ActionResponse {
   success: boolean;
@@ -51,6 +52,29 @@ export async function createCharacter(formData: FormData): Promise<ActionRespons
     return { success: false, error: "All ability scores must be between 1 and 20." };
   }
 
+  // Parse and validate skill proficiency picks (T-04-01-01, T-04-01-02, T-04-01-03).
+  let skillProficiencies: string[];
+  try {
+    const raw = formData.get("skillProficiencies");
+    const parsed = JSON.parse((raw as string) ?? "[]");
+    if (!Array.isArray(parsed)) {
+      return { success: false, error: "Invalid skill proficiency data." };
+    }
+    skillProficiencies = parsed as string[];
+  } catch {
+    return { success: false, error: "Invalid skill proficiency data." };
+  }
+
+  const requiredCount = SKILL_PICK_COUNT[characterClass];
+  if (skillProficiencies.length !== requiredCount) {
+    return { success: false, error: `Choose exactly ${requiredCount} skills for ${characterClass}.` };
+  }
+
+  const allowedSkills = CLASS_SKILL_POOL[characterClass] ?? [];
+  if (!skillProficiencies.every((s) => allowedSkills.includes(s))) {
+    return { success: false, error: "One or more selected skills are not available for this class." };
+  }
+
   try {
     // Step 3: Ensure this Supabase user has a matching row in our own database.
     // displayName comes from the Google OAuth full_name claim and is shown on
@@ -82,6 +106,7 @@ export async function createCharacter(formData: FormData): Promise<ActionRespons
         charisma,
         maxHp,
         currentHp: maxHp,
+        skillProficiencies,
       },
     });
 

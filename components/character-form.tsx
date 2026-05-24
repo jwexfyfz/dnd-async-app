@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { createCharacter } from "@/app/actions/create-character";
+import { CLASS_SKILL_POOL, SKILL_PICK_COUNT } from "../lib/skills";
 
 // The four classes available in this campaign. Add more here to extend the picker.
 const CLASSES = ["Fighter", "Wizard", "Rogue", "Cleric"];
@@ -19,10 +20,18 @@ export default function CharacterForm({ onCharacterCreated }: Props) {
   const [name, setName] = useState("");
   const [selectedClass, setSelectedClass] = useState("");
   const [stats, setStats] = useState(INITIAL_STATS);
-  const [pointsLeft, setPointsLeft] = useState(27); 
+  const [pointsLeft, setPointsLeft] = useState(27);
   const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [errorMessage, setErrorMessage] = useState("");
   const [ruleHint, setRuleHint] = useState(""); // Holds explanation messages for the user
+  const [selectedSkills, setSelectedSkills] = useState<string[]>([]);
+  const [skillError, setSkillError] = useState("");
+
+  // Reset skill picks when the class changes (plan 04-01, behavior D-05).
+  useEffect(() => {
+    setSelectedSkills([]);
+    setSkillError("");
+  }, [selectedClass]);
 
   // Helper to figure out the cost of moving to the next level
   function getStatCost(currentValue: number, isIncrementing: boolean) {
@@ -68,10 +77,33 @@ export default function CharacterForm({ onCharacterCreated }: Props) {
     }
   }
 
+  function handleSkillToggle(skill: string) {
+    if (selectedSkills.includes(skill)) {
+      // Deselect
+      setSelectedSkills(selectedSkills.filter((s) => s !== skill));
+      setSkillError("");
+    } else {
+      const requiredCount = SKILL_PICK_COUNT[selectedClass] ?? 0;
+      if (selectedSkills.length >= requiredCount) {
+        setSkillError(`Choose exactly ${requiredCount} skills for ${selectedClass}.`);
+        return;
+      }
+      setSelectedSkills([...selectedSkills, skill]);
+      setSkillError("");
+    }
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim()) return (setStatus("error"), setErrorMessage("Character name cannot be blank."));
     if (!selectedClass) return (setStatus("error"), setErrorMessage("Please choose a class."));
+
+    const requiredCount = SKILL_PICK_COUNT[selectedClass] ?? 0;
+    if (selectedSkills.length !== requiredCount) {
+      setStatus("error");
+      setErrorMessage(`Choose exactly ${requiredCount} skills for ${selectedClass}.`);
+      return;
+    }
 
     setStatus("loading");
     setErrorMessage("");
@@ -82,6 +114,7 @@ export default function CharacterForm({ onCharacterCreated }: Props) {
       formData.append("name", name);
       formData.append("class", selectedClass);
       Object.entries(stats).forEach(([key, val]) => formData.append(key, val.toString()));
+      formData.append("skillProficiencies", JSON.stringify(selectedSkills));
 
       const result = await createCharacter(formData);
       if (result?.success) {
@@ -90,6 +123,7 @@ export default function CharacterForm({ onCharacterCreated }: Props) {
         setSelectedClass("");
         setStats(INITIAL_STATS);
         setPointsLeft(27);
+        setSelectedSkills([]);
         // Notify the parent so it can re-fetch the roster immediately.
         onCharacterCreated();
       } else {
@@ -138,6 +172,36 @@ export default function CharacterForm({ onCharacterCreated }: Props) {
             ))}
           </div>
         </div>
+
+        {/* Skill Picker — shown only after a class is chosen */}
+        {selectedClass && (
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-slate-700">
+              Choose Skills (pick {SKILL_PICK_COUNT[selectedClass]})
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              {(CLASS_SKILL_POOL[selectedClass] ?? []).map((skill) => (
+                <button
+                  key={skill}
+                  type="button"
+                  onClick={() => handleSkillToggle(skill)}
+                  className={`p-3 border text-sm font-medium rounded-md transition-colors ${
+                    selectedSkills.includes(skill)
+                      ? "border-slate-900 bg-slate-900 text-white"
+                      : "border-slate-200 hover:bg-slate-50"
+                  }`}
+                >
+                  {skill}
+                </button>
+              ))}
+            </div>
+            {skillError && (
+              <div className="text-xs font-medium text-amber-800 bg-amber-50 p-3 rounded-md border border-amber-200 transition-all">
+                {skillError}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Attribute Selector */}
         <div className="space-y-3 bg-slate-50 p-4 rounded-lg">
