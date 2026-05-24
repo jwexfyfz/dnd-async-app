@@ -21,15 +21,15 @@ interface PartyMember {
   userId:      string;
   status:      string;
   character: {
-    id:             string;
-    name:           string;
-    characterClass: string;
-    strength:       number;
-    dexterity:      number;
-    constitution:   number;
-    intelligence:   number;
-    wisdom:         number;
-    charisma:       number;
+    id:              string;
+    name:            string;
+    characterClass:  string;
+    baseStrength:    number;
+    baseDexterity:   number;
+    baseConstitution: number;
+    baseIntelligence: number;
+    baseWisdom:      number;
+    baseCharisma:    number;
   };
   user: { id: string; displayName: string | null; email: string };
 }
@@ -62,12 +62,12 @@ function statMod(score: number) {
 }
 
 const STATS = [
-  { key: "strength",     label: "STR" },
-  { key: "dexterity",    label: "DEX" },
-  { key: "constitution", label: "CON" },
-  { key: "intelligence", label: "INT" },
-  { key: "wisdom",       label: "WIS" },
-  { key: "charisma",     label: "CHA" },
+  { key: "baseStrength",     label: "STR" },
+  { key: "baseDexterity",    label: "DEX" },
+  { key: "baseConstitution", label: "CON" },
+  { key: "baseIntelligence", label: "INT" },
+  { key: "baseWisdom",       label: "WIS" },
+  { key: "baseCharisma",     label: "CHA" },
 ] as const;
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
@@ -350,7 +350,7 @@ export default function LobbyPage() {
                   {isExpanded && (
                     <div className="px-4 pb-4 space-y-3 border-t border-slate-100 pt-3">
                       <p className="text-xs text-slate-500">
-                        {m.character.characterClass} · DEX {m.character.dexterity}
+                        {m.character.characterClass} · DEX {m.character.baseDexterity}
                       </p>
                       <div className="grid grid-cols-6 gap-1 text-center">
                         {STATS.map(({ key, label }) => (

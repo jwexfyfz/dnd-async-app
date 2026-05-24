@@ -18,6 +18,8 @@ import type { SkillCheckResult } from "../../../lib/skills";
 import { xpForNextLevel, XP_THRESHOLDS } from "../../../lib/xp";
 import { proficiencyBonus } from "../../../lib/leveling";
 import { getCharacterSheetData } from "../../../lib/character-sheet";
+import { getCharacterStats } from "../../actions/get-character-stats";
+import type { CharacterStats } from "../../../lib/character-stats";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -48,12 +50,12 @@ interface CharacterData {
   id:                  string;
   name:                string;
   characterClass:      string;
-  strength:            number;
-  dexterity:           number;
-  constitution:        number;
-  intelligence:        number;
-  wisdom:              number;
-  charisma:            number;
+  baseStrength:        number;
+  baseDexterity:       number;
+  baseConstitution:    number;
+  baseIntelligence:    number;
+  baseWisdom:          number;
+  baseCharisma:        number;
   xp:                  number;
   level:               number;
   currentHp:           number;
@@ -756,7 +758,7 @@ function PartyTab({
                 <MemberInventoryPane
                   isMe={isMe}
                   mapId={mapId}
-                  strength={m.character.strength}
+                  strength={m.character.baseStrength}
                 />
               )}
               {subTab === "abilities" && <MemberAbilitiesPane char={m.character} />}
@@ -787,6 +789,12 @@ const STAT_FULL_NAME: Record<string, string> = {
 };
 
 function MemberStatsPane({ char }: { char: CharacterData }) {
+  const [equipStats, setEquipStats] = useState<CharacterStats | null>(null);
+
+  useEffect(() => {
+    getCharacterStats(char.id).then(setEquipStats);
+  }, [char.id]);
+
   const sheet = getCharacterSheetData(char);
 
   const level    = Math.max(1, Math.min(5, char.level));
@@ -831,65 +839,90 @@ function MemberStatsPane({ char }: { char: CharacterData }) {
           </div>
         ))}
 
-        {/* Row 2 — Combat Bonus */}
+        {/* Row 2 — Combat Bonus: effective save modifier + equipment adjustment */}
         <div className="flex items-center pr-2">
           <span className="text-[9px] text-slate-400 leading-tight">Combat<br />Bonus</span>
         </div>
-        {sheet.stats.map(({ key, saveMod, saveProficient }) => (
-          <div key={`s-${key}`} className={`flex justify-center items-center rounded-t-md pt-2 pb-1 ${saveProficient ? profBg : ""}`}>
-            <span className={`text-lg font-bold leading-tight ${saveProficient ? "text-green-900" : "text-slate-800"}`}>
-              {fmtMod(saveMod)}
-            </span>
-          </div>
-        ))}
+        {sheet.stats.map(({ key, score, modifier, saveProficient }) => {
+          const eff      = equipStats?.[key];
+          const eTotal   = eff?.total ?? score;
+          const eMod     = Math.floor((eTotal - 10) / 2);
+          const eAdj     = eMod - modifier;
+          const eSaveMod = eMod + (saveProficient ? sheet.profBonus : 0);
+          return (
+            <div key={`s-${key}`} className={`flex flex-col justify-center items-center rounded-t-md pt-2 pb-1 ${saveProficient ? profBg : ""}`}>
+              <span className={`text-base font-bold leading-tight ${saveProficient ? "text-green-900" : "text-slate-800"}`}>
+                {fmtMod(eSaveMod)}
+              </span>
+              <span className={`text-[8px] leading-none ${eAdj !== 0 ? "text-amber-600 font-semibold" : "text-slate-400"}`}>
+                ({fmtMod(eAdj)})
+              </span>
+            </div>
+          );
+        })}
 
-        {/* Row 3 — Raw Score */}
+        {/* Row 3 — Raw Score: effective ability score + equipment bonus */}
         <div className="flex items-center pr-2">
           <span className="text-[9px] text-slate-400 leading-tight">Raw<br />Score</span>
         </div>
-        {sheet.stats.map(({ key, score, saveProficient }) => (
-          <div key={`r-${key}`} className={`flex justify-center items-center rounded-b-md pb-2 pt-1 ${saveProficient ? profBg : ""}`}>
-            <span className={`text-xs font-medium ${saveProficient ? "text-green-500" : "text-slate-400"}`}>
-              {score}
-            </span>
-          </div>
-        ))}
+        {sheet.stats.map(({ key, score, saveProficient }) => {
+          const eff    = equipStats?.[key];
+          const eTotal = eff?.total ?? score;
+          const eBonus = eff?.bonus ?? 0;
+          return (
+            <div key={`r-${key}`} className={`flex flex-col justify-center items-center rounded-b-md pb-2 pt-1 ${saveProficient ? profBg : ""}`}>
+              <span className={`text-xs font-medium ${saveProficient ? "text-green-500" : "text-slate-400"}`}>
+                {eTotal}
+              </span>
+              <span className={`text-[8px] leading-none ${eBonus !== 0 ? "text-amber-600 font-semibold" : "text-slate-400"}`}>
+                ({fmtMod(eBonus)})
+              </span>
+            </div>
+          );
+        })}
 
       </div>
 
-      {/* Actions & Skills — grouped by stat */}
+      {/* Actions & Skills — grouped by stat, using equipment-adjusted ability modifier */}
       <div className="space-y-2 pt-2">
         <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-widest">
           Actions &amp; Skills
         </p>
         {sheet.stats
           .filter(({ key }) => sheet.skills.some((s) => s.ability === key))
-          .map(({ key }) => {
-            const groupSkills = sheet.skills.filter((s) => s.ability === key);
+          .map(({ key, modifier: baseAbilityMod }) => {
+            const groupSkills   = sheet.skills.filter((s) => s.ability === key);
+            const eff           = equipStats?.[key];
+            const effAbilityMod = eff !== undefined
+              ? Math.floor((eff.total - 10) / 2)
+              : baseAbilityMod;
             return (
               <div key={key} className="bg-slate-50 border border-slate-100 rounded-lg p-2 space-y-1">
                 <p className="text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1.5">
                   {STAT_EMOJI[key]} {STAT_FULL_NAME[key]}
                 </p>
-                {groupSkills.map(({ name, modifier, proficient }) => (
-                  <div
-                    key={name}
-                    className={`flex items-center justify-between px-2.5 py-1 rounded-full border text-xs ${
-                      proficient
-                        ? `${profBg} border-green-200`
-                        : "bg-white border-slate-200"
-                    }`}
-                  >
-                    <span className={`truncate mr-1 ${proficient ? "font-bold text-green-900" : "text-slate-600"}`}>
-                      {name}
-                    </span>
-                    <span className={`shrink-0 font-mono text-[11px] ${
-                      proficient ? "font-bold text-green-900" : "text-slate-500"
-                    }`}>
-                      {fmtMod(modifier)}
-                    </span>
-                  </div>
-                ))}
+                {groupSkills.map(({ name, proficient }) => {
+                  const effSkillMod = effAbilityMod + (proficient ? sheet.profBonus : 0);
+                  return (
+                    <div
+                      key={name}
+                      className={`flex items-center justify-between px-2.5 py-1 rounded-full border text-xs ${
+                        proficient
+                          ? `${profBg} border-green-200`
+                          : "bg-white border-slate-200"
+                      }`}
+                    >
+                      <span className={`truncate mr-1 ${proficient ? "font-bold text-green-900" : "text-slate-600"}`}>
+                        {name}
+                      </span>
+                      <span className={`shrink-0 font-mono text-[11px] ${
+                        proficient ? "font-bold text-green-900" : "text-slate-500"
+                      }`}>
+                        {fmtMod(effSkillMod)}
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
             );
           })}

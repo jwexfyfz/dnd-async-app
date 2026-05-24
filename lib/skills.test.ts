@@ -22,24 +22,24 @@ describe('SKILL_ABILITY_MAP', () => {
     expect(Object.keys(SKILL_ABILITY_MAP).length).toBe(18)
   })
 
-  it('Stealth → dexterity', () => {
-    expect(SKILL_ABILITY_MAP['Stealth']).toBe('dexterity')
+  it('Stealth → baseDexterity', () => {
+    expect(SKILL_ABILITY_MAP['Stealth']).toBe('baseDexterity')
   })
 
-  it('Athletics → strength', () => {
-    expect(SKILL_ABILITY_MAP['Athletics']).toBe('strength')
+  it('Athletics → baseStrength', () => {
+    expect(SKILL_ABILITY_MAP['Athletics']).toBe('baseStrength')
   })
 
-  it('Arcana → intelligence', () => {
-    expect(SKILL_ABILITY_MAP['Arcana']).toBe('intelligence')
+  it('Arcana → baseIntelligence', () => {
+    expect(SKILL_ABILITY_MAP['Arcana']).toBe('baseIntelligence')
   })
 
-  it('Insight → wisdom', () => {
-    expect(SKILL_ABILITY_MAP['Insight']).toBe('wisdom')
+  it('Insight → baseWisdom', () => {
+    expect(SKILL_ABILITY_MAP['Insight']).toBe('baseWisdom')
   })
 
-  it('Intimidation → charisma', () => {
-    expect(SKILL_ABILITY_MAP['Intimidation']).toBe('charisma')
+  it('Intimidation → baseCharisma', () => {
+    expect(SKILL_ABILITY_MAP['Intimidation']).toBe('baseCharisma')
   })
 })
 
@@ -50,8 +50,8 @@ describe('SKILLS alias', () => {
     expect(SKILLS).toBe(SKILL_ABILITY_MAP)
   })
 
-  it('SKILLS["Stealth"] === "dexterity"', () => {
-    expect(SKILLS['Stealth']).toBe('dexterity')
+  it('SKILLS["Stealth"] === "baseDexterity"', () => {
+    expect(SKILLS['Stealth']).toBe('baseDexterity')
   })
 })
 
@@ -97,14 +97,14 @@ describe('SKILL_PICK_COUNT', () => {
 
 describe('resolveSkillCheck — proficient character (Rogue level 1, DEX 14, DC 12, roll 10)', () => {
   const character = {
-    characterClass: 'Rogue',
-    level: 1,
-    strength: 10,
-    dexterity: 14,
-    constitution: 10,
-    intelligence: 10,
-    wisdom: 10,
-    charisma: 10,
+    characterClass:   'Rogue',
+    level:            1,
+    baseStrength:     10,
+    baseDexterity:    14,
+    baseConstitution: 10,
+    baseIntelligence: 10,
+    baseWisdom:       10,
+    baseCharisma:     10,
     skillProficiencies: ['Stealth'],
   }
   const result = resolveSkillCheck('Stealth', character, 12, () => 10)
@@ -137,8 +137,8 @@ describe('resolveSkillCheck — proficient character (Rogue level 1, DEX 14, DC 
     expect(result.dc).toBe(12)
   })
 
-  it('result.abilityScore === "dexterity"', () => {
-    expect(result.abilityScore).toBe('dexterity')
+  it('result.abilityScore === "baseDexterity"', () => {
+    expect(result.abilityScore).toBe('baseDexterity')
   })
 
   it('result.skill === "Stealth"', () => {
@@ -150,14 +150,14 @@ describe('resolveSkillCheck — proficient character (Rogue level 1, DEX 14, DC 
 
 describe('resolveSkillCheck — non-proficient character (Fighter level 1, DEX 14, DC 12, roll 10)', () => {
   const character = {
-    characterClass: 'Fighter',
-    level: 1,
-    strength: 10,
-    dexterity: 14,
-    constitution: 10,
-    intelligence: 10,
-    wisdom: 10,
-    charisma: 10,
+    characterClass:   'Fighter',
+    level:            1,
+    baseStrength:     10,
+    baseDexterity:    14,
+    baseConstitution: 10,
+    baseIntelligence: 10,
+    baseWisdom:       10,
+    baseCharisma:     10,
     skillProficiencies: [],
   }
   const result = resolveSkillCheck('Stealth', character, 12, () => 10)
@@ -183,14 +183,14 @@ describe('resolveSkillCheck — non-proficient character (Fighter level 1, DEX 1
 
 describe('resolveSkillCheck — DC boundary conditions (DC 12, no proficiency, DEX 14)', () => {
   const character = {
-    characterClass: 'Fighter',
-    level: 1,
-    strength: 10,
-    dexterity: 14,
-    constitution: 10,
-    intelligence: 10,
-    wisdom: 10,
-    charisma: 10,
+    characterClass:   'Fighter',
+    level:            1,
+    baseStrength:     10,
+    baseDexterity:    14,
+    baseConstitution: 10,
+    baseIntelligence: 10,
+    baseWisdom:       10,
+    baseCharisma:     10,
     skillProficiencies: [],
   }
 
@@ -217,14 +217,14 @@ describe('resolveSkillCheck — DC boundary conditions (DC 12, no proficiency, D
 
 describe('resolveSkillCheck — unknown skill throws', () => {
   const character = {
-    characterClass: 'Fighter',
-    level: 1,
-    strength: 10,
-    dexterity: 10,
-    constitution: 10,
-    intelligence: 10,
-    wisdom: 10,
-    charisma: 10,
+    characterClass:   'Fighter',
+    level:            1,
+    baseStrength:     10,
+    baseDexterity:    10,
+    baseConstitution: 10,
+    baseIntelligence: 10,
+    baseWisdom:       10,
+    baseCharisma:     10,
     skillProficiencies: [],
   }
 

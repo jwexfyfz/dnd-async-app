@@ -26,13 +26,13 @@ export async function startAdventure(gameId: string) {
   // Initiative order: sort by DEX score descending.
   // Ties broken by total ability score sum, then alphabetically by character name.
   const sorted = [...game.partyMembers].sort((a, b) => {
-    if (b.character.dexterity !== a.character.dexterity) {
-      return b.character.dexterity - a.character.dexterity;
+    if (b.character.baseDexterity !== a.character.baseDexterity) {
+      return b.character.baseDexterity - a.character.baseDexterity;
     }
-    const totalA = a.character.strength + a.character.dexterity + a.character.constitution +
-                   a.character.intelligence + a.character.wisdom + a.character.charisma;
-    const totalB = b.character.strength + b.character.dexterity + b.character.constitution +
-                   b.character.intelligence + b.character.wisdom + b.character.charisma;
+    const totalA = a.character.baseStrength + a.character.baseDexterity + a.character.baseConstitution +
+                   a.character.baseIntelligence + a.character.baseWisdom + a.character.baseCharisma;
+    const totalB = b.character.baseStrength + b.character.baseDexterity + b.character.baseConstitution +
+                   b.character.baseIntelligence + b.character.baseWisdom + b.character.baseCharisma;
     if (totalB !== totalA) return totalB - totalA;
     return a.character.name.localeCompare(b.character.name);
   });

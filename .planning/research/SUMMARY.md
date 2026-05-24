@@ -286,21 +286,48 @@ Additional pitfalls addressed per phase:
 
 ---
 
-### Phase 4: Skill Checks + Character Creation Skill Selection
+### Phase 4: Skills & Abilities Integration
 
-**Delivers:** `Character.skillProficiencies` at creation; `d20 + ability mod + proficiency bonus` on skill actions; Passive Perception for map filtering.
+**Context shift:** Phases 1–3 are complete. Between Phase 3 and the planning of Phase 4, the following was manually implemented and is now live:
+- Party tab with three sub-tabs: **Stats** (`MemberStatsPane` — 6-stat grid + Actions & Skills list), **Inventory** (`MemberInventoryPane` — equipment slots + backpack), **Abilities** (`MemberAbilitiesPane` — proficiency bonus + class feature list)
+- `EquippableItem` schema, seeded per-map, with `combatImpactLabel` as a token-efficient metadata keyword
+- `ClassProgression` and `ClassFeature` schemas, seeded for Fighter/Rogue/Cleric/Wizard levels 1–20
+- `Character.currentHp` column
+- `lib/character-sheet.ts` — computes stats, save proficiencies, and skill modifiers from a `CharacterInput`
+
+**Gap:** Both the skills displayed in the Stats sub-tab and the class features in the Abilities sub-tab currently use hardcoded lookup maps (`SKILL_PROFS` and `CLASS_FEATURES`). `Character` has no `skillProficiencies` column. No in-game skill check resolution exists.
+
+**Delivers:**
+- `Character.skillProficiencies String[]` migration + character creation skill-pick UI
+- `lib/skills.ts` — `resolveSkillCheck()` with injectable `rollFn` for testing
+- `take-turn.ts` skill check integration with **token-efficient metadata keyword** format for Claude context: `[SKILL skill=X outcome=Y]` — Claude narrates around the fact, not the numbers
+- Abilities sub-tab wired to `ClassFeature` DB — removes hardcoded map; shows newly-unlocked features on level-up
+- Stats sub-tab live proficiency — `getCharacterSheetData()` reads `skillProficiencies` from DB; removes `SKILL_PROFS` hardcoded fallback
 
 **Must include:**
-- `skillProficiencies String[]` migration on `Character`
-- Character creation form: class-gated skill selection, server-side validation against allowed list
-- `resolveSkillCheck()`: `d20 + abilityMod + (isProficient ? proficiencyBonus(level) : 0)`
-- Passive Perception computed server-side in `get-game.ts` — never from client, never rolled
-- AI prompt narration rules: forbid mentioning roll numbers, DCs, or proficiency bonuses
-- DCs are fixed (5/10/15/20/25) — do not scale with level (bounded accuracy)
+- `skillProficiencies String[]` migration on `Character` with `@default([])`
+- Character creation inline skill-pick: after class selection, conditional multi-select renders class-allowed skills only; submit disabled until correct count selected; class change resets picks; server-side validation checks both count and allowed-list membership
+- Backfill script: existing characters seeded with **thematic class defaults** — Fighter → Athletics + Intimidation, Rogue → Stealth + Perception, Cleric → Insight + Religion, Wizard → Arcana + Investigation (not first-N alphabetically)
+- No level-up skill selection: picks are fixed at creation through level 5; proficiency bonus step at level 5 auto-improves all proficient skills via existing `proficiencyBonus(char.level)` — no UI interaction required
+- `SKILL_ABILITY_MAP`: 18 skills mapped to governing ability — same structure as existing `SKILLS` array in `character-sheet.ts`
+- `resolveSkillCheck(skillName, character, rollFn?)`: returns `SkillCheckResult { skill, ability, roll, modifier, proficiencyBonus, total, dc, success, proficient }`
+- `take-turn.ts` intent detection: Call #1 output schema extended with optional `skillName`; if present, run `resolveSkillCheck()` before Call #2; inject compact keyword `[SKILL skill=X outcome=Y dc=N]` into Call #2 system prompt under `MECHANICAL CONTEXT` block (Claude instructed to consume silently, not reproduce)
+- Failed skill checks write a **`stateDeltas` flag** (e.g. `guardsAlerted: true`); flag lands in `Game.state`; downstream gameplay consequences of the flag deferred to a future phase
+- Narration guardrail additions: forbid reproducing the `MECHANICAL CONTEXT` block; forbid mentioning roll number, DC value, or proficiency bonus by name
+- `getClassFeatures(characterClass, maxLevel)` server action: returns all `ClassFeature` records where `level ≤ maxLevel`, ordered by level — **cumulative reference list** (not just current-level features)
+- `MemberAbilitiesPane` grouped-by-level display with "New" badge on features at exactly `character.level`
+- Passive Perception as a computed stored value: `10 + WIS modifier + (Perception proficient ? profBonus : 0)` — never rolled
 
-**Depends on:** All prior phases.
+**Key constraints carried forward:**
+- `lib/skills.ts` must have zero Prisma imports (pure functions only — same pattern as `lib/dice.ts`, `lib/xp.ts`, `lib/leveling.ts`)
+- `rollFn` injectable: tests pass `() => fixedValue`, no module mocking
+- Natural 20 on a skill check is NOT automatic success — only raises the total by 20; DC still governs outcome
+- Rogue Expertise deferred: explicit commented no-op in `resolveSkillCheck()` expertise branch
+- DCs are fixed values (5/10/15/20/25) — not scaled by level (bounded accuracy principle)
 
-**Research flag:** Passive vs. active Perception UX flow needs explicit design sign-off before coding.
+**Depends on:** Phases 1–3 complete; post-Phase 03 manual work (Party tab, ClassProgression/ClassFeature tables) live in codebase.
+
+**Research flag:** No additional external research needed — D&D rules are stable and architecture patterns established.
 
 ---
 
@@ -312,7 +339,11 @@ Additional pitfalls addressed per phase:
 | XP split in party play? | 2 | Full XP per participant (not divided). Penalizing async absence breaks the UX contract. Must be explicit in code comments. |
 | Level-up notification format? | 3 | DM narrative message announces level-up. Store as non-AI message type to avoid context bloat. |
 | Rogue Expertise deferral? | 4 | Defer entirely for v1. Note the gap in code with a comment. Rogue is slightly underpowered but other classes are unaffected. |
-| Passive Perception UX? | 4 | Map silently reveals objects when passive Perception clears the DC (existing `DiscoveredObjects` design). No "you notice something" popup needed — the object simply appears. Confirm before coding. |
+| Passive Perception UX? | 4 | Map silently reveals objects when passive Perception clears the DC. No popup needed — object simply appears. Confirm before coding. |
+| Backfill strategy for existing characters? | 4 | **Resolved:** thematic class defaults — Fighter → Athletics + Intimidation, Rogue → Stealth + Perception, Cleric → Insight + Religion, Wizard → Arcana + Investigation. |
+| Failed skill check consequence scope? | 4 | **Resolved:** failed checks write a `stateDeltas` flag (e.g. `guardsAlerted: true`) into `Game.state`; downstream gameplay consequences of that flag are deferred to a later phase. |
+| Abilities sub-tab: current level only or cumulative? | 4 | **Resolved:** cumulative — all features unlocked up to current level, grouped by level. Serves as a permanent reference sheet. |
+| Skill pick timing — creation only or also level-up? | 4 | **Resolved:** creation only for levels 1–5. Proficiency bonus step at level 5 auto-improves all proficient skills; no additional UI required. |
 
 ---
 

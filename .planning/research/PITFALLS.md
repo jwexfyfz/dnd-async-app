@@ -342,8 +342,46 @@ All 10 of these must pass before XP logic is considered tested.
 
 | Phase | Pitfall(s) to Address | Notes |
 |-------|-----------------------|-------|
-| Phase 1: Dice Engine | H3, H7 (partial), T1, T5 | H3 is the core — AI must stop owning HP. Build injectable rollFn pattern now. |
-| Phase 2: XP System | H1, H5, L5, T2 | H5 (race condition) must be resolved before XP grant logic is wired. H1 (cumulative XP) must be the very first thing nailed. |
-| Phase 3: Leveling | H2, H4, M1, M4, L2, L3, T3 | M4 (schema migration) is the setup step for this phase. H2 (level-1 HP formula) and H4 (dual state drift) are the highest-consequence bugs. M1 (multi-level-up loop) must be written correctly from day one. |
-| Phase 4: Skill Checks | M2, M3, M5, M7, T4 | M3 requires schema migration (skillProficiencies). M2 (passive vs active) must be resolved in design before coding. M5 (bounded accuracy) is a prompt engineering concern as much as a code concern. |
-| Cross-Cutting | H6, H7, M6 | Prompt injection (H7) should be addressed in Phase 1 while take-turn.ts is already being modified. Context window (M6) should be addressed when level-up messages are introduced. |
+| Phase 1: Dice Engine | H3, H7 (partial), T1, T5 | ✅ Addressed — dice engine live, prompt injection fixed, stateDeltas allowlist enforced, injectable rollFn pattern established. |
+| Phase 2: XP System | H1, H5, L5, T2 | ✅ Addressed — cumulative XP stored, $transaction + version lock, full XP per participant, 10 boundary tests passing. |
+| Phase 3: Leveling | H2, H4, M1, M4, L2, L3, T3 | ✅ Addressed — level-1 HP uses max hit die, maxHp migrated to Character table, while-loop level-up, migration history established. |
+| Phase 4: Skills & Abilities Integration | P1, P2, P3, P4, M2, M3, M5, M7, T4 | New pitfalls P1–P4 are specific to Phase 04's DB wiring work. M3/M2/M5/M7/T4 remain relevant. See Phase 04 Pitfalls section below. |
+| Cross-Cutting | H6, M6 | H7 (prompt injection) addressed in Phase 1. H6 (proficiency bonus step function) addressed in Phase 3. M6 (context window growth) partially mitigated by rolling window — monitor when skill check messages are introduced. |
+
+---
+
+## Phase 04 Pitfalls
+
+These pitfalls are specific to the Skills & Abilities Integration work.
+
+---
+
+### P1: ClassFeature Data May Not Match ClassProgression.featuresUnlocked Slugs
+
+**What goes wrong:** `ClassProgression.featuresUnlocked` stores feature name slugs (e.g., `"action-surge"`). `ClassFeature.name` stores a display name (e.g., `"Action Surge"`). If the Abilities sub-tab query joins on slug equality, a casing or formatting mismatch will silently return zero features for a level.
+
+**Prevention:** The `getClassFeatures(characterClass, maxLevel)` server action should query `ClassFeature` directly by `characterClass` and `level` — do not filter through `ClassProgression.featuresUnlocked` slugs. The relation already exists: `ClassFeature` has a FK to `ClassProgression` via `(characterClass, level)`. Query `ClassFeature` directly; the slug array is for future reference only.
+
+---
+
+### P2: SKILL_PROFS Hardcoded Fallback Must Be Removed, Not Kept as a Fallback
+
+**What goes wrong:** When `Character.skillProficiencies` is wired up, a developer might retain the `SKILL_PROFS[characterClass]` lookup as a fallback for characters with an empty array. This silently masks the migration gap and makes it impossible to tell whether a character has "no proficiencies chosen" vs. "proficiencies not yet migrated."
+
+**Prevention:** After the `skillProficiencies String[] @default([])` migration runs, treat an empty array as "no proficiency picks" — not as a signal to use the hardcoded class default. Existing characters created before Phase 04 will need a backfill script that seeds their `skillProficiencies` from the class default picks. Remove `SKILL_PROFS` from `lib/character-sheet.ts` once the backfill is confirmed.
+
+---
+
+### P3: Token-Efficient Keyword Must Be on a Safe Message Boundary
+
+**What goes wrong:** If the `[SKILL …]` metadata keyword is injected into the user-turn message of Claude's narration call, Claude may reproduce it verbatim in the narrative (e.g., "You attempt `[SKILL skill=Stealth outcome=SUCCESS]`"). This breaks immersion and exposes the mechanical encoding.
+
+**Prevention:** Inject the skill keyword into the **system prompt** section of Call #2 (narration call), not into the user-turn message. Place it in a `MECHANICAL CONTEXT` block that Claude is instructed to consume silently: `MECHANICAL CONTEXT (do not narrate verbatim): [SKILL skill=Stealth outcome=SUCCESS]`. The narration rules already forbid mentioning roll numbers — extend them to forbid reproducing the keyword block itself.
+
+---
+
+### P4: Character Creation Skill Picks Must Be Validated Server-Side Against the Live Allowed List
+
+**What goes wrong:** The character creation form sends a `skillProficiencies` array from the client. If the server merely checks the count (`Fighter: 2`) without validating each skill against the Fighter-allowed list, a player can POST arbitrary skill names (e.g., `["Arcana", "Spellcasting"]`) that are not on the Fighter list.
+
+**Prevention:** The character creation server action must maintain the authoritative `CLASS_SKILL_ALLOWED` table (same structure already researched in SUMMARY.md). Validation: (1) every submitted skill name must appear in the class-specific allowed list; (2) the submitted count must equal exactly the class's skill-pick count. Reject and return a form error on any violation. Do not trust the client array.

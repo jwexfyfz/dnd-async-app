@@ -10,6 +10,8 @@ import { createSupabaseServerClient } from "../../lib/supabase-server";
 import { DM_MODEL, DM_MAX_TOKENS, ROLLING_WINDOW_SIZE } from "../../lib/ai-config";
 import { rollD20Check, abilityModifier } from "../../lib/dice";
 import type { D20Result } from "../../lib/dice";
+import { computeCharacterStats } from "../../lib/character-stats";
+import type { CharacterStats } from "../../lib/character-stats";
 import { computeLevel, XP_BY_DIFFICULTY } from "../../lib/xp";
 import { maxHpAtLevel, proficiencyBonus } from "../../lib/leveling";
 import { parseCombatEffects, clampHp } from "../../lib/combat-effect"
@@ -45,17 +47,14 @@ function detectActionType(
   return { dcType: "DC", dc: 12 };
 }
 
-// Returns the ability score used for attack rolls, keyed by class per D&D 5e.
-// DEX-primary: finesse/ranged weapons. INT/CHA: spell attack rolls.
+// Returns the effective ability score (base + equipment) used for attack rolls,
+// keyed by class per D&D 5e. DEX-primary: finesse/ranged. INT/CHA: spell attacks.
 // Fallback: strength (melee martial default).
-function primaryAttackScore(
-  characterClass: string,
-  character: { strength: number; dexterity: number; intelligence: number; charisma: number },
-): number {
-  if (["Rogue", "Ranger", "Monk"].includes(characterClass))      return character.dexterity;
-  if (["Wizard", "Sorcerer"].includes(characterClass))           return character.intelligence;
-  if (["Warlock", "Bard"].includes(characterClass))              return character.charisma;
-  return character.strength;
+function primaryAttackScore(characterClass: string, stats: CharacterStats): number {
+  if (["Rogue", "Ranger", "Monk"].includes(characterClass))      return stats.dexterity.total;
+  if (["Wizard", "Sorcerer"].includes(characterClass))           return stats.intelligence.total;
+  if (["Warlock", "Bard"].includes(characterClass))              return stats.charisma.total;
+  return stats.strength.total;
 }
 
 // ─── Prompt builders ──────────────────────────────────────────────────────────
@@ -66,9 +65,9 @@ function buildStaticPrompt(character: any, allMembers: any[], storyPrompt: any, 
 
   const partyLines = allMembers.length > 1
     ? allMembers.map((m: any) =>
-        `  ${m.character.name} [id:${m.character.id}] (${m.character.characterClass}): STR${m.character.strength} DEX${m.character.dexterity} CON${m.character.constitution} INT${m.character.intelligence} WIS${m.character.wisdom} CHA${m.character.charisma}`
+        `  ${m.character.name} [id:${m.character.id}] (${m.character.characterClass}): STR${m.character.baseStrength} DEX${m.character.baseDexterity} CON${m.character.baseConstitution} INT${m.character.baseIntelligence} WIS${m.character.baseWisdom} CHA${m.character.baseCharisma}`
       ).join("\n")
-    : `  ${character.name} [id:${character.id}] (${character.characterClass}): STR${character.strength} DEX${character.dexterity} CON${character.constitution} INT${character.intelligence} WIS${character.wisdom} CHA${character.charisma}`;
+    : `  ${character.name} [id:${character.id}] (${character.characterClass}): STR${character.baseStrength} DEX${character.baseDexterity} CON${character.baseConstitution} INT${character.baseIntelligence} WIS${character.baseWisdom} CHA${character.baseCharisma}`;
 
   return `You are a skilled, atmospheric Dungeon Master running an async D&D 5e campaign. Your prose is vivid but concise — 2–4 sentences of present-tense narration per turn. You create tension, wonder, and consequence without overwrought description.
 
@@ -263,11 +262,15 @@ export async function takeTurn(gameId: string, chipText: string): Promise<TurnRe
   const mapData           = game.map.data as Record<string, any>;
   const currentCharacter  = callerMember ? callerMember.character : game.character;
 
+  // Resolve effective stats (base + equipment bonuses) before any modifier math.
+  // Must complete before the d20 roll so the modifier uses the equipment-adjusted total.
+  const stats = await computeCharacterStats(currentCharId);
+
   // Compute dice roll before the Claude narration call (D-06: code owns all rolls).
   const { dcType, dc } = detectActionType(sanitizedAction, gameState);
   const relevantScore  = dcType === "AC"
-    ? primaryAttackScore(currentCharacter.characterClass, currentCharacter)
-    : currentCharacter.wisdom;
+    ? primaryAttackScore(currentCharacter.characterClass, stats)
+    : stats.wisdom.total;
   const modifier       = abilityModifier(relevantScore);
   const diceResult     = rollD20Check(modifier, dc, dcType);
 
@@ -338,12 +341,12 @@ export async function takeTurn(gameId: string, chipText: string): Promise<TurnRe
     skillCheckResult = resolveSkillCheck(validSkillName, {
       characterClass:     currentCharacter.characterClass,
       level:              currentCharacter.level,
-      strength:           currentCharacter.strength,
-      dexterity:          currentCharacter.dexterity,
-      constitution:       currentCharacter.constitution,
-      intelligence:       currentCharacter.intelligence,
-      wisdom:             currentCharacter.wisdom,
-      charisma:           currentCharacter.charisma,
+      baseStrength:       stats.strength.total,
+      baseDexterity:      stats.dexterity.total,
+      baseConstitution:   stats.constitution.total,
+      baseIntelligence:   stats.intelligence.total,
+      baseWisdom:         stats.wisdom.total,
+      baseCharisma:       stats.charisma.total,
       skillProficiencies: currentCharacter.skillProficiencies,
     }, dc);
     const outcome = skillCheckResult.success ? "SUCCESS" : "FAILURE";
@@ -463,7 +466,7 @@ export async function takeTurn(gameId: string, chipText: string): Promise<TurnRe
       });
       if (xpAwarded > 0 || didLevelUp) {
         committedMaxHp = didLevelUp
-          ? maxHpAtLevel(currentCharacter.characterClass, currentCharacter.constitution, newLevel)
+          ? maxHpAtLevel(currentCharacter.characterClass, currentCharacter.baseConstitution, newLevel)
           : currentCharacter.maxHp;
         if (didLevelUp && newState.partyMaxHp) {
           newState.partyMaxHp = { ...newState.partyMaxHp, [currentCharId]: committedMaxHp };

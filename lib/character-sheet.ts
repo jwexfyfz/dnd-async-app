@@ -7,12 +7,12 @@ type AbilityKey = "strength" | "dexterity" | "constitution" | "intelligence" | "
 interface CharacterInput {
   characterClass:      string;
   level:               number;
-  strength:            number;
-  dexterity:           number;
-  constitution:        number;
-  intelligence:        number;
-  wisdom:              number;
-  charisma:            number;
+  baseStrength:        number;
+  baseDexterity:       number;
+  baseConstitution:    number;
+  baseIntelligence:    number;
+  baseWisdom:          number;
+  baseCharisma:        number;
   skillProficiencies?: string[];
 }
 
@@ -91,13 +91,23 @@ const SKILLS: { name: string; ability: AbilityKey }[] = [
 
 // ─── Main function ────────────────────────────────────────────────────────────
 
+// Maps D&D ability keys to their base* field names on CharacterInput.
+const ABILITY_FIELD: Record<AbilityKey, keyof CharacterInput> = {
+  strength:     "baseStrength",
+  dexterity:    "baseDexterity",
+  constitution: "baseConstitution",
+  intelligence: "baseIntelligence",
+  wisdom:       "baseWisdom",
+  charisma:     "baseCharisma",
+};
+
 export function getCharacterSheetData(char: CharacterInput): CharacterSheetData {
   const profBonus  = calcProfBonus(char.level);
   const saveProfs  = new Set<AbilityKey>(SAVE_PROFS[char.characterClass] ?? []);
   const skillProfs = new Set<string>(char.skillProficiencies ?? []);
 
   const stats: StatEntry[] = ABILITY_META.map(({ key, label }) => {
-    const score          = char[key];
+    const score          = char[ABILITY_FIELD[key]] as number;
     const modifier       = abilityModifier(score);
     const saveProficient = saveProfs.has(key);
     return {
@@ -108,7 +118,7 @@ export function getCharacterSheetData(char: CharacterInput): CharacterSheetData 
   });
 
   const skills: SkillEntry[] = SKILLS.map(({ name, ability }) => {
-    const baseMod    = abilityModifier(char[ability]);
+    const baseMod    = abilityModifier(char[ABILITY_FIELD[ability]] as number);
     const proficient = skillProfs.has(name);
     return { name, ability, modifier: proficient ? baseMod + profBonus : baseMod, proficient };
   });

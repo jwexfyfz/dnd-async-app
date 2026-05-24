@@ -17,6 +17,29 @@ model User {
   partyMemberships PartyMember[]
 }
 
+// ─── Items ────────────────────────────────────────────────────────────────────
+
+// stat_bonuses shape: { "strength": 2 } or { "strength": { "type": "override", "value": 19 } }
+model Item {
+  id          String   @id @default(uuid())
+  name        String
+  slotType    SlotType
+  statBonuses Json     @default("{}")
+
+  equippedAsMainHand Character[] @relation("CharacterMainHand")
+  equippedAsOffHand  Character[] @relation("CharacterOffHand")
+  equippedAsArmor    Character[] @relation("CharacterArmor")
+  equippedAsRing     Character[] @relation("CharacterRing")
+}
+
+enum SlotType {
+  WEAPON
+  ARMOR
+  SHIELD
+  FOCUS
+  RING
+}
+
 // ─── Character ────────────────────────────────────────────────────────────────
 
 model Character {
@@ -26,17 +49,32 @@ model Character {
   user           User          @relation(fields: [userId], references: [id])
   characterClass String
 
-  strength     Int @default(8)
-  dexterity    Int @default(8)
-  constitution Int @default(8)
-  intelligence Int @default(8)
-  wisdom       Int @default(8)
-  charisma     Int @default(8)
+  // Base ability scores — before equipment bonuses
+  baseStrength     Int @default(8)
+  baseDexterity    Int @default(8)
+  baseConstitution Int @default(8)
+  baseIntelligence Int @default(8)
+  baseWisdom       Int @default(8)
+  baseCharisma     Int @default(8)
+
   xp           Int @default(0)
   level        Int @default(1)
   maxHp        Int @default(10)
   currentHp    Int @default(10)
   skillProficiencies String[] @default([])
+
+  // Equipment slots — nullable FK to Item
+  mainHandId String?
+  mainHand   Item?   @relation("CharacterMainHand", fields: [mainHandId], references: [id])
+  offHandId  String?
+  offHand    Item?   @relation("CharacterOffHand", fields: [offHandId], references: [id])
+  armorId    String?
+  armor      Item?   @relation("CharacterArmor", fields: [armorId], references: [id])
+  ringId     String?
+  ring       Item?   @relation("CharacterRing", fields: [ringId], references: [id])
+
+  // Unequipped item IDs
+  backpack String[] @default([])
 
   games            Game[]
   partyMemberships PartyMember[]

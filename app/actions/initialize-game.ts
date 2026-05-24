@@ -138,7 +138,7 @@ function buildStaticPrompt(character: any, storyPrompt: any, mapData: any): stri
 
 CHARACTER
 Name: ${character.name} | Class: ${character.characterClass}
-STR ${character.strength} | DEX ${character.dexterity} | CON ${character.constitution} | INT ${character.intelligence} | WIS ${character.wisdom} | CHA ${character.charisma}
+STR ${character.baseStrength} | DEX ${character.baseDexterity} | CON ${character.baseConstitution} | INT ${character.baseIntelligence} | WIS ${character.baseWisdom} | CHA ${character.baseCharisma}
 
 SCENARIO: ${storyPrompt.title}
 ${storyPrompt.description}

@@ -11,12 +11,12 @@ import { abilityModifier, proficiencyBonus, rollDie } from "./dice";
 export interface SkillCharacterInput {
   characterClass: string;
   level: number;
-  strength: number;
-  dexterity: number;
-  constitution: number;
-  intelligence: number;
-  wisdom: number;
-  charisma: number;
+  baseStrength: number;
+  baseDexterity: number;
+  baseConstitution: number;
+  baseIntelligence: number;
+  baseWisdom: number;
+  baseCharisma: number;
   skillProficiencies: string[];
 }
 
@@ -40,24 +40,24 @@ export interface SkillCheckResult {
  * Source: D&D Basic Rules 2014; values extracted from lib/character-sheet.ts.
  */
 export const SKILL_ABILITY_MAP: Record<string, keyof SkillCharacterInput> = {
-  Acrobatics:       "dexterity",
-  "Animal Handling": "wisdom",
-  Arcana:           "intelligence",
-  Athletics:        "strength",
-  Deception:        "charisma",
-  History:          "intelligence",
-  Insight:          "wisdom",
-  Intimidation:     "charisma",
-  Investigation:    "intelligence",
-  Medicine:         "wisdom",
-  Nature:           "intelligence",
-  Perception:       "wisdom",
-  Performance:      "charisma",
-  Persuasion:       "charisma",
-  Religion:         "intelligence",
-  "Sleight of Hand": "dexterity",
-  Stealth:          "dexterity",
-  Survival:         "wisdom",
+  Acrobatics:        "baseDexterity",
+  "Animal Handling": "baseWisdom",
+  Arcana:            "baseIntelligence",
+  Athletics:         "baseStrength",
+  Deception:         "baseCharisma",
+  History:           "baseIntelligence",
+  Insight:           "baseWisdom",
+  Intimidation:      "baseCharisma",
+  Investigation:     "baseIntelligence",
+  Medicine:          "baseWisdom",
+  Nature:            "baseIntelligence",
+  Perception:        "baseWisdom",
+  Performance:       "baseCharisma",
+  Persuasion:        "baseCharisma",
+  Religion:          "baseIntelligence",
+  "Sleight of Hand": "baseDexterity",
+  Stealth:           "baseDexterity",
+  Survival:          "baseWisdom",
 };
 
 /** Alias for REQUIREMENTS.md SKILL-03 literal compliance. Use SKILL_ABILITY_MAP internally. */
