@@ -5,14 +5,15 @@ import { abilityModifier, proficiencyBonus as calcProfBonus } from "./dice";
 type AbilityKey = "strength" | "dexterity" | "constitution" | "intelligence" | "wisdom" | "charisma";
 
 interface CharacterInput {
-  characterClass: string;
-  level:          number;
-  strength:       number;
-  dexterity:      number;
-  constitution:   number;
-  intelligence:   number;
-  wisdom:         number;
-  charisma:       number;
+  characterClass:      string;
+  level:               number;
+  strength:            number;
+  dexterity:           number;
+  constitution:        number;
+  intelligence:        number;
+  wisdom:              number;
+  charisma:            number;
+  skillProficiencies?: string[];
 }
 
 export interface StatEntry {
@@ -55,23 +56,6 @@ const SAVE_PROFS: Record<string, AbilityKey[]> = {
   Wizard:    ["intelligence", "wisdom"],
 };
 
-// Default skill proficiency picks (canonical per-class defaults — per-character
-// customisation is not stored in the DB, so we use representative class picks).
-const SKILL_PROFS: Record<string, string[]> = {
-  Barbarian: ["Athletics",  "Survival"],
-  Bard:      ["Persuasion", "Performance", "Deception"],
-  Cleric:    ["Insight",    "Religion"],
-  Druid:     ["Nature",     "Perception"],
-  Fighter:   ["Athletics",  "Intimidation"],
-  Monk:      ["Acrobatics", "Stealth"],
-  Paladin:   ["Persuasion", "Religion"],
-  Ranger:    ["Perception", "Stealth",    "Survival"],
-  Rogue:     ["Stealth",    "Perception", "Deception", "Sleight of Hand"],
-  Sorcerer:  ["Arcana",     "Persuasion"],
-  Warlock:   ["Arcana",     "Deception"],
-  Wizard:    ["Arcana",     "Investigation"],
-};
-
 // ─── Static tables ────────────────────────────────────────────────────────────
 
 const ABILITY_META: { key: AbilityKey; label: string }[] = [
@@ -110,7 +94,7 @@ const SKILLS: { name: string; ability: AbilityKey }[] = [
 export function getCharacterSheetData(char: CharacterInput): CharacterSheetData {
   const profBonus  = calcProfBonus(char.level);
   const saveProfs  = new Set<AbilityKey>(SAVE_PROFS[char.characterClass] ?? []);
-  const skillProfs = new Set<string>(SKILL_PROFS[char.characterClass] ?? []);
+  const skillProfs = new Set<string>(char.skillProficiencies ?? []);
 
   const stats: StatEntry[] = ABILITY_META.map(({ key, label }) => {
     const score          = char[key];
