@@ -316,6 +316,10 @@ export async function takeTurn(gameId: string, chipText: string): Promise<TurnRe
 
   let finalParsed = parsed;
   let skillCheckResult: SkillCheckResult | undefined;
+  // rawText2 is populated inside the skill-check branch; hoisted here so the
+  // combat-effects section can use it as the effects source when a skill check
+  // ran (the second AI call is the one that emits <combat_effect> tags).
+  let rawText2 = "";
 
   if (validSkillName !== null) {
     skillCheckResult = resolveSkillCheck(validSkillName, {
@@ -356,7 +360,7 @@ export async function takeTurn(gameId: string, chipText: string): Promise<TurnRe
     }
 
     const textBlock2 = response2.content.find((b): b is Anthropic.TextBlock => b.type === "text");
-    const rawText2   = textBlock2?.text ?? "";
+    rawText2 = textBlock2?.text ?? "";
 
     try {
       const match2 = rawText2.match(/\{[\s\S]*\}/);
@@ -372,7 +376,11 @@ export async function takeTurn(gameId: string, chipText: string): Promise<TurnRe
   }
 
   // ─── Combat Effects — resolve HP deltas from AI tags ─────────────────────
-  const rawEffects = parseCombatEffects(rawText);
+  // When a skill check ran, the second AI response (rawText2) is the one the DM
+  // narrated from and where <combat_effect> tags will appear. Fall back to
+  // rawText on non-skill turns.
+  const effectsSource = validSkillName !== null ? rawText2 : rawText;
+  const rawEffects = parseCombatEffects(effectsSource);
   let resolvedEffects: { targetId: string; delta: number; type: string; newHp: number }[] = [];
 
   if (rawEffects.length > 0) {
