@@ -41,6 +41,9 @@ export async function createCharacter(formData: FormData): Promise<ActionRespons
   if (!name || name.trim().length === 0) {
     return { success: false, error: "Character name cannot be blank." };
   }
+  if (name.trim().length > 50) {
+    return { success: false, error: "Character name must be 50 characters or fewer." };
+  }
   if (!characterClass) {
     return { success: false, error: "You must choose a character class." };
   }
