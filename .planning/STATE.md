@@ -3,21 +3,21 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 04-01-PLAN.md
-last_updated: "2026-05-24T05:24:10Z"
+stopped_at: Completed 04-02-PLAN.md
+last_updated: "2026-05-24T06:00:00Z"
 progress:
   total_phases: 4
   completed_phases: 3
   total_plans: 17
-  completed_plans: 15
-  percent: 82
+  completed_plans: 16
+  percent: 88
 ---
 
 # Project State
 
 ## Status
 
-Phase 3 complete. All 4 plans delivered and verified. Phase 04 executing — 04-01 complete (4/5 plans done).
+Phase 3 complete. All 4 plans delivered and verified. Phase 04 executing — 04-02 complete (5/5 Wave 1 plans done, 2/5 Phase 04 plans done).
 
 ## Project Reference
 
@@ -40,7 +40,7 @@ Plans: 5 (04-01 through 04-05, 2 waves)
 | 1 | Dice Engine & Critical Bug Fixes | ✅ Complete |
 | 2 | XP System | ✅ Complete (3/3 plans done) |
 | 3 | Leveling | ✅ Complete (4/4 plans done) |
-| 4 | Skills & Abilities Integration | 🟡 Executing — 04-01 complete (4/5 plans done) |
+| 4 | Skills & Abilities Integration | 🟡 Executing — 04-02 complete (Wave 1 done, 3 Wave 2 plans remain) |
 
 ## Key Decisions
 
@@ -67,6 +67,10 @@ Plans: 5 (04-01 through 04-05, 2 waves)
 - Server JSON.parse wrapped in try/catch returning structured error (T-04-01-01 mitigation)
 - useEffect([selectedClass]) resets skill picks and error on class change (D-05 behavior)
 - CharacterData interface extended with skillProficiencies: string[] for downstream sub-tabs
+- CLASS_FEATURES deleted entirely — no migration shim needed; DB is seeded for all 4 classes
+- useEffect dependency array is [char.id, char.level] to re-fetch when character selection or level changes
+- Features grouped by level with Array.from(Map).sort() — avoids Object.groupBy which has limited browser support
+- "New" badge uses violet-100/violet-700 per plan spec — matches violet accent theme in existing UI
 
 ## Last Action
 
@@ -78,8 +82,10 @@ Plans: 5 (04-01 through 04-05, 2 waves)
 
 2026-05-24 — Plan 04-01 complete: skillProficiencies DB column migrated; character-form.tsx gets class-gated skill picker with client validation; create-character.ts server validates count + allowed-list (3 threat mitigations); CharacterData extended; 174/174 tests pass; build clean.
 
+2026-05-24 — Plan 04-02 complete: Abilities sub-tab wired to ClassFeature DB — getClassFeatures server action (get-map-items.ts pattern), MemberAbilitiesPane rewritten with useEffect+loading skeleton, features grouped by level, "New" badge on current-level features, CLASS_FEATURES hardcoded map deleted; build clean.
+
 ## Session Continuity
 
-Last session: 2026-05-24T05:24:10Z
-Stopped at: Completed 04-01-PLAN.md
+Last session: 2026-05-24T06:00:00Z
+Stopped at: Completed 04-02-PLAN.md
 Resume file: None
