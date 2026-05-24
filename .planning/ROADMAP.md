@@ -108,13 +108,13 @@ Plans:
 4. A proficient character's skill check total equals d20 roll + ability modifier + proficiency bonus; a non-proficient character's total equals d20 roll + ability modifier only — both paths confirmed by unit tests in `lib/skills.test.ts`; all 18 skill-to-ability mappings tested.
 5. The Abilities sub-tab fetches `ClassFeature` records from the DB for each character's class and level range; the hardcoded `CLASS_FEATURES` map in `page.tsx` is removed; when a character's level increases, the Abilities sub-tab on next render shows newly-unlocked features with a visual indicator.
 
-**Plans:** 5 plans
+**Plans:** 1/5 plans executed
 
 **Wave 1 — parallel (no inter-dependencies):**
 
 - [ ] 04-01-PLAN.md — `Character.skillProficiencies String[]` migration; inline class-gated skill-pick at character creation (multi-select, count enforced, class change resets picks, server-side allowed-list validation); backfill script seeds existing characters with thematic class defaults (e.g. Fighter → Athletics + Intimidation, Rogue → Stealth + Perception)
 - [ ] 04-02-PLAN.md — Abilities sub-tab DB wiring: `getClassFeatures(characterClass, maxLevel)` server action returns all features unlocked up to current level, grouped by level (cumulative reference list); `MemberAbilitiesPane` reads from `ClassFeature` DB; "New" badge on features at `character.level`; removes hardcoded `CLASS_FEATURES`
-- [ ] 04-03-PLAN.md — `lib/skills.ts` pure module: `resolveSkillCheck()` with injectable `rollFn`; `SKILL_ABILITY_MAP` (18 entries); `lib/skills.test.ts` unit tests (proficient, non-proficient, all 18 mappings)
+- [x] 04-03-PLAN.md — `lib/skills.ts` pure module: `resolveSkillCheck()` with injectable `rollFn`; `SKILL_ABILITY_MAP` (18 entries); `lib/skills.test.ts` unit tests (proficient, non-proficient, all 18 mappings)
 
 **Wave 2 — depends on 04-01 + 04-03 (04-04); depends on 04-01 only (04-05, parallel with 04-04):**
 
@@ -132,5 +132,5 @@ Plans:
 | 1. Dice Engine & Critical Bug Fixes | 5/5 | Complete | 2026-05-22 |
 | 2. XP System | 3/3 | Complete | 2026-05-22 |
 | 3. Leveling | 4/4 | Complete    | 2026-05-23 |
-| 4. Skills & Abilities Integration | 0/5 | Planned — ready to execute | - |
+| 4. Skills & Abilities Integration | 1/5 | In Progress|  |
 
