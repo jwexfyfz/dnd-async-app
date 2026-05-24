@@ -12,7 +12,9 @@ import { rollD20Check, abilityModifier } from "../../lib/dice";
 import type { D20Result } from "../../lib/dice";
 import { computeLevel, XP_BY_DIFFICULTY } from "../../lib/xp";
 import { maxHpAtLevel, proficiencyBonus } from "../../lib/leveling";
-import { parseCombatEffects, clampHp } from "../../lib/combat-effect";
+import { parseCombatEffects, clampHp } from "../../lib/combat-effect"
+import { resolveSkillCheck, SKILL_ABILITY_MAP } from "../../lib/skills"
+import type { SkillCheckResult } from "../../lib/skills";
 
 // ─── Input sanitization ───────────────────────────────────────────────────────
 
@@ -89,10 +91,12 @@ Always reply with a single JSON object — no markdown fences, no extra text.
     // "npcsEncountered": [{name, disposition, note}]
   },
   "chips": ["Short action 1", "Short action 2", "Short action 3", "Short action 4"],
-  "encounterResult": "completed" | null
+  "encounterResult": "completed" | null,
+  "skillName": "ExactSkillName" | null
 }
 chips: 3–5 options, each under 6 words. Situationally specific to what just happened.
 encounterResult: set to "completed" ONLY when a combat encounter fully resolves this turn — enemy defeated, fled, or room cleared. Set to null on all other turns including exploration, dialogue, and non-combat actions. Do not set "completed" for partial victories or ongoing combat.
+skillName: if this player action narratively warrants a skill check, return the EXACT canonical skill name from this list — Acrobatics, Animal Handling, Arcana, Athletics, Deception, History, Insight, Intimidation, Investigation, Medicine, Nature, Perception, Performance, Persuasion, Religion, Sleight of Hand, Stealth, Survival. Return null on all other turns (combat attacks, exploration without a check, dialogue without a roll).
 
 DICE RULES — YOU MUST FOLLOW THESE EXACTLY
 The DICE RESULT in your context is code-generated and final. You MUST narrate around it — never contradict, alter, or invent a different outcome. The roll is a mechanical fact.
@@ -112,6 +116,7 @@ function buildDynamicStatePrompt(
   currentCharId: string,
   diceResult: D20Result,
   consecutiveMisses: number,
+  mechanicalContext?: string,
 ): string {
   const inv   = gameState.inventory?.length ? gameState.inventory.join(", ") : "empty";
   const flags = gameState.plotFlags?.length ? gameState.plotFlags.join(", ") : "none";
@@ -163,7 +168,11 @@ consecutiveMisses: ${consecutiveMisses}`;
     ? `\n\nLEVEL UP: ${gameState.levelUpNote} Weave this advancement into your narration as a dramatic, triumphant moment.`
     : "";
 
-  return `${stateSection}${diceSection}${missDirective}${levelUpDirective}`;
+  const mechanicalContextBlock = mechanicalContext
+    ? `\n\nMECHANICAL CONTEXT\n${mechanicalContext}\nNarration rules: Do NOT reproduce the skill name, outcome, DC, roll value, or proficiency bonus in your narrative. Describe the result dramatically without mechanical exposition.`
+    : "";
+
+  return `${stateSection}${diceSection}${missDirective}${levelUpDirective}${mechanicalContextBlock}`;
 }
 
 function buildConversationMessages(
@@ -205,6 +214,7 @@ interface TurnResult {
   newLevel?:     number;           // the new level value if leveledUp is true
   levelUpResult?: LevelUpResult;   // full level-up payload; undefined when no level-up occurred
   combatEffects?: { targetId: string; delta: number; type: string; newHp: number }[];
+  skillCheckResult?: SkillCheckResult;
 }
 
 export async function takeTurn(gameId: string, chipText: string): Promise<TurnResult> {
@@ -287,7 +297,7 @@ export async function takeTurn(gameId: string, chipText: string): Promise<TurnRe
   const textBlock = response.content.find((b): b is Anthropic.TextBlock => b.type === "text");
   const rawText   = textBlock?.text ?? "";
 
-  let parsed: { narrative: string; stateDeltas: Record<string, any>; chips: string[]; encounterResult?: "completed" | null };
+  let parsed: { narrative: string; stateDeltas: Record<string, any>; chips: string[]; encounterResult?: "completed" | null; skillName?: string | null };
   try {
     const match = rawText.match(/\{[\s\S]*\}/);
     parsed = JSON.parse(match?.[0] ?? rawText);
@@ -298,6 +308,67 @@ export async function takeTurn(gameId: string, chipText: string): Promise<TurnRe
       chips:           ["Look around carefully", "Listen for sounds", "Check your gear"],
       encounterResult: null,
     };
+  }
+
+  // ─── Skill Check — two-call architecture ─────────────────────────────────
+  const rawSkillName = (parsed as any).skillName as string | null | undefined;
+  const validSkillName: string | null = (rawSkillName && Object.keys(SKILL_ABILITY_MAP).includes(rawSkillName)) ? rawSkillName : null;
+
+  let finalParsed = parsed;
+  let skillCheckResult: SkillCheckResult | undefined;
+
+  if (validSkillName !== null) {
+    skillCheckResult = resolveSkillCheck(validSkillName, {
+      characterClass:     currentCharacter.characterClass,
+      level:              currentCharacter.level,
+      strength:           currentCharacter.strength,
+      dexterity:          currentCharacter.dexterity,
+      constitution:       currentCharacter.constitution,
+      intelligence:       currentCharacter.intelligence,
+      wisdom:             currentCharacter.wisdom,
+      charisma:           currentCharacter.charisma,
+      skillProficiencies: currentCharacter.skillProficiencies,
+    }, dc);
+    const outcome = skillCheckResult.success ? "SUCCESS" : "FAILURE";
+    const mechanicalContext = `[SKILL skill=${validSkillName} outcome=${outcome} dc=${skillCheckResult.dc}]`;
+
+    let response2;
+    try {
+      response2 = await anthropic.messages.create({
+        model:      DM_MODEL,
+        max_tokens: DM_MAX_TOKENS,
+        system: [
+          {
+            type:          "text",
+            text:          buildStaticPrompt(game.character, game.partyMembers, game.storyPrompt, mapData),
+            cache_control: { type: "ephemeral" },
+          },
+          {
+            type: "text",
+            text: buildDynamicStatePrompt(gameState, game.partyMembers, currentCharId, diceResult, consecutiveMisses, mechanicalContext),
+          },
+        ],
+        messages: buildConversationMessages(contextWindow, sanitizedAction),
+      });
+    } catch (err: any) {
+      console.error("AI DM skill narration error:", err.message);
+      return { success: false, error: "The DM is temporarily unavailable." };
+    }
+
+    const textBlock2 = response2.content.find((b): b is Anthropic.TextBlock => b.type === "text");
+    const rawText2   = textBlock2?.text ?? "";
+
+    try {
+      const match2 = rawText2.match(/\{[\s\S]*\}/);
+      finalParsed = JSON.parse(match2?.[0] ?? rawText2);
+    } catch {
+      finalParsed = {
+        narrative:       rawText2 || "The dungeon stirs around you.",
+        stateDeltas:     {},
+        chips:           ["Look around carefully", "Listen for sounds", "Check your gear"],
+        encounterResult: null,
+      };
+    }
   }
 
   // ─── Combat Effects — resolve HP deltas from AI tags ─────────────────────
@@ -320,7 +391,7 @@ export async function takeTurn(gameId: string, chipText: string): Promise<TurnRe
   }
 
   // ─── XP Award ─────────────────────────────────────────────────────────────
-  const encounterCompleted = parsed.encounterResult === "completed";
+  const encounterCompleted = finalParsed.encounterResult === "completed";
   const xpAwarded = encounterCompleted
     ? (XP_BY_DIFFICULTY[game.storyPrompt.difficulty] ?? 0)
     : 0;
@@ -331,7 +402,7 @@ export async function takeTurn(gameId: string, chipText: string): Promise<TurnRe
 
   // Apply stateDeltas. For party games, route per-character fields into party-scoped maps.
   const newState: Record<string, any> = { ...gameState, consecutiveMisses };
-  const deltas = { ...parsed.stateDeltas };
+  const deltas = { ...finalParsed.stateDeltas };
 
   if (game.partyMembers.length > 1 && newState.partyHp) {
     if (deltas.hp !== undefined) {
@@ -379,7 +450,7 @@ export async function takeTurn(gameId: string, chipText: string): Promise<TurnRe
         data: { gameId, role: "PLAYER", content: sanitizedAction },
       });
       await tx.message.create({
-        data: { gameId, role: "DUNGEON_MASTER", content: parsed.narrative, chips: parsed.chips },
+        data: { gameId, role: "DUNGEON_MASTER", content: finalParsed.narrative, chips: finalParsed.chips },
       });
       if (xpAwarded > 0 || didLevelUp) {
         committedMaxHp = didLevelUp
@@ -413,8 +484,8 @@ export async function takeTurn(gameId: string, chipText: string): Promise<TurnRe
 
   return {
     success:   true,
-    narrative: parsed.narrative,
-    chips:     parsed.chips,
+    narrative: finalParsed.narrative,
+    chips:     finalParsed.chips,
     newState,
     diceResult,
     leveledUp: didLevelUp,
@@ -427,5 +498,6 @@ export async function takeTurn(gameId: string, chipText: string): Promise<TurnRe
       proficiencyBonus: proficiencyBonus(newLevel),
     } : undefined,
     combatEffects: resolvedEffects.length > 0 ? resolvedEffects : undefined,
+    skillCheckResult,
   };
 }
