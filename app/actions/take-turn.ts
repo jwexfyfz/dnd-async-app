@@ -385,22 +385,10 @@ export async function takeTurn(gameId: string, chipText: string): Promise<TurnRe
   // rawText on non-skill turns.
   const effectsSource = validSkillName !== null ? rawText2 : rawText;
   const rawEffects = parseCombatEffects(effectsSource);
+  // resolvedEffects is populated inside the $transaction so the HP read is
+  // within the same serialisable snapshot as the HP write, preventing stale
+  // newHp values from concurrent skill/combat turns.
   let resolvedEffects: { targetId: string; delta: number; type: string; newHp: number }[] = [];
-
-  if (rawEffects.length > 0) {
-    const affectedIds  = [...new Set(rawEffects.map((e) => e.targetId))];
-    const affectedChars = await prisma.character.findMany({
-      where:  { id: { in: affectedIds } },
-      select: { id: true, currentHp: true, maxHp: true },
-    });
-    const charMap = new Map(affectedChars.map((c) => [c.id, c]));
-    resolvedEffects = rawEffects
-      .filter((e) => charMap.has(e.targetId))
-      .map((e) => {
-        const c = charMap.get(e.targetId)!;
-        return { ...e, newHp: clampHp(c.currentHp, e.delta, c.maxHp) };
-      });
-  }
 
   // ─── XP Award ─────────────────────────────────────────────────────────────
   const encounterCompleted = finalParsed.encounterResult === "completed";
@@ -480,6 +468,23 @@ export async function takeTurn(gameId: string, chipText: string): Promise<TurnRe
         where: { id: gameId },
         data:  { state: newState, currentTurnCharacterId: nextCharId, version: { increment: 1 } },
       });
+      // Resolve combat HP deltas inside the transaction so currentHp is read
+      // from the same serialisable snapshot as the write, preventing stale
+      // values under concurrent turns.
+      if (rawEffects.length > 0) {
+        const affectedIds   = [...new Set(rawEffects.map((e) => e.targetId))];
+        const affectedChars = await tx.character.findMany({
+          where:  { id: { in: affectedIds } },
+          select: { id: true, currentHp: true, maxHp: true },
+        });
+        const charMap = new Map(affectedChars.map((c) => [c.id, c]));
+        resolvedEffects = rawEffects
+          .filter((e) => charMap.has(e.targetId))
+          .map((e) => {
+            const c = charMap.get(e.targetId)!;
+            return { ...e, newHp: clampHp(c.currentHp, e.delta, c.maxHp) };
+          });
+      }
       for (const eff of resolvedEffects) {
         await tx.character.update({
           where: { id: eff.targetId },
