@@ -326,6 +326,15 @@ export async function takeTurn(gameId: string, chipText: string): Promise<TurnRe
   let rawText2 = "";
 
   if (validSkillName !== null) {
+    // Two-roll design (deliberate): the main d20 roll from rollD20Check above
+    // covers the initial action check (attack or non-attack DC). When the DM
+    // returns a skillName, resolveSkillCheck rolls a SECOND independent d20
+    // for the skill check itself. This is intentional — the two dice represent
+    // distinct mechanical events (the attempt and the skill test). The skill
+    // roll is reported back to the client via skillCheckResult; it is not
+    // reflected in diceResult, which shows only the initial action roll.
+    // A future enhancement could unify these or let the player choose which
+    // roll applies, but the two-roll model is the agreed Phase 04 design.
     skillCheckResult = resolveSkillCheck(validSkillName, {
       characterClass:     currentCharacter.characterClass,
       level:              currentCharacter.level,
