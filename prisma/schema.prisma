@@ -73,6 +73,12 @@ model Character {
   ringId     String?
   ring       Item?   @relation("CharacterRing", fields: [ringId], references: [id])
 
+  // Turn resource tracking — decremented during combat, reset each round.
+  // Defaults match the universal base caps (1 action / 1 bonus / 30 ft).
+  remainingActions      Int @default(1)
+  remainingBonusActions Int @default(1)
+  remainingMovementFeet Int @default(30)
+
   // Unequipped item IDs
   backpack String[] @default([])
 
@@ -240,6 +246,8 @@ model ClassFeature {
   level          Int
   name           String
   description    String
+  icon           String           @default("🍃") // Default passive/free icon
+  costType       String           @default("free") // Default to free action to avoid breaking existing code
 
   classProgression ClassProgression @relation(fields: [characterClass, level], references: [characterClass, level])
 

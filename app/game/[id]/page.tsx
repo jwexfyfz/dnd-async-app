@@ -456,7 +456,8 @@ export default function GamePage() {
 
       {/* ── Tab content ── */}
       <div className="flex-1 overflow-auto">
-        {activeTab === "field" && (
+        {/* Always mounted so useTurnActions state survives tab switches */}
+        <div className={activeTab !== "field" ? "hidden" : undefined}>
           <FieldTab
             gameId={gameId}
             state={localState}
@@ -475,7 +476,7 @@ export default function GamePage() {
             skillCheckResult={skillCheckResult}
             turnError={turnError}
           />
-        )}
+        </div>
         {activeTab === "party" && (
           <PartyTab
             partyMembers={partyMembers}
@@ -520,6 +521,13 @@ function FieldTab({
   const lastDm        = [...messages].reverse().find((m) => m.role === "DUNGEON_MASTER");
   const situationText = lastDm?.content ?? storyPrompt.description;
   const isLoading     = isInitializing || isTakingTurn;
+
+  // console.log("[FieldTab] character from DB:", {
+  //   id:                    character.id,
+  //   remainingActions:      character.remainingActions,
+  //   remainingBonusActions: character.remainingBonusActions,
+  //   remainingMovementFeet: character.remainingMovementFeet,
+  // });
 
   const { mainAction, bonusAction, movementFeet, evaluateActionCost, consumeResource, resetTurnActions } =
     useTurnActions(character.characterClass, character.level, character.id, {

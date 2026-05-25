@@ -18,6 +18,17 @@ import { parseCombatEffects, clampHp } from "../../lib/combat-effect"
 import { resolveSkillCheck, SKILL_ABILITY_MAP } from "../../lib/skills"
 import type { SkillCheckResult } from "../../lib/skills";
 
+// ─── Response helpers ─────────────────────────────────────────────────────────
+
+// When JSON.parse fails (e.g. the model wraps the response in ```json fences or
+// produces malformed JSON), try to salvage just the "narrative" string so the
+// user never sees raw JSON rendered as story text.
+function salvageNarrative(rawText: string): string {
+  const m = rawText.match(/"narrative"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+  if (m) return m[1].replace(/\\n/g, "\n").replace(/\\"/g, '"').replace(/\\'/g, "'");
+  return "The dungeon stirs around you.";
+}
+
 // ─── Input sanitization ───────────────────────────────────────────────────────
 
 function sanitizeChipText(raw: string): string {
@@ -93,11 +104,11 @@ Always reply with a single JSON object — no markdown fences, no extra text.
     // "activeObjective": "..." (if the objective changed)
     // "npcsEncountered": [{name, disposition, note}]
   },
-  "chips": ["Short action 1", "Short action 2", "Short action 3", "Short action 4"],
+  "chips": [{"text": "Under 6 words", "type": "perception"}, {"text": "Under 6 words", "type": "athletics"}],
   "encounterResult": "completed" | null,
   "skillName": "ExactSkillName" | null
 }
-chips: 3–5 options, each under 6 words. Situationally specific to what just happened.
+chips: 3–5 options. Each chip has "text" (under 6 words, situationally specific) and "type" (the most thematically relevant skill from: athletics, acrobatics, sleight_of_hand, stealth, arcana, history, investigation, nature, religion, animal_handling, insight, medicine, perception, survival, deception, intimidation, performance, persuasion, strength, dexterity, constitution, intelligence, wisdom, charisma).
 encounterResult: set to "completed" ONLY when a combat encounter fully resolves this turn — enemy defeated, fled, or room cleared. Set to null on all other turns including exploration, dialogue, and non-combat actions. Do not set "completed" for partial victories or ongoing combat.
 skillName: if this player action narratively warrants a skill check, return the EXACT canonical skill name from this list — Acrobatics, Animal Handling, Arcana, Athletics, Deception, History, Insight, Intimidation, Investigation, Medicine, Nature, Perception, Performance, Persuasion, Religion, Sleight of Hand, Stealth, Survival. Return null on all other turns (combat attacks, exploration without a check, dialogue without a roll).
 
@@ -198,6 +209,8 @@ function buildConversationMessages(
 
 // ─── Action ───────────────────────────────────────────────────────────────────
 
+import type { Chip } from "../../types/chips";
+
 interface LevelUpResult {
   oldLevel:         number;
   newLevel:         number;
@@ -209,7 +222,7 @@ interface LevelUpResult {
 interface TurnResult {
   success:       boolean;
   narrative?:    string;
-  chips?:        string[];
+  chips?:        Chip[];
   newState?:     Record<string, unknown>;
   error?:        string;
   diceResult?:   D20Result;
@@ -304,15 +317,15 @@ export async function takeTurn(gameId: string, chipText: string): Promise<TurnRe
   const textBlock = response.content.find((b): b is Anthropic.TextBlock => b.type === "text");
   const rawText   = textBlock?.text ?? "";
 
-  let parsed: { narrative: string; stateDeltas: Record<string, any>; chips: string[]; encounterResult?: "completed" | null; skillName?: string | null };
+  let parsed: { narrative: string; stateDeltas: Record<string, any>; chips: Chip[]; encounterResult?: "completed" | null; skillName?: string | null };
   try {
     const match = rawText.match(/\{[\s\S]*\}/);
     parsed = JSON.parse(match?.[0] ?? rawText);
   } catch {
     parsed = {
-      narrative:       rawText || "The dungeon stirs around you.",
+      narrative:       salvageNarrative(rawText),
       stateDeltas:     {},
-      chips:           ["Look around carefully", "Listen for sounds", "Check your gear"],
+      chips:           [{ text: "Look around carefully", type: "perception" }, { text: "Listen for sounds", type: "perception" }, { text: "Check your gear", type: "investigation" }],
       encounterResult: null,
     };
   }
@@ -383,9 +396,9 @@ export async function takeTurn(gameId: string, chipText: string): Promise<TurnRe
       finalParsed = JSON.parse(match2?.[0] ?? rawText2);
     } catch {
       finalParsed = {
-        narrative:       rawText2 || "The dungeon stirs around you.",
+        narrative:       salvageNarrative(rawText2),
         stateDeltas:     {},
-        chips:           ["Look around carefully", "Listen for sounds", "Check your gear"],
+        chips:           [{ text: "Look around carefully", type: "perception" }, { text: "Listen for sounds", type: "perception" }, { text: "Check your gear", type: "investigation" }],
         encounterResult: null,
       };
     }

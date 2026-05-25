@@ -4,12 +4,19 @@ import Anthropic from "@anthropic-ai/sdk";
 import { prisma } from "../../lib/prisma";
 import { createSupabaseServerClient } from "../../lib/supabase-server";
 import { DM_MODEL, DM_MAX_TOKENS } from "../../lib/ai-config";
+import type { Chip } from "../../types/chips";
 
 interface InitResult {
   success: boolean;
   narrative?: string;
-  chips?: string[];
+  chips?: Chip[];
   error?: string;
+}
+
+function salvageNarrative(rawText: string): string {
+  const m = rawText.match(/"narrative"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+  if (m) return m[1].replace(/\\n/g, "\n").replace(/\\"/g, '"').replace(/\\'/g, "'");
+  return "You stand at the threshold of your adventure.";
 }
 
 // Called once when a game's message log is empty — i.e. the player has just
@@ -50,7 +57,7 @@ export async function initializeGame(gameId: string): Promise<InitResult> {
     return {
       success:   true,
       narrative: firstMsg?.content ?? "",
-      chips:     (firstMsg?.chips as string[] | null) ?? [],
+      chips:     (firstMsg?.chips as Chip[] | null) ?? [],
     };
   }
 
@@ -97,15 +104,15 @@ export async function initializeGame(gameId: string): Promise<InitResult> {
   const textBlock = response.content.find((b): b is Anthropic.TextBlock => b.type === "text");
   const rawText   = textBlock?.text ?? "";
 
-  let parsed: { narrative: string; stateDeltas: Record<string, any>; chips: string[] };
+  let parsed: { narrative: string; stateDeltas: Record<string, any>; chips: Chip[] };
   try {
     const jsonMatch = rawText.match(/\{[\s\S]*\}/);
     parsed = JSON.parse(jsonMatch?.[0] ?? rawText);
   } catch {
     parsed = {
-      narrative:   rawText || "You stand at the threshold of your adventure.",
+      narrative:   salvageNarrative(rawText),
       stateDeltas: {},
-      chips:       ["Look around", "Examine the area", "Listen carefully"],
+      chips:       [{ text: "Look around", type: "perception" }, { text: "Examine the area", type: "investigation" }, { text: "Listen carefully", type: "perception" }],
     };
   }
 
@@ -156,9 +163,9 @@ Always reply with a single JSON object — no markdown fences, no extra text.
     // "hp": 15  "inventory": ["torch"]  "playerPos": {"x":1,"y":1}
     // "plotFlags": ["arrived"]  "activeObjective": "Find the merchant"
   },
-  "chips": ["Short action 1", "Short action 2", "Short action 3", "Short action 4"]
+  "chips": [{"text": "Under 6 words", "type": "perception"}, {"text": "Under 6 words", "type": "investigation"}]
 }
-chips: 3–5 options, each under 6 words. Make them situationally specific.`;
+chips: 3–5 options. Each chip has "text" (under 6 words, situationally specific) and "type" (the most thematically relevant skill from: athletics, acrobatics, sleight_of_hand, stealth, arcana, history, investigation, nature, religion, animal_handling, insight, medicine, perception, survival, deception, intimidation, performance, persuasion, strength, dexterity, constitution, intelligence, wisdom, charisma).`;
 }
 
 function buildDynamicStatePrompt(gameState: any): string {
