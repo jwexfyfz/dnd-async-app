@@ -6,6 +6,7 @@ import Link from "next/link";
 import { supabaseBrowser } from "../../../lib/supabase-client";
 import { getGame } from "../../actions/get-game";
 import { takeTurn } from "../../actions/take-turn";
+import type { Chip } from "../../../types/chips";
 import { initializeGame } from "../../actions/initialize-game";
 import { getMapItems, type EquippableItemData } from "../../actions/get-map-items";
 import { getClassFeatures, type ClassFeatureData } from "../../actions/get-class-features";
@@ -20,6 +21,10 @@ import { proficiencyBonus } from "../../../lib/leveling";
 import { getCharacterSheetData } from "../../../lib/character-sheet";
 import { getCharacterStats } from "../../actions/get-character-stats";
 import type { CharacterStats } from "../../../lib/character-stats";
+import { SKILL_MAP, resolveChipCost } from "@/config/skills";
+import { getContinuationChips } from "@/app/actions/get-continuation-chips";
+import { useTurnActions } from "@/hooks/useTurnActions";
+import type { TurnCostType } from "@/types/turn-actions";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -61,6 +66,9 @@ interface CharacterData {
   currentHp:           number;
   maxHp:               number;
   skillProficiencies:  string[];
+  remainingActions:      number;
+  remainingBonusActions: number;
+  remainingMovementFeet: number;
 }
 
 interface PartyMemberData {
@@ -77,7 +85,7 @@ interface MessageData {
   id:        string;
   role:      "PLAYER" | "DUNGEON_MASTER";
   content:   string;
-  chips:     string[] | null;
+  chips:     Chip[] | null;
   createdAt: string;
 }
 
@@ -114,6 +122,22 @@ function hpTextColor(hp: number, max: number): string {
 function memberDisplayName(m: PartyMemberData): string {
   return m.user.displayName || m.user.email.split("@")[0];
 }
+
+function signedColor(n: number): { display: string; cls: string } {
+  if (n > 0) return { display: `+${n}`, cls: "text-green-600" };
+  if (n < 0) return { display: `${n}`,  cls: "text-red-600"   };
+  return       { display: "0",          cls: "text-slate-400"  };
+}
+
+// Mini-chip background + text color keyed by the skill's parent ability.
+const ABILITY_CHIP_STYLE: Record<string, string> = {
+  baseStrength:     "bg-blue-100   text-blue-700",
+  baseDexterity:    "bg-teal-100   text-teal-700",
+  baseConstitution: "bg-red-100    text-red-700",
+  baseIntelligence: "bg-purple-100 text-purple-700",
+  baseWisdom:       "bg-green-100  text-green-700",
+  baseCharisma:     "bg-yellow-100 text-yellow-700",
+};
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
@@ -219,20 +243,21 @@ export default function GamePage() {
   const currentTurnMember = gameData?.partyMembers.find(
     (m) => m.characterId === gameData?.currentTurnCharacterId
   );
-  const dmChips: string[] =
-    [...localMessages].reverse().find((m) => m.role === "DUNGEON_MASTER")?.chips ?? [];
+  const dmChips: Chip[] = (
+    ([...localMessages].reverse().find((m) => m.role === "DUNGEON_MASTER")?.chips ?? []) as unknown[]
+  ).map((c) => typeof c === "string" ? { text: c, type: "investigation" } as Chip : c as Chip);
   const myHp    = localState?.hp    ?? 0;
   const myMaxHp = localState?.maxHp ?? 1;
   const healingPotions = mapItems.filter(
     (i) => i.category === "Consumable" && i.quantity > 0 && i.name.toLowerCase().includes("potion"),
   );
-  const potionChip = myMaxHp > 0 && myHp / myMaxHp < 0.5 && healingPotions.length > 0
-    ? [`Use ${healingPotions[0].name}`]
+  const potionChip: Chip[] = myMaxHp > 0 && myHp / myMaxHp < 0.5 && healingPotions.length > 0
+    ? [{ text: `Use ${healingPotions[0].name}`, type: "medicine" }]
     : [];
-  const currentChips = [...potionChip, ...dmChips.filter((c) => !potionChip.includes(c))];
+  const currentChips = [...potionChip, ...dmChips.filter((c) => !potionChip.some((p) => p.text === c.text))];
 
   // ── Chip handler ──
-  async function handleChipClick(chip: string) {
+  async function handleChipClick(chip: Chip) {
     if (isTakingTurn || isInitializing || !localState) return;
     setIsTakingTurn(true);
     setDiceResult(null);
@@ -243,14 +268,14 @@ export default function GamePage() {
     const playerMsg: MessageData = {
       id:        `player-${Date.now()}`,
       role:      "PLAYER",
-      content:   chip,
+      content:   chip.text,
       chips:     null,
       createdAt: new Date().toISOString(),
     };
     setLocalMessages((prev) => [...prev, playerMsg]);
 
     try {
-      const result = await takeTurn(gameId, chip);
+      const result = await takeTurn(gameId, chip.text);
       if (result.success && result.narrative) {
         setLocalMessages((prev) => [...prev, {
           id:        `dm-${Date.now()}`,
@@ -433,11 +458,13 @@ export default function GamePage() {
       <div className="flex-1 overflow-auto">
         {activeTab === "field" && (
           <FieldTab
+            gameId={gameId}
             state={localState}
             map={map}
             storyPrompt={storyPrompt}
             messages={localMessages}
             chips={currentChips}
+            character={gameData.character}
             partyMarkers={isPartyGame ? partyMarkers : []}
             onChipClick={handleChipClick}
             isInitializing={isInitializing}
@@ -470,16 +497,18 @@ export default function GamePage() {
 // ─── Tab: The Field ───────────────────────────────────────────────────────────
 
 function FieldTab({
-  state, map, storyPrompt, messages, chips, partyMarkers,
+  gameId, state, map, storyPrompt, messages, chips, character, partyMarkers,
   onChipClick, isInitializing, isTakingTurn, chipsEnabled, diceResult, levelUpResult, skillCheckResult, turnError,
 }: {
+  gameId:            string;
   state:             GameState;
   map:               { name: string; data: MapData };
   storyPrompt:       { title: string; description: string };
   messages:          MessageData[];
-  chips:             string[];
+  chips:             Chip[];
+  character:         CharacterData;
   partyMarkers:      PartyMarker[];
-  onChipClick:       (chip: string) => void;
+  onChipClick:       (chip: Chip) => void;
   isInitializing:    boolean;
   isTakingTurn:      boolean;
   chipsEnabled:      boolean;
@@ -491,6 +520,94 @@ function FieldTab({
   const lastDm        = [...messages].reverse().find((m) => m.role === "DUNGEON_MASTER");
   const situationText = lastDm?.content ?? storyPrompt.description;
   const isLoading     = isInitializing || isTakingTurn;
+
+  const { mainAction, bonusAction, movementFeet, evaluateActionCost, consumeResource, resetTurnActions } =
+    useTurnActions(character.characterClass, character.level, character.id, {
+      remainingActions:      character.remainingActions,
+      remainingBonusActions: character.remainingBonusActions,
+      remainingMovementFeet: character.remainingMovementFeet,
+    });
+
+  // Remove choices the player cannot currently afford. 'free' always renders.
+  const affordableChips = chips.filter((chip) => {
+    const cost = resolveChipCost(chip);
+    if (cost.type === "free") return true;
+    return evaluateActionCost(cost.type as TurnCostType, cost.value);
+  });
+
+  // Stable string key — only changes when DM chip content changes, not on every
+  // parent re-render. Prevents the effect below from looping on array reference churn.
+  const chipsKey = chips.map((c) => c.text).join("\x00");
+
+  // Incremented by the ↺ refresh button to force a re-fetch without changing chipsKey.
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  // Async continuation chips: fetched from the AI when the DM has responded but
+  // all chips are filtered (main action spent) and the player still has resources.
+  const [continuationChips,   setContinuationChips]   = useState<Chip[]>([]);
+  const [loadingContinuation, setLoadingContinuation] = useState(false);
+  const [noFurtherActions,    setNoFurtherActions]    = useState(false);
+
+  const needsContinuation =
+    chips.length > 0 &&
+    affordableChips.length === 0 &&
+    (bonusAction.current > 0 || movementFeet.current > 0);
+
+  useEffect(() => {
+    if (!needsContinuation) {
+      setContinuationChips([]);
+      setNoFurtherActions(false);
+      setLoadingContinuation(false);
+      return;
+    }
+    let cancelled = false;
+    setLoadingContinuation(true);
+    setContinuationChips([]);
+    setNoFurtherActions(false);
+    getContinuationChips(
+      gameId,
+      { bonusAction: bonusAction.current, movementFeet: movementFeet.current },
+      { narrative: lastDm?.content ?? "", characterName: character.name, characterClass: character.characterClass },
+    ).then((result) => {
+      if (cancelled) return;
+      if (result.success && result.chips && result.chips.length > 0) {
+        setContinuationChips(result.chips);
+        setNoFurtherActions(false);
+      } else {
+        setNoFurtherActions(true);
+      }
+      setLoadingContinuation(false);
+    }).catch(() => {
+      if (cancelled) return;
+      setNoFurtherActions(true);
+      setLoadingContinuation(false);
+    });
+    return () => { cancelled = true; };
+  // chipsKey (not chips array) re-triggers on new DM narrative without looping on reference churn
+  }, [needsContinuation, chipsKey, refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Client-side safety net: drop any continuation chip whose resource pool is
+  // now empty (guards against stale AI output or resource changes mid-flight).
+  const filteredContinuationChips = continuationChips.filter((chip) => {
+    const cost = resolveChipCost(chip);
+    return cost.type === "free" || evaluateActionCost(cost.type as TurnCostType, cost.value);
+  });
+
+  // Show "no further actions" if the fetch returned nothing OR if all returned
+  // chips were stripped by the client-side resource filter.
+  const showNoFurtherActions =
+    noFurtherActions ||
+    (!loadingContinuation && continuationChips.length > 0 && filteredContinuationChips.length === 0);
+
+  const displayChips = affordableChips.length > 0 ? affordableChips : filteredContinuationChips;
+
+  function costLabel(type: string, value: number): string {
+    if (type === "mainAction")   return "⚡ 1 Action";
+    if (type === "bonusAction")  return "✨ Bonus";
+    if (type === "free")         return "Free";
+    if (type === "movementFeet") return `🏃 ${value}ft`;
+    return "";
+  }
 
   return (
     <div className="flex flex-col lg:flex-row h-full">
@@ -536,13 +653,31 @@ function FieldTab({
             )}
           </div>
         </div>
+
+        <TurnActionsTracker
+          mainAction={mainAction}
+          bonusAction={bonusAction}
+          movementFeet={movementFeet}
+        />
       </div>
 
       {/* Action chips */}
       <div className="w-full lg:w-64 border-t lg:border-t-0 lg:border-l border-slate-200 p-4 flex flex-col gap-3 bg-white">
-        <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest">
-          What do you do?
-        </p>
+        <div className="flex items-center justify-between">
+          <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest">
+            What do you do?
+          </p>
+          {needsContinuation && (
+            <button
+              onClick={() => setRefreshKey((k) => k + 1)}
+              disabled={loadingContinuation}
+              title="Regenerate suggestions"
+              className="text-slate-400 hover:text-slate-600 disabled:opacity-30 transition-colors text-base leading-none"
+            >
+              ↺
+            </button>
+          )}
+        </div>
         <div className="space-y-2 flex-1">
           {isInitializing ? (
             Array.from({ length: 3 }).map((_, i) => (
@@ -552,24 +687,50 @@ function FieldTab({
             <p className="text-xs text-slate-400 italic pt-1">
               Waiting for another player's turn…
             </p>
-          ) : chips.length > 0 ? (
-            chips.map((chip) => (
-              <button
-                key={chip}
-                onClick={() => onChipClick(chip)}
-                disabled={isLoading}
-                className={`w-full text-left text-sm px-3 py-2.5 rounded-lg border transition-colors ${
-                  isLoading
-                    ? "border-slate-200 text-slate-400 bg-slate-50 cursor-not-allowed"
-                    : "border-slate-300 text-slate-700 bg-white hover:bg-slate-50 hover:border-slate-400 active:bg-slate-100"
-                }`}
-              >
-                {chip}
-              </button>
-            ))
-          ) : (
+          ) : loadingContinuation ? (
+            <div className="h-10 bg-slate-100 rounded-lg animate-pulse" />
+          ) : displayChips.length > 0 ? (
+            <>{displayChips.map((chip, i) => {
+              const skill        = SKILL_MAP[chip.type] ?? SKILL_MAP["investigation"];
+              const abilityScore = character[skill.abilityKey as keyof CharacterData] as number;
+              const abilityMod   = Math.floor((abilityScore - 10) / 2);
+              const proficient   = character.skillProficiencies.includes(skill.label);
+              const totalMod     = abilityMod + (proficient ? proficiencyBonus(character.level) : 0);
+              const modStr       = totalMod >= 0 ? `+${totalMod}` : `${totalMod}`;
+              const cost         = resolveChipCost(chip);
+              return (
+                <button
+                  key={`${i}-${chip.text}`}
+                  onClick={() => { consumeResource(cost.type as TurnCostType, cost.value); onChipClick(chip); }}
+                  disabled={isLoading}
+                  className={[
+                    "w-full flex items-center gap-2 text-left px-3 py-2 rounded-lg border transition-colors",
+                    "disabled:opacity-50 disabled:cursor-not-allowed",
+                    isLoading
+                      ? "border-slate-200 bg-slate-50 text-slate-400"
+                      : "border-slate-200 bg-white text-slate-800 hover:bg-slate-50 hover:border-slate-300 active:bg-slate-100",
+                  ].join(" ")}
+                >
+                  {/* Action text */}
+                  <span className="flex-1 min-w-0 truncate text-xs font-medium">
+                    {skill.emoji} {chip.text}
+                  </span>
+                  {/* Attribute bonus mini-chip — colored by parent ability */}
+                  <span className={`shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded ${ABILITY_CHIP_STYLE[skill.abilityKey] ?? "bg-slate-100 text-slate-500"}`}>
+                    {skill.label} {modStr}
+                  </span>
+                  {/* Action cost mini-chip — neutral, pushed to far right */}
+                  <span className="shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">
+                    {costLabel(cost.type, cost.value)}
+                  </span>
+                </button>
+              );
+            })}</>
+          ) : showNoFurtherActions ? (
+            <p className="text-xs text-slate-400 italic">No further actions available for this situation.</p>
+          ) : chips.length === 0 ? (
             <p className="text-xs text-slate-400 italic">Awaiting the Dungeon Master…</p>
-          )}
+          ) : null}
           {isTakingTurn && (
             <p className="text-xs text-slate-400 animate-pulse pt-1">The dungeon responds…</p>
           )}
@@ -577,6 +738,52 @@ function FieldTab({
             <p className="text-xs text-red-500 pt-1">{turnError}</p>
           )}
         </div>
+
+        {chipsEnabled && !isInitializing && (
+          <button
+            onClick={resetTurnActions}
+            disabled={isLoading}
+            className="w-full text-left text-sm px-3 py-2.5 rounded-lg border-2 border-slate-700 text-slate-700 bg-white font-semibold transition-colors hover:bg-slate-800 hover:text-white hover:border-slate-800 active:bg-slate-900 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            🛑 End Turn &amp; Pass Action
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Turn Actions Tracker ────────────────────────────────────────────────────
+
+function TurnActionsTracker({
+  mainAction, bonusAction, movementFeet,
+}: {
+  mainAction:   { current: number; max: number };
+  bonusAction:  { current: number; max: number };
+  movementFeet: { current: number; max: number };
+}) {
+  const activeStyle = "inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold border bg-slate-50 text-slate-700 border-slate-200/80 transition-all duration-200";
+  const spentStyle  = "inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold border bg-slate-100 text-slate-400 border-slate-200 opacity-50 transition-all duration-200";
+
+  return (
+    <div>
+      <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-2">
+        Turn Actions
+      </p>
+      <div className="flex flex-wrap gap-2">
+        <span className={mainAction.current > 0 ? activeStyle : spentStyle}>
+          {mainAction.current > 0
+            ? `⚡ ACTION: ${mainAction.current}/${mainAction.max}`
+            : <span className="line-through">✓ ACTION SPENT</span>}
+        </span>
+        <span className={bonusAction.current > 0 ? activeStyle : spentStyle}>
+          {bonusAction.current > 0
+            ? `✨ BONUS: ${bonusAction.current}/${bonusAction.max}`
+            : <span className="line-through">✓ BONUS SPENT</span>}
+        </span>
+        <span className={movementFeet.current > 0 ? activeStyle : `${activeStyle} bg-slate-100 text-slate-400 border-slate-200 opacity-40`}>
+          {`👟 MOVE: ${movementFeet.current} ft (${Math.ceil(movementFeet.current / 5)} steps)`}
+        </span>
       </div>
     </div>
   );
@@ -788,35 +995,323 @@ const STAT_FULL_NAME: Record<string, string> = {
   charisma:     "Charisma",
 };
 
-function MemberStatsPane({ char, mapId }: { char: CharacterData; mapId: string }) {
-  const [equipStats, setEquipStats] = useState<CharacterStats | null>(null);
-  const [mapItems,   setMapItems]   = useState<EquippableItemData[]>([]);
+const SKILL_DESCRIPTION: Record<string, string> = {
+  "Acrobatics":      "Balance, tumble, and stay on your feet in difficult terrain or after a fall.",
+  "Animal Handling": "Calm, control, or intuit the intentions of beasts and mounts.",
+  "Arcana":          "Recall lore about spells, magic items, eldritch symbols, and magical traditions.",
+  "Athletics":       "Climb, jump, swim, or grapple — feats of raw physical power.",
+  "Deception":       "Mislead others through lies, half-truths, disguise, or misdirection.",
+  "History":         "Recall lore about historical events, legendary people, ancient kingdoms, and past wars.",
+  "Insight":         "Read a creature's true intentions by studying body language and speech patterns.",
+  "Intimidation":    "Influence others through overt threats, hostile actions, or shows of force.",
+  "Investigation":   "Search for clues, deduce conclusions, and spot hidden objects by examining an area.",
+  "Medicine":        "Stabilize the dying, diagnose illness, and recall knowledge about anatomy and healing.",
+  "Nature":          "Recall lore about terrain, plants, animals, weather, and natural cycles.",
+  "Perception":      "Spot, hear, or sense the presence of something using your senses.",
+  "Performance":     "Entertain an audience through music, dance, acting, storytelling, or other arts.",
+  "Persuasion":      "Influence others using tact, social grace, good nature, or a compelling argument.",
+  "Religion":        "Recall lore about deities, rites, prayers, religious hierarchies, and holy symbols.",
+  "Sleight of Hand": "Pick pockets, conceal objects, or perform fine manual trickery undetected.",
+  "Stealth":         "Move silently and stay out of sight to avoid detection by enemies.",
+  "Survival":        "Track prey, navigate wilderness, predict weather, and forage for food and shelter.",
+};
 
-  useEffect(() => {
-    getCharacterStats(char.id).then(setEquipStats);
-  }, [char.id]);
+// ─── AC Calculation ───────────────────────────────────────────────────────────
+// Models class-specific unarmored defense before falling back to the standard
+// 10 + DEX formula. Each line in the returned array is one addend displayed in
+// the expanded breakdown.
+
+interface AcLine { label: string; value: number }
+
+function computeAcBreakdown(
+  characterClass: string,
+  dexMod: number,
+  conMod: number,
+  wisMod: number,
+  armorBonus: number,
+  shieldBonus: number,
+): { total: number; lines: AcLine[] } {
+  const cls      = characterClass.toLowerCase();
+  const isArmored = armorBonus > 0;
+  const lines: AcLine[] = [];
+
+  if (cls === "sorcerer") {
+    // Draconic Resilience: base 13 + DEX
+    lines.push({ label: "Base (Draconic Resilience)", value: 13 });
+    lines.push({ label: "Dexterity Bonus",            value: dexMod });
+  } else if (cls === "barbarian" && !isArmored) {
+    // Unarmored Defense: 10 + DEX + CON
+    lines.push({ label: "Base",                 value: 10 });
+    lines.push({ label: "Dexterity Bonus",      value: dexMod });
+    lines.push({ label: "Constitution Bonus",   value: conMod });
+  } else if (cls === "monk" && !isArmored && shieldBonus === 0) {
+    // Unarmored Defense: 10 + DEX + WIS (no armor or shield)
+    lines.push({ label: "Base",            value: 10 });
+    lines.push({ label: "Dexterity Bonus", value: dexMod });
+    lines.push({ label: "Wisdom Bonus",    value: wisMod });
+  } else {
+    // Standard: 10 + DEX
+    lines.push({ label: "Base",            value: 10 });
+    lines.push({ label: "Dexterity Bonus", value: dexMod });
+  }
+
+  if (armorBonus  > 0) lines.push({ label: "Equipped Armor",  value: armorBonus });
+  if (shieldBonus > 0) lines.push({ label: "Equipped Shield", value: shieldBonus });
+
+  return { total: lines.reduce((s, l) => s + l.value, 0), lines };
+}
+
+function TotalACCard({
+  char, equipStats, mapId,
+}: {
+  char:       CharacterData;
+  equipStats: CharacterStats | null;
+  mapId:      string;
+}) {
+  const [mapItems,   setMapItems]   = useState<EquippableItemData[]>([]);
+  const [isExpanded, setIsExpanded] = useState(false);
 
   useEffect(() => {
     getMapItems(mapId).then(setMapItems);
   }, [mapId]);
 
-  const equipped   = mapItems.filter((i) => i.isEquipped);
-  const gearBoosts = equipped.reduce(
-    (acc, item) => {
-      const t  = item.combatImpactLabel;
-      const ac  = t.match(/\+(\d+)\s*AC/i);
-      const dmg = t.match(/\+(\d+)\s*Damage/i);
-      const hit = t.match(/\+(\d+)\s*to\s*Hit/i);
-      const hp  = t.match(/\+(\d+)\s*(?:Temp\s*)?HP/i);
-      if (ac)  acc.ac     += parseInt(ac[1],  10);
-      if (dmg) acc.damage += parseInt(dmg[1], 10);
-      if (hit) acc.hit    += parseInt(hit[1], 10);
-      if (hp)  acc.hp     += parseInt(hp[1],  10);
-      return acc;
-    },
-    { ac: 0, damage: 0, hit: 0, hp: 0 },
+  const parseAc = (label: string) => {
+    const m = label.match(/\+(\d+)\s*AC/i);
+    return m ? parseInt(m[1], 10) : 0;
+  };
+
+  const equipped     = mapItems.filter((i) => i.isEquipped);
+  const armorItems   = equipped.filter((i) => i.category === "Armor" && !i.name.toLowerCase().includes("shield"));
+  const shieldItems  = equipped.filter((i) => i.name.toLowerCase().includes("shield"));
+  const armorBonus   = armorItems.reduce((sum, i)  => sum + parseAc(i.combatImpactLabel), 0);
+  const shieldBonus  = shieldItems.reduce((sum, i) => sum + parseAc(i.combatImpactLabel), 0);
+
+  const dexTotal = equipStats?.dexterity.total    ?? char.baseDexterity;
+  const conTotal = equipStats?.constitution.total  ?? char.baseConstitution;
+  const wisTotal = equipStats?.wisdom.total        ?? char.baseWisdom;
+  const dexMod   = Math.floor((dexTotal - 10) / 2);
+  const conMod   = Math.floor((conTotal - 10) / 2);
+  const wisMod   = Math.floor((wisTotal - 10) / 2);
+
+  const { total, lines } = computeAcBreakdown(
+    char.characterClass, dexMod, conMod, wisMod, armorBonus, shieldBonus,
   );
-  const hasGear = equipped.length > 0;
+
+  const fmtSigned = (n: number) => (n >= 0 ? `+${n}` : `${n}`);
+
+  return (
+    <div className="rounded-xl border overflow-hidden bg-sky-50 border-sky-200">
+
+      {/* Primary row */}
+      <div className="flex items-stretch px-3 py-2.5">
+        <div className="flex items-center gap-2 flex-1 min-w-0">
+          <span className="text-xl leading-none">🛡️</span>
+          <span className="text-[9px] font-bold text-sky-600 uppercase tracking-widest">Total AC</span>
+          <span className="text-2xl font-bold text-sky-900 leading-tight">{total}</span>
+        </div>
+
+        <button
+          onClick={() => setIsExpanded((p) => !p)}
+          className="flex-1 flex items-center justify-end text-sky-400 pr-1"
+          aria-label={isExpanded ? "Collapse" : "Expand"}
+        >
+          <span
+            className="text-[10px] transition-transform duration-200 inline-block"
+            style={{ transform: isExpanded ? "rotate(180deg)" : "rotate(0deg)" }}
+          >
+            ▼
+          </span>
+        </button>
+      </div>
+
+      {/* Breakdown panel */}
+      <div className={`overflow-hidden transition-[max-height] duration-200 ease-in-out ${isExpanded ? "max-h-48" : "max-h-0"}`}>
+        <div className="px-4 pb-3 pt-1.5 border-t border-sky-100 space-y-1">
+          {lines.map(({ label, value }) => (
+            <div key={label} className="flex justify-between items-baseline">
+              <span className="text-[11px] text-slate-500">{label}</span>
+              <span className="text-[11px] font-semibold text-sky-700 font-mono">{fmtSigned(value)}</span>
+            </div>
+          ))}
+          <div className="flex justify-between items-baseline border-t border-sky-100 pt-1 mt-1">
+            <span className="text-[11px] font-bold text-slate-600">Total</span>
+            <span className="text-[11px] font-bold text-sky-800 font-mono">{total}</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  );
+}
+
+function StatAttributeCard({
+  statKey, label, score, saveProficient, profBonus, equipStats, fmtMod,
+}: {
+  statKey:        string;
+  label:          string;
+  score:          number;
+  saveProficient: boolean;
+  profBonus:      number;
+  equipStats:     CharacterStats | null;
+  fmtMod:         (n: number) => string;
+}) {
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  const eff      = equipStats?.[statKey as keyof CharacterStats];
+  const eTotal   = eff?.total ?? score;
+  const eMod     = Math.floor((eTotal - 10) / 2);
+  const eSaveMod = eMod + (saveProficient ? profBonus : 0);
+
+  const cardBg       = saveProficient ? "bg-green-50 border-green-200"  : "bg-white border-slate-200";
+  const primaryColor = saveProficient ? "text-green-900"                : "text-slate-800";
+  const muteColor    = saveProficient ? "text-green-600"                : "text-slate-500";
+  const dividerColor = saveProficient ? "border-green-100"              : "border-slate-100";
+
+  return (
+    <div className={`rounded-xl border overflow-hidden ${cardBg}`}>
+      <div className="flex items-stretch px-3 py-2.5">
+
+        {/* LEFT — emoji + abbreviation + stacked values */}
+        <div className="flex items-center gap-2.5 flex-1 min-w-0">
+          <div className="flex flex-col items-center w-8 shrink-0">
+            <span className="text-xl leading-none">{STAT_EMOJI[statKey]}</span>
+            <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wide">{label}</span>
+          </div>
+          <div className="space-y-0.5 min-w-0">
+            <div className="flex items-baseline gap-1.5">
+              <span className="text-[9px] text-slate-400 uppercase tracking-widest shrink-0">Combat Bonus</span>
+              <span className={`text-xl font-bold leading-tight ${primaryColor}`}>{fmtMod(eSaveMod)}</span>
+            </div>
+            <div className="flex items-baseline gap-1.5">
+              <span className="text-[9px] text-slate-400 uppercase tracking-widest shrink-0">Raw Score</span>
+              <span className={`text-sm font-medium ${muteColor}`}>{eTotal}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* RIGHT HALF — tap target */}
+        <button
+          onClick={() => setIsExpanded((p) => !p)}
+          className="flex-1 flex items-center justify-end text-slate-400 pr-1"
+          aria-label={isExpanded ? "Collapse" : "Expand"}
+        >
+          <span
+            className="text-[10px] transition-transform duration-200 inline-block"
+            style={{ transform: isExpanded ? "rotate(180deg)" : "rotate(0deg)" }}
+          >
+            ▼
+          </span>
+        </button>
+
+      </div>
+
+      {/* BREAKDOWN — smooth expand */}
+      <div className={`overflow-hidden transition-[max-height] duration-200 ease-in-out ${isExpanded ? "max-h-40" : "max-h-0"}`}>
+        <div className={`px-4 pb-3 pt-1.5 border-t ${dividerColor} space-y-1.5`}>
+
+          {/* Line 1: Base Modifier */}
+          {(() => { const sc = signedColor(eMod); return (
+            <div className="flex items-baseline justify-between">
+              <span className="text-[11px] text-slate-500">Base Modifier&nbsp;
+                <span className="text-slate-400 font-mono">({eTotal}−10)÷2</span>
+              </span>
+              <span className={`text-[11px] font-semibold font-mono ${sc.cls}`}>{sc.display}</span>
+            </div>
+          ); })()}
+
+          {/* Line 2: Proficiency Bonus */}
+          {(() => { const sc = signedColor(saveProficient ? profBonus : 0); return (
+            <div className="flex items-baseline justify-between">
+              <span className="text-[11px] text-slate-500">Proficiency Bonus</span>
+              <span className={`text-[11px] font-semibold font-mono ${sc.cls}`}>{sc.display}</span>
+            </div>
+          ); })()}
+
+          {/* Separator + Line 3: Total */}
+          {(() => { const sc = signedColor(eSaveMod); return (
+            <div className={`flex items-baseline justify-between border-t ${dividerColor} pt-1.5`}>
+              <span className="text-[11px] font-bold text-slate-600">Total Combat Bonus</span>
+              <span className={`text-[11px] font-bold font-mono ${sc.cls}`}>{sc.display}</span>
+            </div>
+          ); })()}
+
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SkillRowCard({
+  skillName, modifierValue, isProficient, descriptionText, onUse,
+}: {
+  skillName:       string;
+  modifierValue:   string;
+  isProficient:    boolean;
+  descriptionText: string;
+  onUse:           () => void;
+}) {
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  const cardBg       = isProficient ? "bg-green-50 border-green-200" : "bg-white border-slate-200";
+  const nameColor    = isProficient ? "font-bold text-green-900"     : "text-slate-700";
+  const modColor     = isProficient ? "text-green-700"               : "text-slate-500";
+  const dividerColor = isProficient ? "border-green-100"             : "border-slate-100";
+
+  return (
+    <div className={`rounded-xl border overflow-hidden ${cardBg}`}>
+
+      {/* Primary row */}
+      <div className="flex items-center px-3 py-2">
+
+        {/* Skill name + modifier — grows to push Use button to fixed column */}
+        <span className={`flex-1 min-w-0 text-xs leading-tight ${nameColor}`}>
+          {skillName}{" "}
+          <span className={`font-mono text-[11px] ${modColor}`}>({modifierValue})</span>
+        </span>
+
+        {/* Use button — fixed width so all cards align */}
+        <button
+          onClick={(e) => { e.stopPropagation(); onUse(); }}
+          className="w-10 shrink-0 text-[10px] font-bold py-0.5 rounded bg-amber-50 text-amber-700 hover:bg-amber-100 active:bg-amber-200 transition-colors"
+        >
+          Use
+        </button>
+
+        {/* Right half — tap target with chevron */}
+        <button
+          onClick={() => setIsExpanded((p) => !p)}
+          className="flex-1 self-stretch flex items-center justify-end text-slate-400 pl-2 pr-1"
+          aria-label={isExpanded ? "Collapse" : "Expand"}
+        >
+          <span
+            className="text-[10px] transition-transform duration-200 inline-block"
+            style={{ transform: isExpanded ? "rotate(180deg)" : "rotate(0deg)" }}
+          >
+            ▼
+          </span>
+        </button>
+
+      </div>
+
+      {/* Description panel */}
+      <div className={`overflow-hidden transition-[max-height] duration-200 ease-in-out ${isExpanded ? "max-h-40" : "max-h-0"}`}>
+        <div className={`px-4 pb-3 pt-1.5 border-t ${dividerColor}`}>
+          <p className="text-[11px] text-slate-500 leading-relaxed">
+            {descriptionText || "No description available."}
+          </p>
+        </div>
+      </div>
+
+    </div>
+  );
+}
+
+function MemberStatsPane({ char, mapId }: { char: CharacterData; mapId: string }) {
+  const [equipStats, setEquipStats] = useState<CharacterStats | null>(null);
+
+  useEffect(() => {
+    getCharacterStats(char.id).then(setEquipStats);
+  }, [char.id]);
 
   const sheet = getCharacterSheetData(char);
 
@@ -828,8 +1323,7 @@ function MemberStatsPane({ char, mapId }: { char: CharacterData; mapId: string }
   const xpNeeded = nextXp !== null ? nextXp - prevXp : 1;
   const xpPct    = atCap ? 100 : Math.max(0, Math.min(100, (xpInLvl / xpNeeded) * 100));
   const xpLabel  = atCap ? "Level 5  ·  MAX" : `Level ${level}  ·  XP: ${char.xp} / ${nextXp}`;
-  const fmtMod   = (n: number) => (n >= 0 ? `+${n}` : `${n}`);
-  const profBg   = "bg-green-50";
+  const fmtMod = (n: number) => (n >= 0 ? `+${n}` : `${n}`);
 
   return (
     <div className="space-y-2">
@@ -850,72 +1344,24 @@ function MemberStatsPane({ char, mapId }: { char: CharacterData; mapId: string }
         </div>
       </div>
 
-      {/* Stat table: row-header col + 6 stat cols */}
-      <div className="grid gap-x-0.5 gap-y-0" style={{ gridTemplateColumns: "auto repeat(6, 1fr)" }}>
+      {/* Total AC */}
+      <TotalACCard char={char} equipStats={equipStats} mapId={mapId} />
 
-        {/* Row 1 — emoji + stat abbreviation headers */}
-        <div /> {/* empty corner */}
-        {sheet.stats.map(({ key, label }) => (
-          <div key={`h-${key}`} className="flex flex-col items-center pb-1 gap-0.5">
-            <span className="text-sm leading-none">{STAT_EMOJI[key]}</span>
-            <span className="text-[9px] font-semibold text-slate-500 uppercase tracking-wide">{label}</span>
-          </div>
+      {/* Attribute cards — single-column stack */}
+      <div className="space-y-2">
+        {sheet.stats.map(({ key, label, score, saveProficient }) => (
+          <StatAttributeCard
+            key={key}
+            statKey={key}
+            label={label}
+            score={score}
+            saveProficient={saveProficient}
+            profBonus={sheet.profBonus}
+            equipStats={equipStats}
+            fmtMod={fmtMod}
+          />
         ))}
-
-        {/* Row 2 — Combat Bonus: effective save modifier + equipment adjustment */}
-        <div className="flex items-center pr-2">
-          <span className="text-[9px] text-slate-400 leading-tight">Combat<br />Bonus</span>
-        </div>
-        {sheet.stats.map(({ key, score, modifier, saveProficient }) => {
-          const eff      = equipStats?.[key];
-          const eTotal   = eff?.total ?? score;
-          const eMod     = Math.floor((eTotal - 10) / 2);
-          const eAdj     = eMod - modifier;
-          const eSaveMod = eMod + (saveProficient ? sheet.profBonus : 0);
-          return (
-            <div key={`s-${key}`} className={`flex flex-col justify-center items-center rounded-t-md pt-2 pb-1 ${saveProficient ? profBg : ""}`}>
-              <span className={`text-base font-bold leading-tight ${saveProficient ? "text-green-900" : "text-slate-800"}`}>
-                {fmtMod(eSaveMod)}
-              </span>
-              <span className={`text-[8px] leading-none ${eAdj !== 0 ? "text-amber-600 font-semibold" : "text-slate-400"}`}>
-                ({fmtMod(eAdj)})
-              </span>
-            </div>
-          );
-        })}
-
-        {/* Row 3 — Raw Score: effective ability score + equipment bonus */}
-        <div className="flex items-center pr-2">
-          <span className="text-[9px] text-slate-400 leading-tight">Raw<br />Score</span>
-        </div>
-        {sheet.stats.map(({ key, score, saveProficient }) => {
-          const eff    = equipStats?.[key];
-          const eTotal = eff?.total ?? score;
-          const eBonus = eff?.bonus ?? 0;
-          return (
-            <div key={`r-${key}`} className={`flex flex-col justify-center items-center rounded-b-md pb-2 pt-1 ${saveProficient ? profBg : ""}`}>
-              <span className={`text-xs font-medium ${saveProficient ? "text-green-500" : "text-slate-400"}`}>
-                {eTotal}
-              </span>
-              <span className={`text-[8px] leading-none ${eBonus !== 0 ? "text-amber-600 font-semibold" : "text-slate-400"}`}>
-                ({fmtMod(eBonus)})
-              </span>
-            </div>
-          );
-        })}
-
       </div>
-
-      {/* Gear bonuses from equipped EquippableItems */}
-      {hasGear && (
-        <div className="flex flex-wrap gap-x-3 gap-y-1 px-2 py-1.5 bg-amber-50 border border-amber-100 rounded-lg mt-1">
-          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest w-full">Equipped Gear</span>
-          {gearBoosts.ac     > 0 && <span className="text-[10px] font-bold text-sky-600">Defense +{gearBoosts.ac} AC</span>}
-          {gearBoosts.damage > 0 && <span className="text-[10px] font-bold text-red-600">Damage +{gearBoosts.damage}</span>}
-          {gearBoosts.hit    > 0 && <span className="text-[10px] font-bold text-amber-600">To Hit +{gearBoosts.hit}</span>}
-          {gearBoosts.hp     > 0 && <span className="text-[10px] font-bold text-emerald-600">Temp HP +{gearBoosts.hp}</span>}
-        </div>
-      )}
 
       {/* Actions & Skills — grouped by stat, using equipment-adjusted ability modifier */}
       <div className="space-y-2 pt-2">
@@ -938,23 +1384,14 @@ function MemberStatsPane({ char, mapId }: { char: CharacterData; mapId: string }
                 {groupSkills.map(({ name, proficient }) => {
                   const effSkillMod = effAbilityMod + (proficient ? sheet.profBonus : 0);
                   return (
-                    <div
+                    <SkillRowCard
                       key={name}
-                      className={`flex items-center justify-between px-2.5 py-1 rounded-full border text-xs ${
-                        proficient
-                          ? `${profBg} border-green-200`
-                          : "bg-white border-slate-200"
-                      }`}
-                    >
-                      <span className={`truncate mr-1 ${proficient ? "font-bold text-green-900" : "text-slate-600"}`}>
-                        {name}
-                      </span>
-                      <span className={`shrink-0 font-mono text-[11px] ${
-                        proficient ? "font-bold text-green-900" : "text-slate-500"
-                      }`}>
-                        {fmtMod(effSkillMod)}
-                      </span>
-                    </div>
+                      skillName={name}
+                      modifierValue={fmtMod(effSkillMod)}
+                      isProficient={proficient}
+                      descriptionText={SKILL_DESCRIPTION[name] ?? ""}
+                      onUse={() => console.log("Triggered roll for skill: " + name)}
+                    />
                   );
                 })}
               </div>
