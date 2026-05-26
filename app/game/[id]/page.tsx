@@ -5,8 +5,8 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { supabaseBrowser } from "../../../lib/supabase-client";
 import { getGame } from "../../actions/get-game";
-import { takeTurn } from "../../actions/take-turn";
-import type { Chip } from "../../../types/chips";
+import type { Chip, ChipType } from "../../../types/chips";
+import type { ActionType } from "../../../types/suggestion-chip";
 import { initializeGame } from "../../actions/initialize-game";
 import { getMapItems, type EquippableItemData } from "../../actions/get-map-items";
 import { getClassFeatures, type ClassFeatureData } from "../../actions/get-class-features";
@@ -21,12 +21,14 @@ import { proficiencyBonus } from "../../../lib/leveling";
 import { getCharacterSheetData } from "../../../lib/character-sheet";
 import { getCharacterStats } from "../../actions/get-character-stats";
 import type { CharacterStats } from "../../../lib/character-stats";
-import { SKILL_MAP, resolveChipCost } from "@/config/skills";
+import { SKILL_MAP } from "@/config/skills";
 import { useTurnActions } from "@/hooks/useTurnActions";
 import type { TurnCostType } from "@/types/turn-actions";
-import RollSheet from "../../../components/roll-sheet";
-import type { ActiveRollContext } from "../../../lib/roll-context";
-import type { TurnResult } from "../../actions/take-turn";
+import TurnQueueSheet from "../../../components/turn-queue-sheet";
+import { initializeTurnQueue } from "../../actions/initialize-turn-queue";
+import type { AutoAdvanceResult } from "../../actions/auto-advance";
+import type { SuggestionChip } from "../../../types/suggestion-chip";
+import type { QueueRoll } from "../../../types/suggestion-chip";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -100,6 +102,7 @@ interface GameFull {
   phase:                 string;
   currentTurnCharacterId: string | null;
   state:                 GameState;
+  activeSuggestionChips: SuggestionChip[] | null;
   character:             CharacterData;
   storyPrompt:           { title: string; description: string };
   map:                   { id: string; name: string; data: MapData };
@@ -110,6 +113,19 @@ interface GameFull {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const CHRONICLE_LIMIT = 20;
+
+function legacyChipToSuggestion(chip: Chip): SuggestionChip {
+  return {
+    id:             `legacy-${chip.type}-${chip.text.replace(/\s+/g, "-")}`,
+    label:          chip.text,
+    type:           chip.type as ChipType,
+    requiresRoll:   chip.type !== "none",
+    advantageState: "NONE",
+    action_type:    "mainAction" as ActionType,
+    movementFeet:   0,
+    spellLevel:     0,
+  };
+}
 
 function hpBarColor(hp: number, max: number): string {
   const p = hp / max;
@@ -175,9 +191,9 @@ export default function GamePage() {
   const [turnError,        setTurnError]        = useState<string | null>(null);
   const [localHpOverrides, setLocalHpOverrides] = useState<Record<string, number>>({});
   const [hpFlashing,       setHpFlashing]       = useState(false);
-  const [mapItems,         setMapItems]         = useState<EquippableItemData[]>([]);
-  const [activeRollContext,  setActiveRollContext]  = useState<ActiveRollContext | null>(null);
-  const [activeRollChipText, setActiveRollChipText] = useState<string>("");
+  const [mapItems,             setMapItems]             = useState<EquippableItemData[]>([]);
+  const [activeTurnQueue,      setActiveTurnQueue]      = useState<{ turnId: string; rolls: QueueRoll[]; chipLabel: string } | null>(null);
+  const [localSuggestionChips, setLocalSuggestionChips] = useState<SuggestionChip[] | null>(null);
 
   const initCalledRef  = useRef(false);
   // Stored so it can be cancelled on unmount, preventing a state update on an
@@ -224,6 +240,9 @@ export default function GamePage() {
         setGameData(data);
         setLocalMessages(data.messages);
         setLocalState(data.state);
+        if (Array.isArray(data.activeSuggestionChips) && data.activeSuggestionChips.length > 0) {
+          setLocalSuggestionChips(data.activeSuggestionChips as unknown as SuggestionChip[]);
+        }
         const initHp: Record<string, number> = {};
         if (data.partyMembers.length > 0) {
           for (const m of data.partyMembers) initHp[m.characterId] = m.character.currentHp;
@@ -269,131 +288,89 @@ export default function GamePage() {
   const currentTurnMember = gameData?.partyMembers.find(
     (m) => m.characterId === gameData?.currentTurnCharacterId
   );
-  // Read pre-computed chips from game state; fall back to last DM message for
-  // existing games that pre-date the active_suggestion_chips field.
-  const stateChips: Chip[] =
-    Array.isArray(localState?.active_suggestion_chips) &&
-    (localState.active_suggestion_chips as unknown[]).length > 0
-      ? (localState.active_suggestion_chips as unknown as Chip[])
-      : (([...localMessages].reverse().find((m) => m.role === "DUNGEON_MASTER")?.chips ?? []) as unknown[])
-          .map((c) => (typeof c === "string" ? { text: c, type: "investigation" } as Chip : (c as Chip)));
+  // Prefer live SuggestionChip[] state; fall back to game column, then convert legacy Chip[].
+  const stateChips: SuggestionChip[] =
+    localSuggestionChips && localSuggestionChips.length > 0
+      ? localSuggestionChips
+      : Array.isArray(gameData?.activeSuggestionChips) && (gameData.activeSuggestionChips as unknown[]).length > 0
+        ? (gameData.activeSuggestionChips as unknown as SuggestionChip[])
+        : (([...localMessages].reverse().find((m) => m.role === "DUNGEON_MASTER")?.chips ?? []) as unknown[])
+            .map((c) => legacyChipToSuggestion(typeof c === "string" ? { text: c, type: "investigation" } as Chip : c as Chip));
+
   const myHp    = localState?.hp    ?? 0;
   const myMaxHp = localState?.maxHp ?? 1;
   const healingPotions = mapItems.filter(
     (i) => i.category === "Consumable" && i.quantity > 0 && i.name.toLowerCase().includes("potion"),
   );
-  const potionChip: Chip[] = myMaxHp > 0 && myHp / myMaxHp < 0.5 && healingPotions.length > 0
-    ? [{ text: `Use ${healingPotions[0].name}`, type: "medicine" }]
+  const potionChip: SuggestionChip[] = myMaxHp > 0 && myHp / myMaxHp < 0.5 && healingPotions.length > 0
+    ? [{
+        id:             `potion-${healingPotions[0].id}`,
+        label:          `Use ${healingPotions[0].name}`,
+        type:           "medicine",
+        requiresRoll:   false,
+        advantageState: "NONE",
+        action_type:    "free",
+        movementFeet:   0,
+        spellLevel:     0,
+      }]
     : [];
-  const currentChips = [...potionChip, ...stateChips.filter((c) => !potionChip.some((p) => p.text === c.text))];
+  const currentChips = [
+    ...potionChip,
+    ...stateChips.filter((c) => !potionChip.some((p) => p.label === c.label)),
+  ];
 
-  // ── Chip handler ──
-  async function handleChipClick(chip: Chip) {
-    if (isTakingTurn || isInitializing || !localState) return;
+  // ── Chip handler — initializes the turn queue and opens the roll sheet ──
+  async function handleChipClick(chip: SuggestionChip) {
+    if (isTakingTurn || isInitializing || !localState || activeTurnQueue) return;
     setIsTakingTurn(true);
     setDiceResult(null);
     setLevelUpResult(null);
     setSkillCheckResult(null);
     setTurnError(null);
 
-    const playerMsg: MessageData = {
+    setLocalMessages((prev) => [...prev, {
       id:        `player-${Date.now()}`,
       role:      "PLAYER",
-      content:   chip.text,
+      content:   chip.label,
       chips:     null,
       createdAt: new Date().toISOString(),
-    };
-    setLocalMessages((prev) => [...prev, playerMsg]);
+    }]);
 
     try {
-      const result = await takeTurn(gameId, chip.text, chip.type);
-
-      // Server-seeded roll required — show the roll sheet and wait for the player.
-      if (result.activeRollContext) {
-        setActiveRollContext(result.activeRollContext);
-        setActiveRollChipText(chip.text);
-        return; // finally clears isTakingTurn
-      }
-
-      if (result.success && result.narrative) {
-        setLocalMessages((prev) => [...prev, {
-          id:        `dm-${Date.now()}`,
-          role:      "DUNGEON_MASTER",
-          content:   result.narrative!,
-          chips:     result.chips ?? [],
-          createdAt: new Date().toISOString(),
-        }]);
-        if (result.newState) setLocalState(result.newState as unknown as GameState);
-        setDiceResult(result.diceResult ?? null);
-        setLevelUpResult(result.levelUpResult ?? null);
-        setSkillCheckResult(result.skillCheckResult ?? null);
-
-        if (result.combatEffects && result.combatEffects.length > 0) {
-          const overrides: Record<string, number> = {};
-          const myCharId = myMember?.characterId ?? gameData?.character.id;
-          let myCharAffected = false;
-          for (const eff of result.combatEffects) {
-            overrides[eff.targetId] = eff.newHp;
-            if (myCharId && eff.targetId === myCharId) myCharAffected = true;
-          }
-          setLocalHpOverrides((prev) => ({ ...prev, ...overrides }));
-          if (myCharAffected) {
-            setHpFlashing(true);
-            if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
-            flashTimerRef.current = setTimeout(() => setHpFlashing(false), 800);
-          }
-        }
-
-        // Re-fetch to get the updated currentTurnCharacterId and settle HP from DB.
-        getGame(gameId).then((res) => {
-          if (res.success && res.data) {
-            const fresh = res.data as unknown as GameFull;
-            setGameData(fresh);
-            const freshHp: Record<string, number> = {};
-            if (fresh.partyMembers.length > 0) {
-              for (const m of fresh.partyMembers) freshHp[m.characterId] = m.character.currentHp;
-            } else {
-              freshHp[fresh.character.id] = fresh.character.currentHp;
-            }
-            setLocalHpOverrides((prev) => ({ ...prev, ...freshHp }));
-          }
-        });
+      const result = await initializeTurnQueue(gameId, chip);
+      if (result.success && result.turnId) {
+        setActiveTurnQueue({ turnId: result.turnId, rolls: result.rolls ?? [], chipLabel: chip.label });
       } else {
-        setLocalMessages((prev) => prev.filter((m) => m.id !== playerMsg.id));
-        setDiceResult(null);
-        setLevelUpResult(null);
-        setSkillCheckResult(null);
-        const msg = result.error === "STALE_TURN"
-          ? "Another action was submitted first — please try again."
-          : result.error === "It's not your turn."
-            ? "It's not your turn."
-            : "The Dungeon Master is temporarily unavailable. Please try again in a moment.";
+        setLocalMessages((prev) => prev.slice(0, -1));
+        const msg = result.error === "Not your turn." || result.error === "It's not your turn."
+          ? "It's not your turn."
+          : result.error === "STALE_TURN"
+            ? "Another action was submitted first — please try again."
+            : result.error ?? "The Dungeon Master is temporarily unavailable. Please try again.";
         setTurnError(msg);
       }
     } catch {
-      // Unhandled rejection (network error, Next.js serialisation error, etc.)
-      // Remove the optimistic player message and surface a generic error.
-      setLocalMessages((prev) => prev.filter((m) => m.id !== playerMsg.id));
+      setLocalMessages((prev) => prev.slice(0, -1));
       setTurnError("The Dungeon Master is temporarily unavailable. Please try again.");
     } finally {
       setIsTakingTurn(false);
     }
   }
 
-  // ── Roll sheet callbacks ──
-  function handleRollComplete(result: TurnResult) {
+  // ── Turn queue callbacks ──
+  function handleAdvanceComplete(result: AutoAdvanceResult) {
     if (!result.success || !result.narrative) return;
     setLocalMessages((prev) => [...prev, {
       id:        `dm-${Date.now()}`,
       role:      "DUNGEON_MASTER",
       content:   result.narrative!,
-      chips:     result.chips ?? [],
+      chips:     result.chips?.map((sc) => ({ text: sc.label, type: sc.type })) ?? [],
       createdAt: new Date().toISOString(),
     }]);
+    if (result.chips && result.chips.length > 0) setLocalSuggestionChips(result.chips);
     if (result.newState) setLocalState(result.newState as unknown as GameState);
-    setDiceResult(result.diceResult ?? null);
     setLevelUpResult(result.levelUpResult ?? null);
-    setSkillCheckResult(result.skillCheckResult ?? null);
+
     if (result.combatEffects && result.combatEffects.length > 0) {
       const overrides: Record<string, number> = {};
       const myCharId = myMember?.characterId ?? gameData?.character.id;
@@ -409,6 +386,7 @@ export default function GamePage() {
         flashTimerRef.current = setTimeout(() => setHpFlashing(false), 800);
       }
     }
+
     getGame(gameId).then((res) => {
       if (res.success && res.data) {
         const fresh = res.data as unknown as GameFull;
@@ -424,9 +402,8 @@ export default function GamePage() {
     });
   }
 
-  function handleRollDone() {
-    setActiveRollContext(null);
-    setActiveRollChipText("");
+  function handleQueueDone() {
+    setActiveTurnQueue(null);
   }
 
   // ── Render ──
@@ -547,7 +524,6 @@ export default function GamePage() {
         {/* Always mounted so useTurnActions state survives tab switches */}
         <div className={activeTab !== "field" ? "hidden" : undefined}>
           <FieldTab
-            gameId={gameId}
             state={localState}
             map={map}
             storyPrompt={storyPrompt}
@@ -558,7 +534,7 @@ export default function GamePage() {
             onChipClick={handleChipClick}
             isInitializing={isInitializing}
             isTakingTurn={isTakingTurn}
-            chipsEnabled={(!isPartyGame || isMyTurn) && !activeRollContext}
+            chipsEnabled={(!isPartyGame || isMyTurn) && !activeTurnQueue}
             diceResult={diceResult}
             levelUpResult={levelUpResult}
             skillCheckResult={skillCheckResult}
@@ -579,13 +555,14 @@ export default function GamePage() {
           <ChronicleTab storyPrompt={storyPrompt} messages={localMessages} />
         )}
       </div>
-      {activeRollContext && (
-        <RollSheet
-          activeRollContext={activeRollContext}
+      {activeTurnQueue && (
+        <TurnQueueSheet
           gameId={gameId}
-          chipText={activeRollChipText}
-          onTurnComplete={handleRollComplete}
-          onDone={handleRollDone}
+          turnId={activeTurnQueue.turnId}
+          initialRolls={activeTurnQueue.rolls}
+          chipLabel={activeTurnQueue.chipLabel}
+          onAdvanceComplete={handleAdvanceComplete}
+          onDone={handleQueueDone}
         />
       )}
     </div>
@@ -595,25 +572,24 @@ export default function GamePage() {
 // ─── Tab: The Field ───────────────────────────────────────────────────────────
 
 function FieldTab({
-  gameId, state, map, storyPrompt, messages, chips, character, partyMarkers,
+  state, map, storyPrompt, messages, chips, character, partyMarkers,
   onChipClick, isInitializing, isTakingTurn, chipsEnabled, diceResult, levelUpResult, skillCheckResult, turnError,
 }: {
-  gameId:            string;
   state:             GameState;
   map:               { name: string; data: MapData };
   storyPrompt:       { title: string; description: string };
   messages:          MessageData[];
-  chips:             Chip[];
+  chips:             SuggestionChip[];
   character:         CharacterData;
   partyMarkers:      PartyMarker[];
-  onChipClick:       (chip: Chip) => void;
+  onChipClick:       (chip: SuggestionChip) => void;
   isInitializing:    boolean;
   isTakingTurn:      boolean;
   chipsEnabled:      boolean;
-  diceResult?:       D20Result | null;
-  levelUpResult?:    LevelUpResult | null;
-  skillCheckResult?: SkillCheckResult | null;
-  turnError?:        string | null;
+  diceResult?:          D20Result | null;
+  levelUpResult?:       LevelUpResult | null;
+  skillCheckResult?:    SkillCheckResult | null;
+  turnError?:           string | null;
 }) {
   // Read pre-computed narrative from state; fall back to last DM message for
   // older games, then to the scenario description. No computation on mount.
@@ -641,9 +617,10 @@ function FieldTab({
 
   // Remove choices the player cannot currently afford. 'free' always renders.
   const affordableChips = chips.filter((chip) => {
-    const cost = resolveChipCost(chip);
-    if (cost.type === "free") return true;
-    return evaluateActionCost(cost.type as TurnCostType, cost.value);
+    if (chip.action_type === "free") return true;
+    const costType: TurnCostType = chip.action_type === "movement" ? "movementFeet" : chip.action_type as TurnCostType;
+    const costValue = chip.action_type === "movement" ? chip.movementFeet : 1;
+    return evaluateActionCost(costType, costValue);
   });
 
   console.log("[field-tab] render", {
@@ -656,17 +633,14 @@ function FieldTab({
     displayingAll:    affordableChips.length === 0 && chips.length > 0,
   });
 
-  // The Field tab is passive: chips come from state.active_suggestion_chips.
-  // Show affordable chips while the player still has resources. Once the main
-  // action is spent, fall back to the full chip set — these are next-turn
-  // suggestions, not current-turn resource costs, so they always remain visible.
-  const displayChips = affordableChips.length > 0 ? affordableChips : chips;
+  // Show only affordable chips. When empty, the "No further actions" message renders.
+  const displayChips = affordableChips;
 
   function costLabel(type: string, value: number): string {
-    if (type === "mainAction")   return "⚡ 1 Action";
-    if (type === "bonusAction")  return "✨ Bonus";
-    if (type === "free")         return "Free";
-    if (type === "movementFeet") return `🏃 ${value}ft`;
+    if (type === "mainAction")                     return "⚡ 1 Action";
+    if (type === "bonusAction")                    return "✨ Bonus";
+    if (type === "free")                           return "Free";
+    if (type === "movement" || type === "movementFeet") return `🏃 ${value}ft`;
     return "";
   }
 
@@ -738,20 +712,18 @@ function FieldTab({
             </p>
           ) : displayChips.length > 0 ? (
             <>{displayChips.map((chip, i) => {
-              const skill        = SKILL_MAP[chip.type] ?? SKILL_MAP["investigation"];
-              const abilityScore = character[skill.abilityKey as keyof CharacterData] as number;
+              const skill        = chip.type !== "none" ? (SKILL_MAP[chip.type] ?? SKILL_MAP["investigation"]) : null;
+              const abilityScore = skill ? (character[skill.abilityKey as keyof CharacterData] as number) : 0;
               const abilityMod   = Math.floor((abilityScore - 10) / 2);
-              const proficient   = character.skillProficiencies.includes(skill.label);
+              const proficient   = skill ? character.skillProficiencies.includes(skill.label) : false;
               const totalMod     = abilityMod + (proficient ? proficiencyBonus(character.level) : 0);
               const modStr       = totalMod >= 0 ? `+${totalMod}` : `${totalMod}`;
-              const cost         = resolveChipCost(chip);
-              const dc           = (state.targetAC as number | undefined) ?? 12;
+              const costType: TurnCostType = chip.action_type === "movement" ? "movementFeet" : chip.action_type as TurnCostType;
+              const costValue = chip.action_type === "movement" ? chip.movementFeet : 1;
               return (
                 <button
-                  key={`${i}-${chip.text}`}
-                  data-dc={dc}
-                  data-modifier={totalMod}
-                  onClick={() => { consumeResource(cost.type as TurnCostType, cost.value); onChipClick(chip); }}
+                  key={`${i}-${chip.id}`}
+                  onClick={() => { consumeResource(costType, costValue); onChipClick(chip); }}
                   disabled={isLoading}
                   className={[
                     "w-full flex items-center gap-2 text-left px-3 py-2 rounded-lg border transition-colors",
@@ -763,15 +735,17 @@ function FieldTab({
                 >
                   {/* Action text */}
                   <span className="flex-1 min-w-0 truncate text-xs font-medium">
-                    {skill.emoji} {chip.text}
+                    {skill ? `${skill.emoji} ` : ""}{chip.label}
                   </span>
-                  {/* Attribute bonus mini-chip — colored by parent ability */}
-                  <span className={`shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded ${ABILITY_CHIP_STYLE[skill.abilityKey] ?? "bg-slate-100 text-slate-500"}`}>
-                    {skill.label} {modStr}
-                  </span>
+                  {/* Attribute bonus mini-chip — suppressed for type "none" */}
+                  {skill && (
+                    <span className={`shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded ${ABILITY_CHIP_STYLE[skill.abilityKey] ?? "bg-slate-100 text-slate-500"}`}>
+                      {skill.label} {modStr}
+                    </span>
+                  )}
                   {/* Action cost mini-chip — neutral, pushed to far right */}
                   <span className="shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">
-                    {costLabel(cost.type, cost.value)}
+                    {costLabel(chip.action_type, costValue)}
                   </span>
                 </button>
               );

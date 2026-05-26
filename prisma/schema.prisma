@@ -78,6 +78,11 @@ model Character {
   remainingActions      Int @default(1)
   remainingBonusActions Int @default(1)
   remainingMovementFeet Int @default(30)
+  remainingReactions    Int @default(1)
+  hasCastedBonusSpell   Boolean  @default(false)
+
+  // Active status conditions (e.g. ["Poisoned", "Prone"])
+  activeConditions String[] @default([])
 
   // Unequipped item IDs
   backpack String[] @default([])
@@ -138,11 +143,19 @@ model Game {
 
   version Int @default(0) // optimistic lock counter — increment on every state write
 
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
-  messages     Message[]
-  partyMembers PartyMember[]
-  pendingRolls PendingRoll[]
+  // Phase B pillars — populated by autoAdvance, read by prompt builder and Field tab.
+  // Null until first turn completes; legacy games fall back to game.state JSON.
+  worldState           Json?
+  currentScenario      String?
+  narrativeHistory     String[] @default([])
+  activeSuggestionChips Json?
+
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  messages         Message[]
+  partyMembers     PartyMember[]
+  pendingRolls     PendingRoll[]
+  activeTurnQueues ActiveTurnQueue[]
 }
 
 enum GameStatus {
@@ -173,6 +186,10 @@ model PartyMember {
   // Assigned by startAdventure, sorted by DEX desc. 0 = goes first.
   turnOrder   Int          @default(0)
   joinedAt    DateTime     @default(now())
+
+  // Grid position — dual-written alongside game.state.partyPositions until Phase D cutover.
+  posX Int @default(0)
+  posY Int @default(0)
 }
 
 enum MemberStatus {
@@ -253,6 +270,32 @@ model ClassFeature {
   classProgression ClassProgression @relation(fields: [characterClass, level], references: [characterClass, level])
 
   @@index([characterClass, level])
+}
+
+// ─── Active Turn Queue ────────────────────────────────────────────────────────
+
+// Short-lived roll queue created when a player taps a suggestion chip.
+// Holds the ordered roll array for the turn (attack, damage, saves, etc.).
+// Purged by autoAdvance on COMPLETED; expiresAt is a safety TTL.
+model ActiveTurnQueue {
+  id               String          @id @default(uuid())
+  gameId           String
+  game             Game            @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  characterId      String          // character who initiated this turn
+  status           TurnQueueStatus @default(PENDING_ROLLS)
+  currentRollIndex Int             @default(0)
+  // Ordered Roll[] array per spec — each entry tracks type, label, diceFormula,
+  // dc, advantageState, naturalResult, secondaryNaturalResult, totalResult, isSuccess.
+  rolls            Json
+  createdAt        DateTime        @default(now())
+  expiresAt        DateTime        // safety TTL (now + 10 min); purged if autoAdvance never fires
+
+  @@index([gameId])
+}
+
+enum TurnQueueStatus {
+  PENDING_ROLLS
+  COMPLETED
 }
 
 // ─── Server-Seeded Roll ───────────────────────────────────────────────────────

@@ -3,7 +3,8 @@ export type ChipType =
   | "arcana" | "history" | "investigation" | "nature" | "religion"
   | "animal_handling" | "insight" | "medicine" | "perception" | "survival"
   | "deception" | "intimidation" | "performance" | "persuasion"
-  | "strength" | "dexterity" | "constitution" | "intelligence" | "wisdom" | "charisma";
+  | "strength" | "dexterity" | "constitution" | "intelligence" | "wisdom" | "charisma"
+  | "none"; // suppresses modifier badge display
 
 // resourceCost.type is stored as a plain string in the DB (Json field).
 // Use resolveChipCost() from config/skills.ts to get a narrowly-typed ResourceCost.

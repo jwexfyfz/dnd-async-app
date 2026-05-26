@@ -13,6 +13,8 @@ import type { D20Result } from "../../lib/dice";
 import { buildRollContext } from "../../lib/roll-context";
 import type { ActiveRollContext } from "../../lib/roll-context";
 import type { ChipType } from "../../types/chips";
+import type { SuggestionChip } from "../../types/suggestion-chip";
+import { randomUUID } from "crypto";
 import { computeCharacterStats } from "../../lib/character-stats";
 import type { CharacterStats } from "../../lib/character-stats";
 import { computeLevel, XP_BY_DIFFICULTY } from "../../lib/xp";
@@ -107,11 +109,11 @@ Always reply with a single JSON object — no markdown fences, no extra text.
     // "activeObjective": "..." (if the objective changed)
     // "npcsEncountered": [{name, disposition, note}]
   },
-  "chips": [{"text": "Under 6 words", "type": "perception"}, {"text": "Under 6 words", "type": "athletics"}],
+  "chips": [{"text": "Under 6 words", "type": "perception", "requiresRoll": true, "advantageState": "NONE", "action_type": "mainAction", "movementFeet": 0, "spellLevel": 0}],
   "encounterResult": "completed" | null,
   "skillName": "ExactSkillName" | null
 }
-chips: 3–5 options. Each chip has "text" (under 6 words, situationally specific) and "type" (the most thematically relevant skill from: athletics, acrobatics, sleight_of_hand, stealth, arcana, history, investigation, nature, religion, animal_handling, insight, medicine, perception, survival, deception, intimidation, performance, persuasion, strength, dexterity, constitution, intelligence, wisdom, charisma).
+chips: 3–5 options. Each chip has "text" (under 6 words, situationally specific), "type" (skill from the list above), "requiresRoll" (true/false), "advantageState" ("NONE"|"ADVANTAGE"|"DISADVANTAGE"), "action_type" ("mainAction"|"bonusAction"|"movement"|"free"), "movementFeet" (0 unless movement), "spellLevel" (0 for martial/cantrip).
 encounterResult: set to "completed" ONLY when a combat encounter fully resolves this turn — enemy defeated, fled, or room cleared. Set to null on all other turns including exploration, dialogue, and non-combat actions. Do not set "completed" for partial victories or ongoing combat.
 skillName: if this player action narratively warrants a skill check, return the EXACT canonical skill name from this list — Acrobatics, Animal Handling, Arcana, Athletics, Deception, History, Insight, Intimidation, Investigation, Medicine, Nature, Perception, Performance, Persuasion, Religion, Sleight of Hand, Stealth, Survival. Return null on all other turns (combat attacks, exploration without a check, dialogue without a roll).
 
@@ -492,6 +494,18 @@ export async function takeTurn(
   newState.narrative_history       = [...existingHistory, finalParsed.narrative];
   newState.active_suggestion_chips = finalParsed.chips ?? [];
 
+  // Promote chips to SuggestionChip format for the new dedicated column (dual-write).
+  const suggestionChips: SuggestionChip[] = (finalParsed.chips ?? []).map((c: any) => ({
+    id:             randomUUID(),
+    label:          c.text ?? c.label ?? "",
+    type:           c.type ?? "none",
+    requiresRoll:   c.requiresRoll !== false,
+    advantageState: c.advantageState ?? "NONE",
+    action_type:    c.action_type    ?? "mainAction",
+    movementFeet:   c.movementFeet   ?? 0,
+    spellLevel:     c.spellLevel     ?? 0,
+  }));
+
   // Advance to the next party member in turn order.
   let nextCharId = currentCharId;
   if (game.partyMembers.length > 1) {
@@ -528,7 +542,14 @@ export async function takeTurn(
       }
       await tx.game.update({
         where: { id: gameId },
-        data:  { state: newState, currentTurnCharacterId: nextCharId, version: { increment: 1 } },
+        data:  {
+          state:                 newState,
+          activeSuggestionChips: suggestionChips as any,
+          narrativeHistory:      { push: finalParsed.narrative },
+          currentScenario:       finalParsed.narrative,
+          currentTurnCharacterId:nextCharId,
+          version:               { increment: 1 },
+        },
       });
       // Resolve combat HP deltas inside the transaction so currentHp is read
       // from the same serialisable snapshot as the write, preventing stale

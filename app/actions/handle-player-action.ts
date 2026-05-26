@@ -7,6 +7,8 @@ import { DM_MODEL, DM_MAX_TOKENS, ROLLING_WINDOW_SIZE } from "../../lib/ai-confi
 import { abilityModifier } from "../../lib/dice";
 import { computeCharacterStats } from "../../lib/character-stats";
 import type { Chip, ChipType } from "../../types/chips";
+import type { SuggestionChip } from "../../types/suggestion-chip";
+import { randomUUID } from "crypto";
 
 const anthropic = new Anthropic({ maxRetries: 4 });
 
@@ -370,6 +372,17 @@ export async function handlePlayerAction(
 
   // ── Deterministic chip generation (no LLM) ────────────────────────────────
   const chips = generateDeterministicChips(currentChar.characterClass, rollResult, success);
+  // Promote to SuggestionChip format for the new dedicated column.
+  const suggestionChips: SuggestionChip[] = chips.map((c) => ({
+    id:             randomUUID(),
+    label:          c.text,
+    type:           c.type,
+    requiresRoll:   true,
+    advantageState: "NONE",
+    action_type:    "mainAction",
+    movementFeet:   0,
+    spellLevel:     0,
+  }));
 
   // ── Steps 2 + 3: Atomic transaction ──────────────────────────────────────
   // Both narrative_history and active_suggestion_chips are committed together.
@@ -399,7 +412,13 @@ export async function handlePlayerAction(
       });
       await tx.game.update({
         where: { id: gameId },
-        data:  { state: updatedState, version: { increment: 1 } },
+        data:  {
+          state:                 updatedState,
+          activeSuggestionChips: suggestionChips as any,
+          narrativeHistory:      { push: narrative },
+          currentScenario:       narrative,
+          version:               { increment: 1 },
+        },
       });
     });
   } catch (err: any) {

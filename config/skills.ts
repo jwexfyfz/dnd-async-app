@@ -40,6 +40,7 @@ export const SKILL_MAP: Record<ChipType, {
   performance:    { emoji: "💬", label: "Performance",    tw: "bg-yellow-50 border-yellow-200 text-yellow-700",abilityKey: "baseCharisma",     defaultCost: SKILL_COST },
   persuasion:     { emoji: "💬", label: "Persuasion",     tw: "bg-yellow-50 border-yellow-200 text-yellow-700",abilityKey: "baseCharisma",     defaultCost: SKILL_COST },
   charisma:       { emoji: "💬", label: "Charisma",       tw: "bg-yellow-50 border-yellow-200 text-yellow-700",abilityKey: "baseCharisma",     defaultCost: SKILL_COST },
+  none:           { emoji: "",   label: "",               tw: "",                                               abilityKey: "baseStrength",     defaultCost: FREE_COST  },
 };
 
 /**
