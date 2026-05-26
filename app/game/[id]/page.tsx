@@ -22,7 +22,6 @@ import { getCharacterSheetData } from "../../../lib/character-sheet";
 import { getCharacterStats } from "../../actions/get-character-stats";
 import type { CharacterStats } from "../../../lib/character-stats";
 import { SKILL_MAP, resolveChipCost } from "@/config/skills";
-import { getContinuationChips } from "@/app/actions/get-continuation-chips";
 import { useTurnActions } from "@/hooks/useTurnActions";
 import type { TurnCostType } from "@/types/turn-actions";
 import RollSheet from "../../../components/roll-sheet";
@@ -44,6 +43,10 @@ interface GameState {
   partyPositions?: Record<string, { x: number; y: number }>;
   partyHp?:        Record<string, number>;
   partyMaxHp?:     Record<string, number>;
+  // Pre-computed by handlePlayerAction — read passively on load.
+  targetAC?:                number;
+  narrative_history?:       string[];
+  active_suggestion_chips?: unknown[];
 }
 
 interface LevelUpResult {
@@ -193,7 +196,9 @@ export default function GamePage() {
 
   // ── Load game ──
   useEffect(() => {
+    console.time("[field] game load");
     getGame(gameId).then((res) => {
+      console.timeEnd("[field] game load");
       if (res.success && res.data) {
         const data = res.data as unknown as GameFull;
         // If the game is still in the lobby, go back there.
@@ -201,6 +206,21 @@ export default function GamePage() {
           router.replace(`/game/${gameId}/lobby`);
           return;
         }
+
+        const state = data.state as GameState;
+        const hasPrecomputedNarrative = (state.narrative_history ?? []).length > 0;
+        const hasPrecomputedChips     = Array.isArray(state.active_suggestion_chips) &&
+          state.active_suggestion_chips.length > 0;
+
+        console.log("[field] load complete", {
+          narrativeSource: hasPrecomputedNarrative ? "state.narrative_history" : "fallback",
+          activeNarrative: (state.narrative_history ?? []).at(-1)?.slice(0, 60) ?? "(none)",
+          chipSource:      hasPrecomputedChips ? "state.active_suggestion_chips" : "fallback (message.chips)",
+          chipCount:       hasPrecomputedChips
+            ? (state.active_suggestion_chips as unknown[]).length
+            : data.messages.filter((m) => m.role === "DUNGEON_MASTER").slice(-1)[0]?.chips?.length ?? 0,
+        });
+
         setGameData(data);
         setLocalMessages(data.messages);
         setLocalState(data.state);
@@ -212,6 +232,7 @@ export default function GamePage() {
         }
         setLocalHpOverrides(initHp);
       } else {
+        console.warn("[field] load failed:", res.error);
         setLoadError(res.error ?? "Game not found.");
       }
       setLoading(false);
@@ -248,9 +269,14 @@ export default function GamePage() {
   const currentTurnMember = gameData?.partyMembers.find(
     (m) => m.characterId === gameData?.currentTurnCharacterId
   );
-  const dmChips: Chip[] = (
-    ([...localMessages].reverse().find((m) => m.role === "DUNGEON_MASTER")?.chips ?? []) as unknown[]
-  ).map((c) => typeof c === "string" ? { text: c, type: "investigation" } as Chip : c as Chip);
+  // Read pre-computed chips from game state; fall back to last DM message for
+  // existing games that pre-date the active_suggestion_chips field.
+  const stateChips: Chip[] =
+    Array.isArray(localState?.active_suggestion_chips) &&
+    (localState.active_suggestion_chips as unknown[]).length > 0
+      ? (localState.active_suggestion_chips as unknown as Chip[])
+      : (([...localMessages].reverse().find((m) => m.role === "DUNGEON_MASTER")?.chips ?? []) as unknown[])
+          .map((c) => (typeof c === "string" ? { text: c, type: "investigation" } as Chip : (c as Chip)));
   const myHp    = localState?.hp    ?? 0;
   const myMaxHp = localState?.maxHp ?? 1;
   const healingPotions = mapItems.filter(
@@ -259,7 +285,7 @@ export default function GamePage() {
   const potionChip: Chip[] = myMaxHp > 0 && myHp / myMaxHp < 0.5 && healingPotions.length > 0
     ? [{ text: `Use ${healingPotions[0].name}`, type: "medicine" }]
     : [];
-  const currentChips = [...potionChip, ...dmChips.filter((c) => !potionChip.some((p) => p.text === c.text))];
+  const currentChips = [...potionChip, ...stateChips.filter((c) => !potionChip.some((p) => p.text === c.text))];
 
   // ── Chip handler ──
   async function handleChipClick(chip: Chip) {
@@ -589,9 +615,15 @@ function FieldTab({
   skillCheckResult?: SkillCheckResult | null;
   turnError?:        string | null;
 }) {
-  const lastDm        = [...messages].reverse().find((m) => m.role === "DUNGEON_MASTER");
-  const situationText = lastDm?.content ?? storyPrompt.description;
+  // Read pre-computed narrative from state; fall back to last DM message for
+  // older games, then to the scenario description. No computation on mount.
+  const lastDmContent = [...messages].reverse().find((m) => m.role === "DUNGEON_MASTER")?.content;
+  const narrativeHistory = state.narrative_history ?? [];
+  const situationText = narrativeHistory.at(-1)
+    ?? lastDmContent
+    ?? storyPrompt.description;
   const isLoading     = isInitializing || isTakingTurn;
+
 
   // console.log("[FieldTab] character from DB:", {
   //   id:                    character.id,
@@ -614,71 +646,21 @@ function FieldTab({
     return evaluateActionCost(cost.type as TurnCostType, cost.value);
   });
 
-  // Stable string key — only changes when DM chip content changes, not on every
-  // parent re-render. Prevents the effect below from looping on array reference churn.
-  const chipsKey = chips.map((c) => c.text).join("\x00");
-
-  // Incremented by the ↺ refresh button to force a re-fetch without changing chipsKey.
-  const [refreshKey, setRefreshKey] = useState(0);
-
-  // Async continuation chips: fetched from the AI when the DM has responded but
-  // all chips are filtered (main action spent) and the player still has resources.
-  const [continuationChips,   setContinuationChips]   = useState<Chip[]>([]);
-  const [loadingContinuation, setLoadingContinuation] = useState(false);
-  const [noFurtherActions,    setNoFurtherActions]    = useState(false);
-
-  const needsContinuation =
-    chips.length > 0 &&
-    affordableChips.length === 0 &&
-    (bonusAction.current > 0 || movementFeet.current > 0);
-
-  useEffect(() => {
-    if (!needsContinuation) {
-      setContinuationChips([]);
-      setNoFurtherActions(false);
-      setLoadingContinuation(false);
-      return;
-    }
-    let cancelled = false;
-    setLoadingContinuation(true);
-    setContinuationChips([]);
-    setNoFurtherActions(false);
-    getContinuationChips(
-      gameId,
-      { bonusAction: bonusAction.current, movementFeet: movementFeet.current },
-      { narrative: lastDm?.content ?? "", characterName: character.name, characterClass: character.characterClass },
-    ).then((result) => {
-      if (cancelled) return;
-      if (result.success && result.chips && result.chips.length > 0) {
-        setContinuationChips(result.chips);
-        setNoFurtherActions(false);
-      } else {
-        setNoFurtherActions(true);
-      }
-      setLoadingContinuation(false);
-    }).catch(() => {
-      if (cancelled) return;
-      setNoFurtherActions(true);
-      setLoadingContinuation(false);
-    });
-    return () => { cancelled = true; };
-  // chipsKey (not chips array) re-triggers on new DM narrative without looping on reference churn
-  }, [needsContinuation, chipsKey, refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Client-side safety net: drop any continuation chip whose resource pool is
-  // now empty (guards against stale AI output or resource changes mid-flight).
-  const filteredContinuationChips = continuationChips.filter((chip) => {
-    const cost = resolveChipCost(chip);
-    return cost.type === "free" || evaluateActionCost(cost.type as TurnCostType, cost.value);
+  console.log("[field-tab] render", {
+    narrativeSource: narrativeHistory.length > 0
+      ? `state.narrative_history[${narrativeHistory.length - 1}]`
+      : lastDmContent ? "message.content (fallback)" : "storyPrompt.description (fallback)",
+    situationSnippet: situationText.slice(0, 60),
+    chipCount:        chips.length,
+    affordableCount:  affordableChips.length,
+    displayingAll:    affordableChips.length === 0 && chips.length > 0,
   });
 
-  // Show "no further actions" if the fetch returned nothing OR if all returned
-  // chips were stripped by the client-side resource filter.
-  const showNoFurtherActions =
-    noFurtherActions ||
-    (!loadingContinuation && continuationChips.length > 0 && filteredContinuationChips.length === 0);
-
-  const displayChips = affordableChips.length > 0 ? affordableChips : filteredContinuationChips;
+  // The Field tab is passive: chips come from state.active_suggestion_chips.
+  // Show affordable chips while the player still has resources. Once the main
+  // action is spent, fall back to the full chip set — these are next-turn
+  // suggestions, not current-turn resource costs, so they always remain visible.
+  const displayChips = affordableChips.length > 0 ? affordableChips : chips;
 
   function costLabel(type: string, value: number): string {
     if (type === "mainAction")   return "⚡ 1 Action";
@@ -742,21 +724,9 @@ function FieldTab({
 
       {/* Action chips */}
       <div className="w-full lg:w-64 border-t lg:border-t-0 lg:border-l border-slate-200 p-4 flex flex-col gap-3 bg-white">
-        <div className="flex items-center justify-between">
-          <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest">
-            What do you do?
-          </p>
-          {needsContinuation && (
-            <button
-              onClick={() => setRefreshKey((k) => k + 1)}
-              disabled={loadingContinuation}
-              title="Regenerate suggestions"
-              className="text-slate-400 hover:text-slate-600 disabled:opacity-30 transition-colors text-base leading-none"
-            >
-              ↺
-            </button>
-          )}
-        </div>
+        <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest">
+          What do you do?
+        </p>
         <div className="space-y-2 flex-1">
           {isInitializing ? (
             Array.from({ length: 3 }).map((_, i) => (
@@ -766,8 +736,6 @@ function FieldTab({
             <p className="text-xs text-slate-400 italic pt-1">
               Waiting for another player's turn…
             </p>
-          ) : loadingContinuation ? (
-            <div className="h-10 bg-slate-100 rounded-lg animate-pulse" />
           ) : displayChips.length > 0 ? (
             <>{displayChips.map((chip, i) => {
               const skill        = SKILL_MAP[chip.type] ?? SKILL_MAP["investigation"];
@@ -777,9 +745,12 @@ function FieldTab({
               const totalMod     = abilityMod + (proficient ? proficiencyBonus(character.level) : 0);
               const modStr       = totalMod >= 0 ? `+${totalMod}` : `${totalMod}`;
               const cost         = resolveChipCost(chip);
+              const dc           = (state.targetAC as number | undefined) ?? 12;
               return (
                 <button
                   key={`${i}-${chip.text}`}
+                  data-dc={dc}
+                  data-modifier={totalMod}
                   onClick={() => { consumeResource(cost.type as TurnCostType, cost.value); onChipClick(chip); }}
                   disabled={isLoading}
                   className={[
@@ -805,11 +776,11 @@ function FieldTab({
                 </button>
               );
             })}</>
-          ) : showNoFurtherActions ? (
-            <p className="text-xs text-slate-400 italic">No further actions available for this situation.</p>
           ) : chips.length === 0 ? (
             <p className="text-xs text-slate-400 italic">Awaiting the Dungeon Master…</p>
-          ) : null}
+          ) : (
+            <p className="text-xs text-slate-400 italic">No further actions available.</p>
+          )}
           {isTakingTurn && (
             <p className="text-xs text-slate-400 animate-pulse pt-1">The dungeon responds…</p>
           )}

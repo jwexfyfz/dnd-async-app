@@ -486,6 +486,12 @@ export async function takeTurn(
     delete newState.levelUpNote;
   }
 
+  // Populate the passive Field-tab layout fields so the next page load reads
+  // pre-computed data instead of falling back to message queries.
+  const existingHistory = Array.isArray(newState.narrative_history) ? (newState.narrative_history as string[]) : [];
+  newState.narrative_history       = [...existingHistory, finalParsed.narrative];
+  newState.active_suggestion_chips = finalParsed.chips ?? [];
+
   // Advance to the next party member in turn order.
   let nextCharId = currentCharId;
   if (game.partyMembers.length > 1) {
