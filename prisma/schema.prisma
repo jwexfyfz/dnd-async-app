@@ -142,6 +142,7 @@ model Game {
   updatedAt    DateTime      @updatedAt
   messages     Message[]
   partyMembers PartyMember[]
+  pendingRolls PendingRoll[]
 }
 
 enum GameStatus {
@@ -252,4 +253,21 @@ model ClassFeature {
   classProgression ClassProgression @relation(fields: [characterClass, level], references: [characterClass, level])
 
   @@index([characterClass, level])
+}
+
+// ─── Server-Seeded Roll ───────────────────────────────────────────────────────
+
+// Short-lived record that binds a rollRequestId to a crypto-secure d20 result.
+// Written by /api/rolls/secure-seed; read when the turn is resolved.
+// TTL of 5 minutes enforced by expiresAt (purged on resolution).
+model PendingRoll {
+  id        String   @id @default(uuid())
+  requestId String   @unique             // rollRequestId from buildRollContext
+  gameId    String
+  game      Game     @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  d20       Int                          // 1–20, rejection-sampled from crypto.getRandomValues
+  createdAt DateTime @default(now())
+  expiresAt DateTime                     // now + 5 min
+
+  @@index([gameId])
 }

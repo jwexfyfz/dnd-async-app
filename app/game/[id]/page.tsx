@@ -25,6 +25,9 @@ import { SKILL_MAP, resolveChipCost } from "@/config/skills";
 import { getContinuationChips } from "@/app/actions/get-continuation-chips";
 import { useTurnActions } from "@/hooks/useTurnActions";
 import type { TurnCostType } from "@/types/turn-actions";
+import RollSheet from "../../../components/roll-sheet";
+import type { ActiveRollContext } from "../../../lib/roll-context";
+import type { TurnResult } from "../../actions/take-turn";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -170,6 +173,8 @@ export default function GamePage() {
   const [localHpOverrides, setLocalHpOverrides] = useState<Record<string, number>>({});
   const [hpFlashing,       setHpFlashing]       = useState(false);
   const [mapItems,         setMapItems]         = useState<EquippableItemData[]>([]);
+  const [activeRollContext,  setActiveRollContext]  = useState<ActiveRollContext | null>(null);
+  const [activeRollChipText, setActiveRollChipText] = useState<string>("");
 
   const initCalledRef  = useRef(false);
   // Stored so it can be cancelled on unmount, preventing a state update on an
@@ -275,7 +280,15 @@ export default function GamePage() {
     setLocalMessages((prev) => [...prev, playerMsg]);
 
     try {
-      const result = await takeTurn(gameId, chip.text);
+      const result = await takeTurn(gameId, chip.text, chip.type);
+
+      // Server-seeded roll required — show the roll sheet and wait for the player.
+      if (result.activeRollContext) {
+        setActiveRollContext(result.activeRollContext);
+        setActiveRollChipText(chip.text);
+        return; // finally clears isTakingTurn
+      }
+
       if (result.success && result.narrative) {
         setLocalMessages((prev) => [...prev, {
           id:        `dm-${Date.now()}`,
@@ -339,6 +352,55 @@ export default function GamePage() {
     } finally {
       setIsTakingTurn(false);
     }
+  }
+
+  // ── Roll sheet callbacks ──
+  function handleRollComplete(result: TurnResult) {
+    if (!result.success || !result.narrative) return;
+    setLocalMessages((prev) => [...prev, {
+      id:        `dm-${Date.now()}`,
+      role:      "DUNGEON_MASTER",
+      content:   result.narrative!,
+      chips:     result.chips ?? [],
+      createdAt: new Date().toISOString(),
+    }]);
+    if (result.newState) setLocalState(result.newState as unknown as GameState);
+    setDiceResult(result.diceResult ?? null);
+    setLevelUpResult(result.levelUpResult ?? null);
+    setSkillCheckResult(result.skillCheckResult ?? null);
+    if (result.combatEffects && result.combatEffects.length > 0) {
+      const overrides: Record<string, number> = {};
+      const myCharId = myMember?.characterId ?? gameData?.character.id;
+      let myCharAffected = false;
+      for (const eff of result.combatEffects) {
+        overrides[eff.targetId] = eff.newHp;
+        if (myCharId && eff.targetId === myCharId) myCharAffected = true;
+      }
+      setLocalHpOverrides((prev) => ({ ...prev, ...overrides }));
+      if (myCharAffected) {
+        setHpFlashing(true);
+        if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+        flashTimerRef.current = setTimeout(() => setHpFlashing(false), 800);
+      }
+    }
+    getGame(gameId).then((res) => {
+      if (res.success && res.data) {
+        const fresh = res.data as unknown as GameFull;
+        setGameData(fresh);
+        const freshHp: Record<string, number> = {};
+        if (fresh.partyMembers.length > 0) {
+          for (const m of fresh.partyMembers) freshHp[m.characterId] = m.character.currentHp;
+        } else {
+          freshHp[fresh.character.id] = fresh.character.currentHp;
+        }
+        setLocalHpOverrides((prev) => ({ ...prev, ...freshHp }));
+      }
+    });
+  }
+
+  function handleRollDone() {
+    setActiveRollContext(null);
+    setActiveRollChipText("");
   }
 
   // ── Render ──
@@ -470,7 +532,7 @@ export default function GamePage() {
             onChipClick={handleChipClick}
             isInitializing={isInitializing}
             isTakingTurn={isTakingTurn}
-            chipsEnabled={!isPartyGame || isMyTurn}
+            chipsEnabled={(!isPartyGame || isMyTurn) && !activeRollContext}
             diceResult={diceResult}
             levelUpResult={levelUpResult}
             skillCheckResult={skillCheckResult}
@@ -491,6 +553,15 @@ export default function GamePage() {
           <ChronicleTab storyPrompt={storyPrompt} messages={localMessages} />
         )}
       </div>
+      {activeRollContext && (
+        <RollSheet
+          activeRollContext={activeRollContext}
+          gameId={gameId}
+          chipText={activeRollChipText}
+          onTurnComplete={handleRollComplete}
+          onDone={handleRollDone}
+        />
+      )}
     </div>
   );
 }
@@ -838,11 +909,20 @@ function DiceCard({ result }: { result: D20Result }) {
 // ─── Skill Check card ─────────────────────────────────────────────────────────
 
 function SkillCheckCard({ result }: { result: SkillCheckResult }) {
+  const profStr = result.proficiencyBonus > 0 ? ` + ${result.proficiencyBonus} prof` : "";
+  const outcomeColor = result.success ? "text-green-600" : "text-red-500";
   return (
-    <div className="flex items-center gap-2 bg-violet-50 border border-violet-200 rounded-lg px-3 py-2 text-sm">
-      <span className="text-base">⚡</span>
-      <span className="font-semibold text-violet-700">
-        {result.skill}: {result.success ? "SUCCESS" : "FAILURE"}
+    <div className="flex items-center gap-2 bg-violet-50 border border-violet-200 rounded-lg px-3 py-2 text-sm flex-wrap">
+      <span className="text-base">🎲</span>
+      <span className="font-semibold text-violet-700 shrink-0">{result.skill}</span>
+      <span className="font-mono text-slate-700">
+        {result.roll} + {result.modifier}{profStr} = {result.total}
+      </span>
+      <span className="text-slate-400 shrink-0">vs DC {result.dc}</span>
+      <span className={`font-semibold shrink-0 ${outcomeColor}`}>
+        {result.success ? "SUCCESS" : "FAIL"}
+        {result.roll === 20 && " — CRIT!"}
+        {result.roll === 1  && " — FUMBLE!"}
       </span>
     </div>
   );

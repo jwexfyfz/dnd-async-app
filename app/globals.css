@@ -29,3 +29,24 @@ body {
   0%   { background-color: rgb(254 202 202 / 0.9); }
   100% { background-color: transparent; }
 }
+
+@keyframes die-spin {
+  0%   { transform: rotate(0deg)   scale(1);    }
+  20%  { transform: rotate(18deg)  scale(1.25); }
+  45%  { transform: rotate(-14deg) scale(1.18); }
+  70%  { transform: rotate(10deg)  scale(1.1);  }
+  100% { transform: rotate(0deg)   scale(1);    }
+}
+
+.is-spinning {
+  animation: die-spin 0.45s ease-in-out infinite;
+  display: inline-block;
+  transform-origin: center;
+}
+
+/* Bottom-sheet safe-area override for notched phones.
+   Inline style sets paddingBottom; this ensures transform
+   origin is always the visible bottom edge. */
+.roll-sheet {
+  transform-origin: bottom center;
+}

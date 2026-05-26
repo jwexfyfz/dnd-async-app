@@ -10,6 +10,9 @@ import { createSupabaseServerClient } from "../../lib/supabase-server";
 import { DM_MODEL, DM_MAX_TOKENS, ROLLING_WINDOW_SIZE } from "../../lib/ai-config";
 import { rollD20Check, abilityModifier } from "../../lib/dice";
 import type { D20Result } from "../../lib/dice";
+import { buildRollContext } from "../../lib/roll-context";
+import type { ActiveRollContext } from "../../lib/roll-context";
+import type { ChipType } from "../../types/chips";
 import { computeCharacterStats } from "../../lib/character-stats";
 import type { CharacterStats } from "../../lib/character-stats";
 import { computeLevel, XP_BY_DIFFICULTY } from "../../lib/xp";
@@ -219,21 +222,30 @@ interface LevelUpResult {
   proficiencyBonus: number;
 }
 
-interface TurnResult {
-  success:       boolean;
-  narrative?:    string;
-  chips?:        Chip[];
-  newState?:     Record<string, unknown>;
-  error?:        string;
-  diceResult?:   D20Result;
-  leveledUp?:    boolean;          // true if the character leveled up this turn
-  newLevel?:     number;           // the new level value if leveledUp is true
-  levelUpResult?: LevelUpResult;   // full level-up payload; undefined when no level-up occurred
-  combatEffects?: { targetId: string; delta: number; type: string; newHp: number }[];
+export interface TurnResult {
+  success:          boolean;
+  narrative?:       string;
+  chips?:           Chip[];
+  newState?:        Record<string, unknown>;
+  error?:           string;
+  diceResult?:      D20Result;
+  leveledUp?:       boolean;
+  newLevel?:        number;
+  levelUpResult?:   LevelUpResult;
+  combatEffects?:   { targetId: string; delta: number; type: string; newHp: number }[];
   skillCheckResult?: SkillCheckResult;
+  activeRollContext?: ActiveRollContext;
 }
 
-export async function takeTurn(gameId: string, chipText: string): Promise<TurnResult> {
+// _seededD20 is an internal escape hatch for complete-turn.ts: when provided,
+// the dice roll step is skipped and this pre-verified value is used directly.
+// Never pass this from client code — the server-seeded flow enforces integrity.
+export async function takeTurn(
+  gameId:       string,
+  chipText:     string,
+  chipType?:    ChipType,
+  _seededD20?:  number,
+): Promise<TurnResult> {
   const sanitizedAction = sanitizeChipText(chipText);
 
   const supabase = await createSupabaseServerClient();
@@ -285,7 +297,26 @@ export async function takeTurn(gameId: string, chipText: string): Promise<TurnRe
     ? primaryAttackScore(currentCharacter.characterClass, stats)
     : stats.wisdom.total;
   const modifier       = abilityModifier(relevantScore);
-  const diceResult     = rollD20Check(modifier, dc, dcType);
+
+  // Server-Seeded Roll: when the caller provides a chipType, do not complete the
+  // turn. Return a pending roll context so the client can present the dice UI
+  // before submitting the actual roll result in a follow-up request.
+  if (chipType !== undefined) {
+    return { success: true, activeRollContext: buildRollContext(chipType, dc, modifier) };
+  }
+
+  const diceResult: D20Result = _seededD20 !== undefined
+    ? {
+        roll:     _seededD20,
+        modifier,
+        total:    _seededD20 + modifier,
+        dc,
+        dcType,
+        success:  _seededD20 + modifier >= dc,
+        critical: _seededD20 === 20,
+        fumble:   _seededD20 === 1,
+      }
+    : rollD20Check(modifier, dc, dcType);
 
   // Track consecutiveMisses in gameState.
   const prevMisses      = (gameState.consecutiveMisses as number | undefined) ?? 0;
