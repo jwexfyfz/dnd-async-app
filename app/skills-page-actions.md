@@ -11,6 +11,7 @@ Enable a secondary, mechanics-driven pathway for players to configure and submit
 ## 2. Mobile UI/UX Design System & Drawer Architecture
 
 ### A. Component State Rules
+The user may navigate to the Party tab and into the Stats sub-tab 
 * **Default State (Collapsed):** Skill cards render identically to their current production design. The orange `[ Use ]` CTA button remains permanently visible on the collapsed row to signal interactivity.
 * **One-Tap Configuration:** Clicking `[ Use ]` from a collapsed state triggers a **Bottom Sheet Modal Drawer** that slides up over the bottom 60% of the mobile screen. The background screen behind the drawer dims with a dark overlay (scrim). This prevents scrolling overflow or layout shifting within the skill list.
 * **Non-Destructive State Cache:** If a drawer is swiped down, the scrim is tapped, or a `✕ Cancel` button is clicked, the sheet closes. Any custom entry or selection must be cached temporarily in local component memory so player progress is preserved if the drawer is re-opened.

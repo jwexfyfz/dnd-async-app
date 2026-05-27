@@ -25,11 +25,11 @@ function buildStaticContext(
   const pois     = mapData.pois?.map((p: any) => `${p.name} at (${p.x},${p.y})`).join(", ") ?? "—";
   const partyStr = allMembers.length > 1
     ? allMembers.map((m: any) =>
-        `  ${m.character.name} [id:${m.character.id}] (${m.character.characterClass})`
+        `  ${m.character.name}[id:${m.character.id},${m.character.characterClass}]`
       ).join("\n")
-    : `  ${character.name} [id:${character.id}] (${character.characterClass})`;
+    : `  ${character.name}[id:${character.id},${character.characterClass}]`;
 
-  return `You are a skilled Dungeon Master running an async D&D 5e campaign. Prose is vivid but concise — 2–4 sentences of present-tense narration.
+  return `You are an immersive Dungeon Master running an async D&D 5e campaign. Write 3–4 sentences of specific, present-tense narration. Every sentence must name something concrete — a weapon connecting, an enemy recoiling, a door groaning open, a trap clicking. Never write vague filler ("the dungeon stirs", "you press on"). Describe: (1) the exact result of the player's action, (2) how the environment or enemy reacts, (3) what the character now faces so the next choices are obvious.
 
 PARTY
 ${partyStr}
@@ -54,23 +54,53 @@ function buildRollSummary(rolls: QueueRoll[]): string {
 }
 
 function buildDynamicContext(
-  gameState:         Record<string, any>,
-  partyMembers:      any[],
-  currentCharId:     string,
-  chipLabel:         string,
-  rolls:             QueueRoll[],
+  worldState:    Record<string, any> | null,
+  gameState:     Record<string, any>,
+  currentChar:   any,
+  partyMembers:  any[],
+  currentCharId: string,
+  chipLabel:     string,
+  rolls:         QueueRoll[],
   consecutiveMisses: number,
+  lastEncounterCompleted: boolean,
+  mapItems:      { id: string; name: string; isEquipped: boolean; posX: number | null; posY: number | null }[],
 ): string {
-  const inv   = Array.isArray(gameState.inventory) && gameState.inventory.length ? gameState.inventory.join(", ") : "empty";
-  const flags = Array.isArray(gameState.plotFlags)  && gameState.plotFlags.length  ? gameState.plotFlags.join(", ")  : "none";
-  const stateStr = partyMembers.length > 1 && gameState.partyHp
-    ? partyMembers.map((m: any) => {
-        const hp  = gameState.partyHp?.[m.characterId] ?? "?";
-        const max = gameState.partyMaxHp?.[m.characterId] ?? "?";
-        const arrow = m.characterId === currentCharId ? "→ " : "  ";
-        return `${arrow}${m.character.name}: HP ${hp}/${max}`;
-      }).join("\n")
-    : `HP: ${gameState.hp}/${gameState.maxHp}\nInventory: ${inv}\nObjective: ${gameState.activeObjective}\nPlot flags: ${flags}`;
+  // worldState columns → fall back to game.state JSON
+  const ws  = worldState ?? {};
+  const obj = (ws.activeObjective ?? gameState.activeObjective ?? "") as string;
+  const flags = ((ws.plotFlags ?? gameState.plotFlags ?? []) as string[]);
+
+  // Token-compressed character tag (D4)
+  function charTag(char: any, pos: { x: number; y: number }, isActive: boolean): string {
+    const prefix = isActive ? "→" : " ";
+    const weap  = (char.mainHand as { name: string } | null)?.name ?? "none";
+    const armor = (char.armor    as { name: string } | null)?.name ?? "none";
+    const cond  = Array.isArray(char.activeConditions) && char.activeConditions.length > 0
+      ? (char.activeConditions as string[]).join("+")
+      : "none";
+    return `${prefix}${char.name}[LVL:${char.level},HP:${char.currentHp}/${char.maxHp},Pos:${pos.x},${pos.y},Weap:${weap},Armor:${armor},Cond:${cond}]`;
+  }
+
+  const enemies = (gameState.enemies as { id: string; name: string; hp: number; maxHp: number; x: number; y: number }[] | undefined) ?? [];
+  const enemyStr = enemies.length > 0
+    ? enemies.map((e) => `${e.name}[id:${e.id},HP:${e.hp}/${e.maxHp},Pos:${e.x},${e.y}]`).join(" ")
+    : "none";
+
+  const groundItems = mapItems.filter((i) => !i.isEquipped && i.posX !== null && i.posY !== null);
+  const itemStr = groundItems.length > 0
+    ? groundItems.map((i) => `${i.name}@(${i.posX},${i.posY})`).join(", ")
+    : "none";
+
+  let stateStr: string;
+  if (partyMembers.length > 0) {
+    const tags = partyMembers
+      .map((m: any) => charTag(m.character, { x: m.posX, y: m.posY }, m.characterId === currentCharId))
+      .join("  ");
+    stateStr = `${tags}\nEnemies:${enemyStr}\nItems:${itemStr}\nObj:${obj}\nFlags:${flags.length > 0 ? flags.join(",") : "none"}`;
+  } else {
+    const pos = (gameState.playerPos as { x: number; y: number } | undefined) ?? { x: 0, y: 0 };
+    stateStr = `${charTag(currentChar, pos, true)}\nEnemies:${enemyStr}\nItems:${itemStr}\nObj:${obj}\nFlags:${flags.length > 0 ? flags.join(",") : "none"}`;
+  }
 
   const missDirective = consecutiveMisses >= 3
     ? `\nNARRATION DIRECTIVE: After ${consecutiveMisses} consecutive misses, engineer a dramatic opening — enemy stumbles, environment intervenes, or an NPC assists. Do not alter the roll outcomes.`
@@ -80,11 +110,11 @@ function buildDynamicContext(
     ? `TURN RESOLUTION — narrate around these exact results:\n${buildRollSummary(rolls)}`
     : `TURN RESOLUTION — free action, no dice roll required.\nPlayer action: ${chipLabel}`;
 
-  return `CURRENT STATE
-${stateStr}
+  const postCombatDirective = lastEncounterCompleted
+    ? `\nSTORY TRANSITION: The previous combat encounter just resolved — no enemies remain here. Advance the story now: reveal what the party discovers (loot, a clue, a new passage, an NPC reaction), describe what lies ahead, and set up the next decision. Chips MUST be post-combat actions — exploration, investigation, movement, or social — never attacks against defeated enemies.`
+    : "";
 
-${turnSection}
-consecutiveMisses: ${consecutiveMisses}${missDirective}`;
+  return `CURRENT STATE\n${stateStr}\n\n${turnSection}\nconsecutiveMisses:${consecutiveMisses}${missDirective}${postCombatDirective}`;
 }
 
 const CHIP_FORMAT_INSTRUCTION = `chips: array of 3–5 objects for the player's NEXT possible action. Each object:
@@ -107,16 +137,16 @@ function buildResponseInstruction(): string {
   return `RESPONSE RULES
 Reply with exactly one JSON object. No markdown fences, no prose before or after.
 {
-  "narrative": "2–4 sentences, vivid present tense, address the active character by name",
+  "narrative": "3–4 sentences, present tense, name the active character. S1: exact outcome of their action (hit/miss/crit/spell effect). S2: enemy or environment reaction. S3–4: what the character now faces (sets up next actions).",
   "stateDeltas": {},
   "chips": [{"label":"Strike the guard","type":"strength","requiresRoll":true,"advantageState":"NONE","action_type":"mainAction","movementFeet":0,"spellLevel":0},{"label":"Scan the shadows","type":"perception","requiresRoll":true,"advantageState":"NONE","action_type":"mainAction","movementFeet":0,"spellLevel":0},{"label":"Dash for cover","type":"athletics","requiresRoll":false,"advantageState":"NONE","action_type":"movement","movementFeet":30,"spellLevel":0}],
   "encounterResult": null
 }
 
 Field details:
-narrative — describe what happens as a result of the action.
-stateDeltas — key/value pairs for any game state changes (playerPos, inventory, etc.). Omit HP — use the combat effect tag instead.
-chips — ${CHIP_FORMAT_INSTRUCTION}
+narrative — 3–4 sentences: (1) exact outcome of the action, (2) enemy/NPC/environment reaction, (3–4) what the character now faces. Be specific — name enemies, objects, distances, damage amounts. No vague filler.
+stateDeltas — key/value pairs for any game state changes (playerPos, inventory, etc.). Omit HP — use the combat effect tag instead. Use "enemies":[{"id":"kebab-slug","name":"...","hp":N,"maxHp":N,"x":N,"y":N}] with the FULL enemy list whenever any enemy appears, moves, or changes HP; omit key if no enemies change.
+chips — REQUIRED, never empty. ${CHIP_FORMAT_INSTRUCTION} When no enemies are present, chips MUST be exploration, investigation, movement, or social actions that advance the story. An empty chips array is invalid.
 encounterResult — use the string "completed" if combat fully resolves this turn; otherwise null.
 
 COMBAT EFFECT TAG (engine-only, not shown to players)
@@ -179,11 +209,14 @@ export async function autoAdvance(
   const game = await prisma.game.findUnique({
     where:   { id: gameId },
     include: {
-      character:    true,
+      character:    { include: { mainHand: { select: { name: true } }, armor: { select: { name: true } } } },
       storyPrompt:  true,
-      map:          true,
-      partyMembers: { include: { character: true }, orderBy: { turnOrder: "asc" } },
-      messages:     { orderBy: { createdAt: "asc" }, take: ROLLING_WINDOW_SIZE },
+      map:          { include: { items: { select: { id: true, name: true, isEquipped: true, posX: true, posY: true } } } },
+      partyMembers: {
+        include: { character: { include: { mainHand: { select: { name: true } }, armor: { select: { name: true } } } } },
+        orderBy:  { turnOrder: "asc" },
+      },
+      messages:      { orderBy: { createdAt: "asc" }, take: ROLLING_WINDOW_SIZE },
     },
   });
   if (!game) return { success: false, error: "Game not found." };
@@ -205,7 +238,19 @@ export async function autoAdvance(
 
   // ── Claude call ───────────────────────────────────────────────────────────
   const staticCtx  = buildStaticContext(currentChar, game.partyMembers, game.storyPrompt, mapData);
-  const dynamicCtx = buildDynamicContext(gameState, game.partyMembers, currentCharId, chipLabel, rolls, consecutiveMisses);
+  const dynamicCtx = buildDynamicContext(
+    game.worldState as Record<string, any> | null,
+    gameState,
+    currentChar,
+    game.partyMembers,
+    currentCharId,
+    chipLabel,
+    rolls,
+    consecutiveMisses,
+    gameState.lastEncounterCompleted === true,
+    ((game.map as any).items ?? []) as { id: string; name: string; isEquipped: boolean; posX: number | null; posY: number | null }[],
+  );
+  console.log("[autoAdvance] prompt lengths — static:", staticCtx.length, "dynamic:", dynamicCtx.length);
   const responseInstr = buildResponseInstruction();
 
   const recentMessages = game.messages.map((m) => ({
@@ -251,15 +296,26 @@ export async function autoAdvance(
   } catch (parseErr) {
     console.error("[autoAdvance] JSON parse failed:", parseErr, "\nrawText:", rawText.slice(0, 800));
     parsed = {
-      narrative:      "The dungeon stirs around you.",
+      narrative:      "The immediate danger passes. You take stock of your surroundings and consider your next move.",
       stateDeltas:    {},
-      chips:          [],
+      chips: [
+        { label: "Search the area",   type: "investigation", requiresRoll: true,  advantageState: "NONE", action_type: "mainAction", movementFeet: 0,  spellLevel: 0 },
+        { label: "Listen carefully",  type: "perception",    requiresRoll: true,  advantageState: "NONE", action_type: "mainAction", movementFeet: 0,  spellLevel: 0 },
+        { label: "Move ahead",        type: "athletics",     requiresRoll: false, advantageState: "NONE", action_type: "movement",   movementFeet: 30, spellLevel: 0 },
+      ],
       encounterResult:null,
     };
   }
 
-  const chips    = normaliseSuggestionChips(Array.isArray(parsed.chips) ? parsed.chips : []);
-  const narrative = typeof parsed.narrative === "string" ? parsed.narrative.trim() : "The dungeon stirs.";
+  let chips = normaliseSuggestionChips(Array.isArray(parsed.chips) ? parsed.chips : []);
+  if (chips.length === 0) {
+    chips = [
+      { id: randomUUID(), label: "Search the area",  type: "investigation", requiresRoll: true,  advantageState: "NONE", action_type: "mainAction", movementFeet: 0,  spellLevel: 0 },
+      { id: randomUUID(), label: "Listen carefully", type: "perception",    requiresRoll: true,  advantageState: "NONE", action_type: "mainAction", movementFeet: 0,  spellLevel: 0 },
+      { id: randomUUID(), label: "Move ahead",       type: "athletics",     requiresRoll: false, advantageState: "NONE", action_type: "movement",   movementFeet: 30, spellLevel: 0 },
+    ];
+  }
+  const narrative = typeof parsed.narrative === "string" ? parsed.narrative.trim() : "The immediate danger passes. You take stock of your surroundings.";
 
   // ── Combat effects ────────────────────────────────────────────────────────
   const rawEffects = parseCombatEffects(rawText);
@@ -279,6 +335,9 @@ export async function autoAdvance(
   const deltas = { ...(parsed.stateDeltas ?? {}) };
   for (const key of RULES_ENGINE_KEYS) delete deltas[key];
 
+  // Capture position before deletion so D5 transaction write has the value
+  const newPlayerPos = deltas.playerPos as { x: number; y: number } | undefined;
+
   if (game.partyMembers.length > 1 && newState.partyHp) {
     if (deltas.hp !== undefined) {
       newState.partyHp = { ...newState.partyHp, [currentCharId]: deltas.hp };
@@ -297,11 +356,11 @@ export async function autoAdvance(
     delete newState.levelUpNote;
   }
 
-  // Dual-write to legacy game.state fields (Phase C removes these when frontend cuts over)
-  const existingHistory: string[] = Array.isArray(newState.narrative_history)
-    ? (newState.narrative_history as string[]) : [];
-  newState.narrative_history        = [...existingHistory, narrative];
-  newState.active_suggestion_chips  = toLegacyChips(chips);
+  if (encounterCompleted) {
+    newState.lastEncounterCompleted = true;
+  } else {
+    delete newState.lastEncounterCompleted;
+  }
 
   // ── Turn rotation ─────────────────────────────────────────────────────────
   let nextCharId = currentCharId;
@@ -363,16 +422,26 @@ export async function autoAdvance(
       await tx.game.update({
         where: { id: gameId },
         data: {
-          state:                newState,
-          // Dedicated Phase B pillars (dual-write alongside game.state)
+          state:                 newState,
           worldState,
-          currentScenario:      narrative,
-          narrativeHistory:     { push: narrative },
-          activeSuggestionChips:chips as any,
-          currentTurnCharacterId: nextCharId,
-          version:              { increment: 1 },
+          currentScenario:       narrative,
+          narrativeHistory:      { push: narrative },
+          activeSuggestionChips: chips as any,
+          currentTurnCharacterId:nextCharId,
+          version:               { increment: 1 },
         },
       });
+
+      // D5: write PartyMember.posX/posY for party games
+      if (newPlayerPos) {
+        const callerRecord = game.partyMembers.find((m) => m.characterId === currentCharId);
+        if (callerRecord) {
+          await tx.partyMember.update({
+            where: { id: callerRecord.id },
+            data:  { posX: newPlayerPos.x, posY: newPlayerPos.y },
+          });
+        }
+      }
 
       // Purge completed queue row.
       await tx.activeTurnQueue.delete({ where: { id: turnId } });

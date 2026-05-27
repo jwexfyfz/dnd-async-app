@@ -1,20 +1,18 @@
 "use server";
 
-import { SlotType } from "@prisma/client";
 import { prisma } from "../../lib/prisma";
 import { createSupabaseServerClient } from "../../lib/supabase-server";
 
 type EquipSlot = "mainHand" | "offHand" | "armor" | "ring";
 
-// Slot → which SlotTypes are permitted in it.
-const SLOT_ALLOWED: Record<EquipSlot, SlotType[]> = {
+// Allowed item types per slot. type is now a plain string (was SlotType enum).
+const SLOT_ALLOWED: Record<EquipSlot, string[]> = {
   mainHand: ["WEAPON", "SHIELD"],
   offHand:  ["WEAPON", "SHIELD", "FOCUS"],
   armor:    ["ARMOR"],
-  ring:     ["RING"],
+  ring:     ["RING", "CONSUMABLE"],
 };
 
-// Slot name → the FK column on Character.
 const SLOT_ID_FIELD: Record<EquipSlot, "mainHandId" | "offHandId" | "armorId" | "ringId"> = {
   mainHand: "mainHandId",
   offHand:  "offHandId",
@@ -39,10 +37,10 @@ export async function equipItem(
   const item = await prisma.item.findUnique({ where: { id: itemId } });
   if (!item) return { success: false, error: "Item not found." };
 
-  if (!SLOT_ALLOWED[slot].includes(item.slotType)) {
+  if (!SLOT_ALLOWED[slot].includes(item.type)) {
     return {
       success: false,
-      error:   `${item.slotType} items cannot go in the ${slot} slot.`,
+      error:   `${item.type} items cannot go in the ${slot} slot.`,
     };
   }
 
@@ -50,26 +48,49 @@ export async function equipItem(
     where:  { id: characterId },
     select: { userId: true, backpack: true, mainHandId: true, offHandId: true, armorId: true, ringId: true },
   });
-  if (!character) return { success: false, error: "Character not found." };
-  if (character.userId !== user.id) return { success: false, error: "Forbidden." };
-
+  if (!character)                       return { success: false, error: "Character not found." };
+  if (character.userId !== user.id)     return { success: false, error: "Forbidden." };
   if (!character.backpack.includes(itemId)) {
     return { success: false, error: "Item is not in the character's backpack." };
   }
 
-  const idField      = SLOT_ID_FIELD[slot];
-  const currentlyIn  = character[idField];
+  const idField     = SLOT_ID_FIELD[slot];
+  const currentlyIn = character[idField];
 
-  // Build the updated backpack: remove the item being equipped, add any displaced item.
-  let newBackpack = character.backpack.filter((id) => id !== itemId);
-  if (currentlyIn && currentlyIn !== itemId) {
-    newBackpack = [...newBackpack, currentlyIn];
+  const newBackpack = [
+    ...character.backpack.filter((id) => id !== itemId),
+    ...(currentlyIn && currentlyIn !== itemId ? [currentlyIn] : []),
+  ];
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      // Validate: no other character may have this item equipped already.
+      const conflict = await tx.character.findFirst({
+        where: {
+          id: { not: characterId },
+          OR: [
+            { mainHandId: itemId },
+            { offHandId:  itemId },
+            { armorId:    itemId },
+            { ringId:     itemId },
+          ],
+        },
+        select: { id: true },
+      });
+      if (conflict) throw new Error("ITEM_ALREADY_EQUIPPED");
+
+      await tx.character.update({
+        where: { id: characterId },
+        data:  { [idField]: itemId, backpack: newBackpack },
+      });
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "";
+    if (msg === "ITEM_ALREADY_EQUIPPED") {
+      return { success: false, error: "This item is already equipped by another character." };
+    }
+    return { success: false, error: "Failed to equip item." };
   }
-
-  await prisma.character.update({
-    where: { id: characterId },
-    data:  { [idField]: itemId, backpack: newBackpack },
-  });
 
   return { success: true };
 }

@@ -69,21 +69,12 @@ export function useTurnActions(
   const storageKey = `turn_state_${characterId}`;
 
   const [state, setState] = useState<TurnActionState>(() => {
-    const stored = readStorage(storageKey);
-    console.log("[useTurnActions] init", {
+    console.log("[useTurnActions] init from DB", {
       characterId,
       caps: { maxAction: caps.maxAction, maxBonusAction: caps.maxBonusAction, maxMovementFeet: caps.maxMovementFeet },
       initialRemaining,
-      stored,
-      source: stored ? "localStorage" : "DB/defaults",
     });
-    if (stored) {
-      return {
-        mainAction:   { current: Math.min(stored.remainingActions,      caps.maxAction),       max: caps.maxAction       },
-        bonusAction:  { current: Math.min(stored.remainingBonusActions, caps.maxBonusAction),  max: caps.maxBonusAction  },
-        movementFeet: { current: Math.min(stored.remainingMovementFeet, caps.maxMovementFeet), max: caps.maxMovementFeet },
-      };
-    }
+    // DB is source of truth on init; localStorage is only for optimistic within-session updates.
     return {
       mainAction:   { current: initialRemaining?.remainingActions      ?? caps.maxAction,       max: caps.maxAction       },
       bonusAction:  { current: initialRemaining?.remainingBonusActions ?? caps.maxBonusAction,  max: caps.maxBonusAction  },

@@ -16,10 +16,26 @@ export interface PartyMarker {
   isCurrentTurn: boolean;
 }
 
+export interface EnemyMarker {
+  id:    string;
+  name:  string;
+  pos:   { x: number; y: number };
+  hp:    number;
+  maxHp: number;
+}
+
+export interface ItemMarker {
+  id:   string;
+  name: string;
+  pos:  { x: number; y: number };
+}
+
 interface Props {
-  mapData:      MapData;
-  playerPos:    { x: number; y: number }; // kept for solo/legacy games
-  partyMarkers?: PartyMarker[];            // populated for party games
+  mapData:       MapData;
+  playerPos:     { x: number; y: number }; // kept for solo/legacy games
+  partyMarkers?: PartyMarker[];             // populated for party games
+  enemyMarkers?: EnemyMarker[];
+  itemMarkers?:  ItemMarker[];
 }
 
 const TILE: Record<string, { char: string; cls: string }> = {
@@ -28,9 +44,11 @@ const TILE: Record<string, { char: string; cls: string }> = {
   D: { char: "+", cls: "text-amber-500" },
 };
 
-export default function MapRenderer({ mapData, playerPos, partyMarkers }: Props) {
-  const flatTiles = mapData.tiles.flat();
-  const useParty  = partyMarkers && partyMarkers.length > 0;
+export default function MapRenderer({ mapData, playerPos, partyMarkers, enemyMarkers, itemMarkers }: Props) {
+  const flatTiles  = mapData.tiles.flat();
+  const useParty   = partyMarkers && partyMarkers.length > 0;
+  const hasEnemies = enemyMarkers && enemyMarkers.length > 0;
+  const hasItems   = itemMarkers  && itemMarkers.length  > 0;
 
   return (
     <div className="space-y-3">
@@ -47,9 +65,9 @@ export default function MapRenderer({ mapData, playerPos, partyMarkers }: Props)
           const x = i % mapData.width;
           const y = Math.floor(i / mapData.width);
 
-          // Party markers take priority over everything else.
+          // Priority: party markers > enemies > items > POIs > tile
           if (useParty) {
-            const marker = partyMarkers.find((m) => m.pos.x === x && m.pos.y === y);
+            const marker = partyMarkers!.find((m) => m.pos.x === x && m.pos.y === y);
             if (marker) {
               return (
                 <div key={i} className="text-center" title={`Character at (${x},${y})`}>
@@ -58,9 +76,32 @@ export default function MapRenderer({ mapData, playerPos, partyMarkers }: Props)
               );
             }
           } else {
-            // Solo game — use the classic @ symbol.
             if (x === playerPos.x && y === playerPos.y) {
               return <div key={i} className="text-center font-bold text-amber-600">@</div>;
+            }
+          }
+
+          if (hasEnemies) {
+            const enemy = enemyMarkers!.find((e) => e.pos.x === x && e.pos.y === y);
+            if (enemy) {
+              const hpPct = enemy.maxHp > 0 ? enemy.hp / enemy.maxHp : 0;
+              const cls = hpPct > 0.5 ? "text-red-500" : hpPct > 0.25 ? "text-red-600" : "text-red-800";
+              return (
+                <div key={i} className={`text-center ${cls}`} title={`${enemy.name} HP:${enemy.hp}/${enemy.maxHp}`}>
+                  👾
+                </div>
+              );
+            }
+          }
+
+          if (hasItems) {
+            const item = itemMarkers!.find((it) => it.pos.x === x && it.pos.y === y);
+            if (item) {
+              return (
+                <div key={i} className="text-center text-yellow-500" title={item.name}>
+                  ◆
+                </div>
+              );
             }
           }
 
@@ -77,12 +118,14 @@ export default function MapRenderer({ mapData, playerPos, partyMarkers }: Props)
       {/* Legend */}
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs font-mono text-slate-400">
         {useParty ? (
-          partyMarkers.map((m) => (
+          partyMarkers!.map((m) => (
             <span key={m.characterId}>{m.emoji} {m.isCurrentTurn ? <strong>active</strong> : "waiting"}</span>
           ))
         ) : (
           <span><span className="text-amber-600 font-bold">@</span> You</span>
         )}
+        {hasEnemies && <span><span className="text-red-500">👾</span> Enemy</span>}
+        {hasItems   && <span><span className="text-yellow-500">◆</span> Item</span>}
         <span><span className="text-slate-400">#</span> Wall</span>
         <span><span className="text-amber-500">+</span> Door</span>
         {mapData.pois.length > 0 && <span><span className="text-emerald-600">■</span> POI</span>}

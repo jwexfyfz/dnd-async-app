@@ -33,7 +33,7 @@ async function main() {
   ];
 
   const created = await prisma.$transaction(
-    items.map((it) => prisma.equippableItem.create({ data: { ...it, mapId: game.map!.id } })),
+    items.map((it) => prisma.item.create({ data: { ...it, mapId: game.map!.id, type: it.category.toUpperCase() } })),
   );
 
   console.log(`Inserted ${created.length} items: ${created.map((c) => c.name).join(", ")}`);

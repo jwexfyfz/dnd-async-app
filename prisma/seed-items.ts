@@ -216,14 +216,14 @@ function buildItems(
 
 async function main() {
   const maps = await prisma.map.findMany({
-    include: { equippableItems: { select: { id: true } } },
+    include: { items: { select: { id: true }, where: { mapId: { not: null } } } },
   });
 
   console.log(`\nFound ${maps.length} map(s) in the database.\n`);
 
   for (const map of maps) {
-    if (map.equippableItems.length > 0) {
-      console.log(`  [skip]  "${map.name}" — already has ${map.equippableItems.length} item(s).`);
+    if (map.items.length > 0) {
+      console.log(`  [skip]  "${map.name}" — already has ${map.items.length} item(s).`);
       continue;
     }
 
@@ -235,7 +235,7 @@ async function main() {
 
     const created = await prisma.$transaction(
       blueprints.map((bp) =>
-        prisma.equippableItem.create({ data: { ...bp, mapId: map.id } }),
+        prisma.item.create({ data: { ...bp, mapId: map.id, type: bp.category.toUpperCase() } }),
       ),
     );
 

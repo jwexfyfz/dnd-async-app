@@ -10,10 +10,10 @@ export async function getGame(gameId: string) {
   const game = await prisma.game.findUnique({
     where:   { id: gameId },
     include: {
-      character:   true,
-      storyPrompt: true,
-      map:         true,
-      messages:    { orderBy: { createdAt: "asc" } },
+      character:    true,
+      storyPrompt:  true,
+      map:          true,
+      messages:     { orderBy: { createdAt: "asc" } },
       partyMembers: {
         include: {
           character: true,

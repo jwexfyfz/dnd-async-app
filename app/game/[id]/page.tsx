@@ -11,7 +11,8 @@ import { initializeGame } from "../../actions/initialize-game";
 import { getMapItems, type EquippableItemData } from "../../actions/get-map-items";
 import { getClassFeatures, type ClassFeatureData } from "../../actions/get-class-features";
 import { updateItem } from "../../actions/update-item";
-import MapRenderer, { type MapData, type PartyMarker } from "../../../components/map-renderer";
+import { equipMapItem } from "../../actions/equip-map-item";
+import MapRenderer, { type MapData, type PartyMarker, type EnemyMarker, type ItemMarker } from "../../../components/map-renderer";
 import UserMenu from "../../../components/user-menu";
 import { classEmoji } from "../../../lib/class-emoji";
 import type { D20Result } from "../../../lib/dice";
@@ -26,7 +27,7 @@ import { useTurnActions } from "@/hooks/useTurnActions";
 import type { TurnCostType } from "@/types/turn-actions";
 import TurnQueueSheet from "../../../components/turn-queue-sheet";
 import { initializeTurnQueue } from "../../actions/initialize-turn-queue";
-import type { AutoAdvanceResult } from "../../actions/auto-advance";
+import { autoAdvance, type AutoAdvanceResult } from "../../actions/auto-advance";
 import type { SuggestionChip } from "../../../types/suggestion-chip";
 import type { QueueRoll } from "../../../types/suggestion-chip";
 
@@ -45,6 +46,8 @@ interface GameState {
   partyPositions?: Record<string, { x: number; y: number }>;
   partyHp?:        Record<string, number>;
   partyMaxHp?:     Record<string, number>;
+  // Enemy positions — updated by AI via stateDeltas.enemies each turn
+  enemies?:        { id: string; name: string; hp: number; maxHp: number; x: number; y: number }[];
   // Pre-computed by handlePlayerAction — read passively on load.
   targetAC?:                number;
   narrative_history?:       string[];
@@ -103,6 +106,7 @@ interface GameFull {
   currentTurnCharacterId: string | null;
   state:                 GameState;
   activeSuggestionChips: SuggestionChip[] | null;
+  narrativeHistory:      string[];
   character:             CharacterData;
   storyPrompt:           { title: string; description: string };
   map:                   { id: string; name: string; data: MapData };
@@ -193,7 +197,8 @@ export default function GamePage() {
   const [hpFlashing,       setHpFlashing]       = useState(false);
   const [mapItems,             setMapItems]             = useState<EquippableItemData[]>([]);
   const [activeTurnQueue,      setActiveTurnQueue]      = useState<{ turnId: string; rolls: QueueRoll[]; chipLabel: string } | null>(null);
-  const [localSuggestionChips, setLocalSuggestionChips] = useState<SuggestionChip[] | null>(null);
+  const [localSuggestionChips,   setLocalSuggestionChips]   = useState<SuggestionChip[] | null>(null);
+  const [localNarrativeHistory,  setLocalNarrativeHistory]  = useState<string[]>([]);
 
   const initCalledRef  = useRef(false);
   // Stored so it can be cancelled on unmount, preventing a state update on an
@@ -223,23 +228,23 @@ export default function GamePage() {
           return;
         }
 
-        const state = data.state as GameState;
-        const hasPrecomputedNarrative = (state.narrative_history ?? []).length > 0;
-        const hasPrecomputedChips     = Array.isArray(state.active_suggestion_chips) &&
-          state.active_suggestion_chips.length > 0;
+        const hasNarrativeHistory = (data.narrativeHistory ?? []).length > 0;
+        const hasPrecomputedChips = Array.isArray(data.activeSuggestionChips) &&
+          (data.activeSuggestionChips as unknown[]).length > 0;
 
         console.log("[field] load complete", {
-          narrativeSource: hasPrecomputedNarrative ? "state.narrative_history" : "fallback",
-          activeNarrative: (state.narrative_history ?? []).at(-1)?.slice(0, 60) ?? "(none)",
-          chipSource:      hasPrecomputedChips ? "state.active_suggestion_chips" : "fallback (message.chips)",
+          narrativeSource: hasNarrativeHistory ? "narrativeHistory (column)" : "fallback",
+          activeNarrative: (data.narrativeHistory ?? []).at(-1)?.slice(0, 60) ?? "(none)",
+          chipSource:      hasPrecomputedChips ? "activeSuggestionChips (column)" : "fallback (message.chips)",
           chipCount:       hasPrecomputedChips
-            ? (state.active_suggestion_chips as unknown[]).length
+            ? (data.activeSuggestionChips as unknown[]).length
             : data.messages.filter((m) => m.role === "DUNGEON_MASTER").slice(-1)[0]?.chips?.length ?? 0,
         });
 
         setGameData(data);
         setLocalMessages(data.messages);
         setLocalState(data.state);
+        setLocalNarrativeHistory(data.narrativeHistory ?? []);
         if (Array.isArray(data.activeSuggestionChips) && data.activeSuggestionChips.length > 0) {
           setLocalSuggestionChips(data.activeSuggestionChips as unknown as SuggestionChip[]);
         }
@@ -339,7 +344,18 @@ export default function GamePage() {
     try {
       const result = await initializeTurnQueue(gameId, chip);
       if (result.success && result.turnId) {
-        setActiveTurnQueue({ turnId: result.turnId, rolls: result.rolls ?? [], chipLabel: chip.label });
+        if ((result.rolls ?? []).length === 0) {
+          // No rolls needed (free action / movement) — skip the roll sheet entirely.
+          const advResult = await autoAdvance(gameId, result.turnId, chip.label);
+          if (advResult.success) {
+            handleAdvanceComplete(advResult);
+          } else {
+            setLocalMessages((prev) => prev.slice(0, -1));
+            setTurnError(advResult.error ?? "The Dungeon Master is temporarily unavailable. Please try again.");
+          }
+        } else {
+          setActiveTurnQueue({ turnId: result.turnId, rolls: result.rolls ?? [], chipLabel: chip.label });
+        }
       } else {
         setLocalMessages((prev) => prev.slice(0, -1));
         const msg = result.error === "Not your turn." || result.error === "It's not your turn."
@@ -369,6 +385,7 @@ export default function GamePage() {
     }]);
     if (result.chips && result.chips.length > 0) setLocalSuggestionChips(result.chips);
     if (result.newState) setLocalState(result.newState as unknown as GameState);
+    if (result.narrative) setLocalNarrativeHistory((prev) => [...prev, result.narrative!]);
     setLevelUpResult(result.levelUpResult ?? null);
 
     if (result.combatEffects && result.combatEffects.length > 0) {
@@ -391,6 +408,7 @@ export default function GamePage() {
       if (res.success && res.data) {
         const fresh = res.data as unknown as GameFull;
         setGameData(fresh);
+        setLocalNarrativeHistory(fresh.narrativeHistory ?? []);
         const freshHp: Record<string, number> = {};
         if (fresh.partyMembers.length > 0) {
           for (const m of fresh.partyMembers) freshHp[m.characterId] = m.character.currentHp;
@@ -426,6 +444,14 @@ export default function GamePage() {
   const { character, storyPrompt, map, partyMembers } = gameData;
   const isPartyGame  = partyMembers.length > 1;
   const myCharId     = myMember?.characterId ?? character.id;
+
+  // Derive map overlay markers from live state
+  const enemyMarkers: EnemyMarker[] = (localState?.enemies ?? []).map((e) => ({
+    id: e.id, name: e.name, pos: { x: e.x, y: e.y }, hp: e.hp, maxHp: e.maxHp,
+  }));
+  const itemMarkers: ItemMarker[] = mapItems
+    .filter((i) => !i.isEquipped && i.posX !== null && i.posY !== null)
+    .map((i) => ({ id: i.id, name: i.name, pos: { x: i.posX!, y: i.posY! } }));
   const displayHp    = localHpOverrides[myCharId]
     ?? (isPartyGame ? localState.partyHp?.[myCharId] : localState.hp)
     ?? localState.hp;
@@ -525,12 +551,15 @@ export default function GamePage() {
         <div className={activeTab !== "field" ? "hidden" : undefined}>
           <FieldTab
             state={localState}
+            narrativeHistory={localNarrativeHistory}
             map={map}
             storyPrompt={storyPrompt}
             messages={localMessages}
             chips={currentChips}
             character={gameData.character}
             partyMarkers={isPartyGame ? partyMarkers : []}
+            enemyMarkers={enemyMarkers}
+            itemMarkers={itemMarkers}
             onChipClick={handleChipClick}
             isInitializing={isInitializing}
             isTakingTurn={isTakingTurn}
@@ -549,6 +578,7 @@ export default function GamePage() {
             currentUserId={currentUserId}
             hpOverrides={localHpOverrides}
             mapId={gameData.map.id}
+            gameId={gameData.id}
           />
         )}
         {activeTab === "chronicle" && (
@@ -572,16 +602,20 @@ export default function GamePage() {
 // ─── Tab: The Field ───────────────────────────────────────────────────────────
 
 function FieldTab({
-  state, map, storyPrompt, messages, chips, character, partyMarkers,
+  state, narrativeHistory, map, storyPrompt, messages, chips, character, partyMarkers,
+  enemyMarkers, itemMarkers,
   onChipClick, isInitializing, isTakingTurn, chipsEnabled, diceResult, levelUpResult, skillCheckResult, turnError,
 }: {
   state:             GameState;
+  narrativeHistory:  string[];
   map:               { name: string; data: MapData };
   storyPrompt:       { title: string; description: string };
   messages:          MessageData[];
   chips:             SuggestionChip[];
   character:         CharacterData;
   partyMarkers:      PartyMarker[];
+  enemyMarkers:      EnemyMarker[];
+  itemMarkers:       ItemMarker[];
   onChipClick:       (chip: SuggestionChip) => void;
   isInitializing:    boolean;
   isTakingTurn:      boolean;
@@ -594,7 +628,7 @@ function FieldTab({
   // Read pre-computed narrative from state; fall back to last DM message for
   // older games, then to the scenario description. No computation on mount.
   const lastDmContent = [...messages].reverse().find((m) => m.role === "DUNGEON_MASTER")?.content;
-  const narrativeHistory = state.narrative_history ?? [];
+  // narrativeHistory from dedicated DB column; fall back to last DM message then scenario description.
   const situationText = narrativeHistory.at(-1)
     ?? lastDmContent
     ?? storyPrompt.description;
@@ -625,7 +659,7 @@ function FieldTab({
 
   console.log("[field-tab] render", {
     narrativeSource: narrativeHistory.length > 0
-      ? `state.narrative_history[${narrativeHistory.length - 1}]`
+      ? `narrativeHistory[${narrativeHistory.length - 1}]`
       : lastDmContent ? "message.content (fallback)" : "storyPrompt.description (fallback)",
     situationSnippet: situationText.slice(0, 60),
     chipCount:        chips.length,
@@ -655,6 +689,8 @@ function FieldTab({
             mapData={map.data}
             playerPos={state.playerPos}
             partyMarkers={partyMarkers.length > 0 ? partyMarkers : undefined}
+            enemyMarkers={enemyMarkers.length > 0 ? enemyMarkers : undefined}
+            itemMarkers={itemMarkers.length > 0 ? itemMarkers : undefined}
           />
         </div>
         <div>
@@ -901,7 +937,7 @@ type PartySubTab = "stats" | "inventory" | "abilities";
 
 
 function PartyTab({
-  partyMembers, state, currentTurnCharacterId, currentUserId, hpOverrides, mapId,
+  partyMembers, state, currentTurnCharacterId, currentUserId, hpOverrides, mapId, gameId,
 }: {
   partyMembers:           PartyMemberData[];
   state:                  GameState;
@@ -909,6 +945,7 @@ function PartyTab({
   currentUserId:          string | null;
   hpOverrides:            Record<string, number>;
   mapId:                  string;
+  gameId:                 string;
 }) {
   const [subTab, setSubTab] = useState<PartySubTab>("stats");
 
@@ -999,6 +1036,7 @@ function PartyTab({
                   isMe={isMe}
                   mapId={mapId}
                   strength={m.character.baseStrength}
+                  characterId={m.character.id}
                 />
               )}
               {subTab === "abilities" && <MemberAbilitiesPane char={m.character} />}
@@ -1443,11 +1481,12 @@ const CATEGORY_STYLE: Record<string, string> = {
 };
 
 function MemberInventoryPane({
-  isMe, mapId, strength,
+  isMe, mapId, strength, characterId,
 }: {
-  isMe:     boolean;
-  mapId:    string;
-  strength: number;
+  isMe:          boolean;
+  mapId:         string;
+  strength:      number;
+  characterId:   string;
 }) {
   const [items,          setItems]          = useState<EquippableItemData[]>([]);
   const [loading,        setLoading]        = useState(true);
@@ -1470,20 +1509,19 @@ function MemberInventoryPane({
     const next = !item.isEquipped;
     setItems((prev) => prev.map((i) => i.id === item.id ? { ...i, isEquipped: next } : i));
     markPending(item.id, true);
-    await updateItem(item.id, { isEquipped: next });
+    await equipMapItem(characterId, item.id, next);
     markPending(item.id, false);
   }
 
   async function handleEquip(item: EquippableItemData, displaced: EquippableItemData | null) {
     setItems((prev) => prev.map((i) => {
-      if (i.id === item.id)            return { ...i, isEquipped: true };
+      if (i.id === item.id)                   return { ...i, isEquipped: true };
       if (displaced && i.id === displaced.id) return { ...i, isEquipped: false };
       return i;
     }));
     markPending(item.id, true);
-    const ops: Promise<unknown>[] = [updateItem(item.id, { isEquipped: true })];
-    if (displaced) ops.push(updateItem(displaced.id, { isEquipped: false }));
-    await Promise.all(ops);
+    // equipMapItem handles displacing the old item from the Character slot atomically
+    await equipMapItem(characterId, item.id, true);
     markPending(item.id, false);
   }
 

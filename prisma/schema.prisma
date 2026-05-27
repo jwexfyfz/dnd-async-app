@@ -19,25 +19,39 @@ model User {
 
 // ─── Items ────────────────────────────────────────────────────────────────────
 
-// stat_bonuses shape: { "strength": 2 } or { "strength": { "type": "override", "value": 19 } }
+// Unified item model — merges former Item (character-owned) and EquippableItem (map loot).
+// type: "WEAPON" | "ARMOR" | "SHIELD" | "FOCUS" | "RING" | "CONSUMABLE"
+// statKey: null (no ability effect) or one of the six ability names
+// mapId set  → map loot; characterId FK (via Character slots) indicates ownership
 model Item {
-  id          String   @id @default(uuid())
-  name        String
-  slotType    SlotType
-  statBonuses Json     @default("{}")
+  id                String  @id @default(uuid())
+  name              String
+  type              String  @default("")
+
+  // Stat bonus — DB-powered per-ability bonus, no JSON
+  statKey           String?
+  statModifierBonus Int     @default(0)
+
+  // Map loot fields (merged from EquippableItem)
+  mapId             String?
+  map               Map?    @relation(fields: [mapId], references: [id], onDelete: Cascade)
+  category          String  @default("")
+  description       String  @default("")
+  weightLbs         Float   @default(0)
+  quantity          Int     @default(1)
+  isEquipped        Boolean @default(false)
+  combatImpactLabel String  @default("")
+
+  // Grid position within the map — null when item is in a backpack or slot (not on the ground)
+  posX  Int?
+  posY  Int?
 
   equippedAsMainHand Character[] @relation("CharacterMainHand")
   equippedAsOffHand  Character[] @relation("CharacterOffHand")
   equippedAsArmor    Character[] @relation("CharacterArmor")
   equippedAsRing     Character[] @relation("CharacterRing")
-}
 
-enum SlotType {
-  WEAPON
-  ARMOR
-  SHIELD
-  FOCUS
-  RING
+  @@index([mapId])
 }
 
 // ─── Character ────────────────────────────────────────────────────────────────
@@ -101,7 +115,7 @@ model Map {
 
   stories          StoryPrompt[]
   games            Game[]
-  equippableItems  EquippableItem[]
+  items            Item[]
 }
 
 model StoryPrompt {
@@ -156,6 +170,7 @@ model Game {
   partyMembers     PartyMember[]
   pendingRolls     PendingRoll[]
   activeTurnQueues ActiveTurnQueue[]
+  gameInventory    GameInventory[]
 }
 
 enum GameStatus {
@@ -216,25 +231,6 @@ enum MessageRole {
   DUNGEON_MASTER
 }
 
-// ─── Equippable Items ─────────────────────────────────────────────────────────
-
-// Loot available in a given map. Seeded per-map; instances are referenced by
-// the game's inventory JSON when a player picks one up.
-model EquippableItem {
-  id                String  @id @default(uuid())
-  mapId             String
-  map               Map     @relation(fields: [mapId], references: [id], onDelete: Cascade)
-
-  name              String
-  category          String  // "Weapon" | "Armor" | "Consumable" | "Held"
-  description       String  @default("")
-  weightLbs         Float
-  quantity          Int     @default(1)
-  isEquipped        Boolean @default(false)
-  combatImpactLabel String  // e.g. "+5 Damage", "+2 AC", "Heal 8 HP"
-
-  @@index([mapId])
-}
 
 // ─── Class Progression ───────────────────────────────────────────────────────
 
@@ -296,6 +292,20 @@ model ActiveTurnQueue {
 enum TurnQueueStatus {
   PENDING_ROLLS
   COMPLETED
+}
+
+// ─── Game Inventory ───────────────────────────────────────────────────────────
+
+// Normalized shared party loot — replaces game.state.inventory string array.
+// Each row is one distinct item type; quantity tracks item count.
+model GameInventory {
+  id       String @id @default(uuid())
+  gameId   String
+  game     Game   @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  itemName String
+  quantity Int    @default(1)
+
+  @@index([gameId])
 }
 
 // ─── Server-Seeded Roll ───────────────────────────────────────────────────────

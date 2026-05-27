@@ -81,9 +81,9 @@ function buildStaticPrompt(character: any, allMembers: any[], storyPrompt: any, 
 
   const partyLines = allMembers.length > 1
     ? allMembers.map((m: any) =>
-        `  ${m.character.name} [id:${m.character.id}] (${m.character.characterClass}): STR${m.character.baseStrength} DEX${m.character.baseDexterity} CON${m.character.baseConstitution} INT${m.character.baseIntelligence} WIS${m.character.baseWisdom} CHA${m.character.baseCharisma}`
+        `  ${m.character.name}[id:${m.character.id},${m.character.characterClass},S${m.character.baseStrength}D${m.character.baseDexterity}C${m.character.baseConstitution}I${m.character.baseIntelligence}W${m.character.baseWisdom}Ch${m.character.baseCharisma}]`
       ).join("\n")
-    : `  ${character.name} [id:${character.id}] (${character.characterClass}): STR${character.baseStrength} DEX${character.baseDexterity} CON${character.baseConstitution} INT${character.baseIntelligence} WIS${character.baseWisdom} CHA${character.baseCharisma}`;
+    : `  ${character.name}[id:${character.id},${character.characterClass},S${character.baseStrength}D${character.baseDexterity}C${character.baseConstitution}I${character.baseIntelligence}W${character.baseWisdom}Ch${character.baseCharisma}]`;
 
   return `You are a skilled, atmospheric Dungeon Master running an async D&D 5e campaign. Your prose is vivid but concise — 2–4 sentences of present-tense narration per turn. You create tension, wonder, and consequence without overwrought description.
 
@@ -108,12 +108,14 @@ Always reply with a single JSON object — no markdown fences, no extra text.
     // "plotFlags": [...]     (full updated list)
     // "activeObjective": "..." (if the objective changed)
     // "npcsEncountered": [{name, disposition, note}]
+    // "enemies": [{"id":"kebab-slug","name":"...","hp":N,"maxHp":N,"x":N,"y":N}]
+    //   Full list whenever any enemy appears, moves, or changes HP. Use existing id from CURRENT STATE; assign new kebab slug for new enemies. Omit when no enemy changes.
   },
   "chips": [{"text": "Under 6 words", "type": "perception", "requiresRoll": true, "advantageState": "NONE", "action_type": "mainAction", "movementFeet": 0, "spellLevel": 0}],
   "encounterResult": "completed" | null,
   "skillName": "ExactSkillName" | null
 }
-chips: 3–5 options. Each chip has "text" (under 6 words, situationally specific), "type" (skill from the list above), "requiresRoll" (true/false), "advantageState" ("NONE"|"ADVANTAGE"|"DISADVANTAGE"), "action_type" ("mainAction"|"bonusAction"|"movement"|"free"), "movementFeet" (0 unless movement), "spellLevel" (0 for martial/cantrip).
+chips: REQUIRED 3–5 options, never empty. Each chip has "text" (under 6 words, situationally specific), "type" (skill from the list above), "requiresRoll" (true/false), "advantageState" ("NONE"|"ADVANTAGE"|"DISADVANTAGE"), "action_type" ("mainAction"|"bonusAction"|"movement"|"free"), "movementFeet" (0 unless movement), "spellLevel" (0 for martial/cantrip). When no enemies are present, chips MUST be exploration, investigation, movement, or social actions — never attacks against defeated enemies.
 encounterResult: set to "completed" ONLY when a combat encounter fully resolves this turn — enemy defeated, fled, or room cleared. Set to null on all other turns including exploration, dialogue, and non-combat actions. Do not set "completed" for partial victories or ongoing combat.
 skillName: if this player action narratively warrants a skill check, return the EXACT canonical skill name from this list — Acrobatics, Animal Handling, Arcana, Athletics, Deception, History, Insight, Intimidation, Investigation, Medicine, Nature, Perception, Performance, Persuasion, Religion, Sleight of Hand, Stealth, Survival. Return null on all other turns (combat attacks, exploration without a check, dialogue without a roll).
 
@@ -130,43 +132,54 @@ If multiple characters are affected in one turn, emit one tag per character. If 
 }
 
 function buildDynamicStatePrompt(
-  gameState: any,
-  partyMembers: any[],
+  worldState:    Record<string, any> | null,
+  gameState:     any,
+  currentChar:   any,
+  partyMembers:  any[],
   currentCharId: string,
-  diceResult: D20Result,
+  diceResult:    D20Result,
   consecutiveMisses: number,
+  mapItems:      { id: string; name: string; isEquipped: boolean; posX: number | null; posY: number | null }[],
   mechanicalContext?: string,
 ): string {
-  const inv   = gameState.inventory?.length ? gameState.inventory.join(", ") : "empty";
-  const flags = gameState.plotFlags?.length ? gameState.plotFlags.join(", ") : "none";
+  // worldState columns → fall back to game.state JSON
+  const ws    = worldState ?? {};
+  const obj   = (ws.activeObjective ?? gameState.activeObjective ?? "") as string;
+  const flags = ((ws.plotFlags ?? gameState.plotFlags ?? []) as string[]);
+  const npcs  = ((ws.npcsEncountered ?? gameState.npcsEncountered ?? []) as any[]);
+
+  // Token-compressed character tag (D4)
+  function charTag(char: any, pos: { x: number; y: number }, isActive: boolean): string {
+    const prefix = isActive ? "→" : " ";
+    const weap  = (char.mainHand as { name: string } | null)?.name ?? "none";
+    const armor = (char.armor    as { name: string } | null)?.name ?? "none";
+    const cond  = Array.isArray(char.activeConditions) && char.activeConditions.length > 0
+      ? (char.activeConditions as string[]).join("+")
+      : "none";
+    return `${prefix}${char.name}[LVL:${char.level},HP:${char.currentHp}/${char.maxHp},Pos:${pos.x},${pos.y},Weap:${weap},Armor:${armor},Cond:${cond}]`;
+  }
+
+  const enemies = (gameState.enemies as { id: string; name: string; hp: number; maxHp: number; x: number; y: number }[] | undefined) ?? [];
+  const enemyStr = enemies.length > 0
+    ? enemies.map((e) => `${e.name}[id:${e.id},HP:${e.hp}/${e.maxHp},Pos:${e.x},${e.y}]`).join(" ")
+    : "none";
+
+  const groundItems = mapItems.filter((i) => !i.isEquipped && i.posX !== null && i.posY !== null);
+  const itemStr = groundItems.length > 0
+    ? groundItems.map((i) => `${i.name}@(${i.posX},${i.posY})`).join(", ")
+    : "none";
 
   let stateSection: string;
 
-  if (partyMembers.length > 1 && gameState.partyHp) {
-    const memberLines = partyMembers
-      .map((m: any) => {
-        const hp    = gameState.partyHp?.[m.characterId] ?? "?";
-        const maxHp = gameState.partyMaxHp?.[m.characterId] ?? "?";
-        const pos   = gameState.partyPositions?.[m.characterId] ?? { x: 0, y: 0 };
-        const arrow = m.characterId === currentCharId ? "→ " : "  ";
-        return `${arrow}${m.character.name}: HP ${hp}/${maxHp}, pos (${pos.x},${pos.y})`;
-      })
-      .join("\n");
-
-    stateSection = `PARTY STATE (→ = active character this turn)
-${memberLines}
-Shared inventory: ${inv}
-Objective: ${gameState.activeObjective}
-Plot flags: ${flags}`;
+  if (partyMembers.length > 0) {
+    const tags = partyMembers
+      .map((m: any) => charTag(m.character, { x: m.posX, y: m.posY }, m.characterId === currentCharId))
+      .join("  ");
+    stateSection = `CURRENT STATE\n${tags}\nEnemies:${enemyStr}\nItems:${itemStr}\nObj:${obj}\nFlags:${flags.length > 0 ? flags.join(",") : "none"}`;
   } else {
-    stateSection = `CURRENT STATE
-Position: (${gameState.playerPos?.x ?? 0}, ${gameState.playerPos?.y ?? 0})
-HP: ${gameState.hp}/${gameState.maxHp}
-Inventory: ${inv}
-Weapon: ${gameState.equipped?.weapon ?? "none"} | Armor: ${gameState.equipped?.armor ?? "none"}
-Objective: ${gameState.activeObjective}
-Plot flags: ${flags}
-NPCs met: ${gameState.npcsEncountered?.map((n: any) => `${n.name} (${n.disposition})`).join(", ") ?? "none"}`;
+    const pos = (gameState.playerPos as { x: number; y: number } | undefined) ?? { x: 0, y: 0 };
+    const npcStr = npcs.length > 0 ? npcs.map((n: any) => `${n.name}(${n.disposition})`).join(",") : "none";
+    stateSection = `CURRENT STATE\n${charTag(currentChar, pos, true)}\nEnemies:${enemyStr}\nItems:${itemStr}\nObj:${obj}\nFlags:${flags.length > 0 ? flags.join(",") : "none"}\nNPCs:${npcStr}`;
   }
 
   const outcomeLabel = diceResult.dcType === "AC"
@@ -191,7 +204,11 @@ consecutiveMisses: ${consecutiveMisses}`;
     ? `\n\nMECHANICAL CONTEXT\n${mechanicalContext}\nNarration rules: Do NOT reproduce the skill name, outcome, DC, roll value, or proficiency bonus in your narrative. Describe the result dramatically without mechanical exposition.`
     : "";
 
-  return `${stateSection}${diceSection}${missDirective}${levelUpDirective}${mechanicalContextBlock}`;
+  const postCombatDirective = gameState.lastEncounterCompleted === true
+    ? `\n\nSTORY TRANSITION: The previous combat encounter just resolved — no enemies remain here. Advance the story now: reveal what the party discovers (loot, a clue, a new passage, an NPC reaction), describe what lies ahead, and set up the next decision. Chips MUST be post-combat actions — exploration, investigation, movement, or social — never attacks against defeated enemies.`
+    : "";
+
+  return `${stateSection}${diceSection}${missDirective}${levelUpDirective}${mechanicalContextBlock}${postCombatDirective}`;
 }
 
 function buildConversationMessages(
@@ -257,13 +274,13 @@ export async function takeTurn(
   const game = await prisma.game.findUnique({
     where:   { id: gameId },
     include: {
-      character:   true,
+      character:   { include: { mainHand: { select: { name: true } }, armor: { select: { name: true } } } },
       storyPrompt: true,
-      map:         true,
+      map:         { include: { items: { select: { id: true, name: true, isEquipped: true, posX: true, posY: true } } } },
       messages:    { orderBy: { createdAt: "asc" } },
       partyMembers: {
-        include:  { character: true },
-        orderBy:  { turnOrder: "asc" },
+        include: { character: { include: { mainHand: { select: { name: true } }, armor: { select: { name: true } } } } },
+        orderBy: { turnOrder: "asc" },
       },
     },
   });
@@ -337,7 +354,16 @@ export async function takeTurn(
         },
         {
           type: "text",
-          text: buildDynamicStatePrompt(gameState, game.partyMembers, currentCharId, diceResult, consecutiveMisses),
+          text: buildDynamicStatePrompt(
+            game.worldState as Record<string, any> | null,
+            gameState,
+            currentCharacter,
+            game.partyMembers,
+            currentCharId,
+            diceResult,
+            consecutiveMisses,
+            (game.map as any).items ?? [],
+          ),
         },
       ],
       messages: buildConversationMessages(contextWindow, sanitizedAction),
@@ -358,7 +384,11 @@ export async function takeTurn(
     parsed = {
       narrative:       salvageNarrative(rawText),
       stateDeltas:     {},
-      chips:           [{ text: "Look around carefully", type: "perception" }, { text: "Listen for sounds", type: "perception" }, { text: "Check your gear", type: "investigation" }],
+      chips: [
+        { text: "Search the area",   type: "investigation" },
+        { text: "Listen carefully",  type: "perception" },
+        { text: "Move ahead",        type: "stealth" },
+      ],
       encounterResult: null,
     };
   }
@@ -411,7 +441,17 @@ export async function takeTurn(
           },
           {
             type: "text",
-            text: buildDynamicStatePrompt(gameState, game.partyMembers, currentCharId, diceResult, consecutiveMisses, mechanicalContext),
+            text: buildDynamicStatePrompt(
+              game.worldState as Record<string, any> | null,
+              gameState,
+              currentCharacter,
+              game.partyMembers,
+              currentCharId,
+              diceResult,
+              consecutiveMisses,
+              (game.map as any).items ?? [],
+              mechanicalContext,
+            ),
           },
         ],
         messages: buildConversationMessages(contextWindow, sanitizedAction),
@@ -431,7 +471,11 @@ export async function takeTurn(
       finalParsed = {
         narrative:       salvageNarrative(rawText2),
         stateDeltas:     {},
-        chips:           [{ text: "Look around carefully", type: "perception" }, { text: "Listen for sounds", type: "perception" }, { text: "Check your gear", type: "investigation" }],
+        chips: [
+          { text: "Search the area",   type: "investigation" },
+          { text: "Listen carefully",  type: "perception" },
+          { text: "Move ahead",        type: "stealth" },
+        ],
         encounterResult: null,
       };
     }
@@ -462,6 +506,9 @@ export async function takeTurn(
   const newState: Record<string, any> = { ...gameState, consecutiveMisses };
   const deltas = { ...finalParsed.stateDeltas };
 
+  // Capture position before deletion so D5 transaction write has the value
+  const newPlayerPos = deltas.playerPos as { x: number; y: number } | undefined;
+
   if (game.partyMembers.length > 1 && newState.partyHp) {
     if (deltas.hp !== undefined) {
       newState.partyHp = { ...newState.partyHp, [currentCharId]: deltas.hp };
@@ -488,14 +535,14 @@ export async function takeTurn(
     delete newState.levelUpNote;
   }
 
-  // Populate the passive Field-tab layout fields so the next page load reads
-  // pre-computed data instead of falling back to message queries.
-  const existingHistory = Array.isArray(newState.narrative_history) ? (newState.narrative_history as string[]) : [];
-  newState.narrative_history       = [...existingHistory, finalParsed.narrative];
-  newState.active_suggestion_chips = finalParsed.chips ?? [];
+  if (encounterCompleted) {
+    newState.lastEncounterCompleted = true;
+  } else {
+    delete newState.lastEncounterCompleted;
+  }
 
-  // Promote chips to SuggestionChip format for the new dedicated column (dual-write).
-  const suggestionChips: SuggestionChip[] = (finalParsed.chips ?? []).map((c: any) => ({
+  // Promote chips to SuggestionChip format for the dedicated column.
+  let suggestionChips: SuggestionChip[] = (finalParsed.chips ?? []).map((c: any) => ({
     id:             randomUUID(),
     label:          c.text ?? c.label ?? "",
     type:           c.type ?? "none",
@@ -505,6 +552,13 @@ export async function takeTurn(
     movementFeet:   c.movementFeet   ?? 0,
     spellLevel:     c.spellLevel     ?? 0,
   }));
+  if (suggestionChips.length === 0) {
+    suggestionChips = [
+      { id: randomUUID(), label: "Search the area",  type: "investigation", requiresRoll: true,  advantageState: "NONE", action_type: "mainAction", movementFeet: 0,  spellLevel: 0 },
+      { id: randomUUID(), label: "Listen carefully", type: "perception",    requiresRoll: true,  advantageState: "NONE", action_type: "mainAction", movementFeet: 0,  spellLevel: 0 },
+      { id: randomUUID(), label: "Move ahead",       type: "athletics",     requiresRoll: false, advantageState: "NONE", action_type: "movement",   movementFeet: 30, spellLevel: 0 },
+    ];
+  }
 
   // Advance to the next party member in turn order.
   let nextCharId = currentCharId;
@@ -574,6 +628,18 @@ export async function takeTurn(
           data:  { currentHp: eff.newHp },
         });
       }
+
+      // D5: write PartyMember.posX/posY for party games
+      if (newPlayerPos) {
+        const callerRecord = game.partyMembers.find((m) => m.characterId === currentCharId);
+        if (callerRecord) {
+          await tx.partyMember.update({
+            where: { id: callerRecord.id },
+            data:  { posX: newPlayerPos.x, posY: newPlayerPos.y },
+          });
+        }
+      }
+
     });
   } catch (err: any) {
     if (err.message === "STALE_TURN") {

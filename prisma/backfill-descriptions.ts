@@ -65,7 +65,7 @@ const DESCRIPTIONS: Record<string, string> = {
 };
 
 async function main() {
-  const items = await prisma.equippableItem.findMany({ where: { description: "" } });
+  const items = await prisma.item.findMany({ where: { description: "" } });
   console.log(`\nFound ${items.length} item(s) with no description.\n`);
 
   let updated = 0;
@@ -75,7 +75,7 @@ async function main() {
       console.log(`  [skip]  "${item.name}" — no description defined.`);
       continue;
     }
-    await prisma.equippableItem.update({ where: { id: item.id }, data: { description: desc } });
+    await prisma.item.update({ where: { id: item.id }, data: { description: desc } });
     console.log(`  [set]   "${item.name}"`);
     updated++;
   }

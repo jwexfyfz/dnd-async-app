@@ -1,10 +1,7 @@
 // ─── Active Character Stats ───────────────────────────────────────────────────
 // Computes effective ability scores by layering item bonuses on top of base
-// stats. Two-pass pipeline: flat additives first, overrides second.
-//
-// statBonuses JSON shape (per schema comment):
-//   Flat additive : { "strength": 2 }
-//   Override      : { "strength": { "type": "override", "value": 19 } }
+// stats. Items carry an explicit statKey (ability name) and statModifierBonus
+// (flat integer), so no JSON parsing or override logic is needed.
 
 import { prisma } from "./prisma";
 
@@ -16,7 +13,6 @@ const ABILITIES: AbilityStat[] = [
   "strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma",
 ];
 
-// Maps the base* field names on Character to the canonical ability key.
 const BASE_FIELD: Record<AbilityStat, string> = {
   strength:     "baseStrength",
   dexterity:    "baseDexterity",
@@ -34,9 +30,6 @@ interface StatRow {
 
 export type CharacterStats = Record<AbilityStat, StatRow>;
 
-type StatBonusEntry = number | { type: "override"; value: number };
-type StatBonusMap   = Partial<Record<AbilityStat, StatBonusEntry>>;
-
 // ─── Main function ────────────────────────────────────────────────────────────
 
 export async function computeCharacterStats(characterId: string): Promise<CharacterStats> {
@@ -49,20 +42,12 @@ export async function computeCharacterStats(characterId: string): Promise<Charac
       baseIntelligence: true,
       baseWisdom:       true,
       baseCharisma:     true,
-      mainHand: { select: { statBonuses: true } },
-      offHand:  { select: { statBonuses: true } },
-      armor:    { select: { statBonuses: true } },
-      ring:     { select: { statBonuses: true } },
+      mainHand: { select: { statKey: true, statModifierBonus: true } },
+      offHand:  { select: { statKey: true, statModifierBonus: true } },
+      armor:    { select: { statKey: true, statModifierBonus: true } },
+      ring:     { select: { statKey: true, statModifierBonus: true } },
     },
   });
-
-  // Collect the statBonuses from each occupied slot.
-  const slotBonuses: StatBonusMap[] = [
-    character.mainHand?.statBonuses,
-    character.offHand?.statBonuses,
-    character.armor?.statBonuses,
-    character.ring?.statBonuses,
-  ].filter(Boolean).map((raw) => raw as StatBonusMap);
 
   // Seed accumulators from base stats.
   const running: Record<AbilityStat, number> = {} as Record<AbilityStat, number>;
@@ -74,30 +59,16 @@ export async function computeCharacterStats(characterId: string): Promise<Charac
     bonuses[ability] = 0;
   }
 
-  // Pass 1: apply all flat additives.
-  for (const bonusMap of slotBonuses) {
-    for (const ability of ABILITIES) {
-      const entry = bonusMap[ability];
-      if (typeof entry === "number") {
-        running[ability] += entry;
-        bonuses[ability] += entry;
-      }
-    }
+  // Apply flat bonus from each occupied slot that targets a known ability.
+  const slots = [character.mainHand, character.offHand, character.armor, character.ring];
+  for (const slot of slots) {
+    if (!slot || !slot.statKey || slot.statModifierBonus === 0) continue;
+    const ability = slot.statKey as AbilityStat;
+    if (!ABILITIES.includes(ability)) continue;
+    running[ability] += slot.statModifierBonus;
+    bonuses[ability] += slot.statModifierBonus;
   }
 
-  // Pass 2: apply overrides — only if the override value exceeds current total.
-  for (const bonusMap of slotBonuses) {
-    for (const ability of ABILITIES) {
-      const entry = bonusMap[ability];
-      if (typeof entry === "object" && entry.type === "override" && entry.value > running[ability]) {
-        const gain = entry.value - running[ability];
-        bonuses[ability] += gain;
-        running[ability]  = entry.value;
-      }
-    }
-  }
-
-  // Build the output payload.
   const result = {} as CharacterStats;
   for (const ability of ABILITIES) {
     const base = baseRecord[BASE_FIELD[ability]];

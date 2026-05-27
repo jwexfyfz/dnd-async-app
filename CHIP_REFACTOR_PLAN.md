@@ -268,14 +268,14 @@ Legend: `[ ]` not started · `[x]` done · `[~]` in progress
 ### Phase D — worldState Extraction
 *Cuts prompt building and state writes over to dedicated columns.*
 
-- [ ] D1. Add `GameInventory` table (gameId FK, itemName String, quantity Int) for shared party loot
-- [ ] D2. Migrate `buildStaticPrompt` to read from relational `Character` + `PartyMember` rows (not `game.state`)
-- [ ] D3. Migrate `buildDynamicStatePrompt` to read from `Game.worldState` + `Character.currentHp` + `PartyMember.posX/posY` (not `game.state`)
-- [ ] D4. Implement token-compressed serializer: `You[LVL:1,HP:10/10,Pos:2,2,Weap:Crowbar,Cond:Poisoned]`
-- [ ] D5. Cut `autoAdvance` writes over to `Game.worldState`, `Game.currentScenario`, `Game.narrativeHistory`, `PartyMember.posX/posY`, `GameInventory`
-- [ ] D6. Update `useTurnActions` to hydrate from `Character.remaining*` columns (remove localStorage as source of truth; keep for optimistic UI only)
-- [ ] D7. Remove dual-write fallbacks for `game.state.narrative_history` and `game.state.active_suggestion_chips`
-- [ ] D8. Verify token counts visibly reduced (log before/after prompt lengths)
+- [x] D1. Add `GameInventory` table (gameId FK, itemName String, quantity Int) for shared party loot
+- [x] D2. Migrate `buildStaticPrompt` to read from relational `Character` + `PartyMember` rows (not `game.state`)
+- [x] D3. Migrate `buildDynamicStatePrompt` to read from `Game.worldState` + `Character.currentHp` + `PartyMember.posX/posY` (not `game.state`)
+- [x] D4. Implement token-compressed serializer: `You[LVL:1,HP:10/10,Pos:2,2,Weap:Crowbar,Cond:Poisoned]`
+- [x] D5. Cut `autoAdvance` writes over to `Game.worldState`, `Game.currentScenario`, `Game.narrativeHistory`, `PartyMember.posX/posY`, `GameInventory`
+- [x] D6. Update `useTurnActions` to hydrate from `Character.remaining*` columns (remove localStorage as source of truth; keep for optimistic UI only)
+- [x] D7. Remove dual-write fallbacks for `game.state.narrative_history` and `game.state.active_suggestion_chips`
+- [x] D8. Verify token counts visibly reduced (log before/after prompt lengths)
 
 **Testable after D:** Game page loads correctly reading from new columns. Console shows compressed prompt format. Prompt token count measurably lower. `game.state` JSON no longer grows with narrative/chip data.
 
@@ -285,12 +285,36 @@ Legend: `[ ]` not started · `[x]` done · `[~]` in progress
 *Merges `EquippableItem` + `Item` into one table. Most disruptive — do last.*
 
 - [ ] E1. Design merged `Item` schema: `id, name, type String, diceFormula String?, statModifierBonus Int @default(0), combatImpactLabel String, characterId String? (FK), mapId String? (FK), slotKey String? ("mainHand"|"offHand"|"armor"|"ring"), category String, quantity Int @default(1), isEquipped Boolean @default(false), weightLbs Float @default(0)`
-- [ ] E2. Write data migration: copy all `EquippableItem` rows → new `Item` (mapId set, characterId null), copy all old `Item` rows → new `Item` (characterId set via Character FK, mapId null)
-- [ ] E3. Update `Character` FK fields (`mainHandId`, `offHandId`, `armorId`, `ringId`) to point to new unified `Item`
-- [ ] E4. Update `computeCharacterStats` to read `statModifierBonus` + `diceFormula` from new `Item`
-- [ ] E5. Update equipment display, `get-map-items`, item pickup/drop flows
-- [ ] E6. Drop old `EquippableItem` model and `SlotType` enum from schema
-- [ ] E7. Run migration, regenerate client, verify TypeScript clean
-- [ ] E8. Verify equipment bonuses correct in character stats UI
+Design note: 
+
+    The key Phase E design decisions to preserve, based on our conversation:
+
+    statBonuses Json → two typed columns:
+    - statKey String? — which ability gets the bonus ("strength" | "dexterity" | etc. | null)
+    - statModifierBonus Int @default(0) — the flat bonus value
+    - Reason: JSON is opaque in prompts and fragile to seed; two typed columns are token-efficient, impossible to malform, and DB-powered
+
+      Equipment ownership: keep Character FKs
+      - Character.mainHandId, offHandId, armorId, ringId stay as FKs → Item
+      - Reason: single findUnique with include fetches character + all gear in one round trip; fastest read path
+
+    Duplicate-equip validation: application-level in transaction
+      - equip-item.ts checks prisma.character.findFirst({ where: { OR: [{ mainHandId }, { offHandId }, { armorId }, { ringId }] } }) before writing
+      - No equippedByCharacterId denorm field — avoids two-field sync burden
+    - Reason: D&D game doesn't have high contention; transaction-wrapped check is sufficient
+
+      EquippableItem fields absorbed into Item:
+      mapId, category, description, weightLbs, quantity, isEquipped, combatImpactLabel
+
+      Dropped from Item: statBonuses Json, slotType SlotType (replaced by type String), SlotType enum
+
+      EquippableItem model dropped entirely after data migration
+- [x] E2. Data migration: EquippableItem rows → Item (mapId set, type derived from category+name heuristic); slotType enum → type String for existing rows
+- [x] E3. Character FK fields unchanged — Character.mainHandId/offHandId/armorId/ringId still point to unified Item
+- [x] E4. computeCharacterStats updated to read statKey + statModifierBonus (replaced statBonuses Json two-pass logic)
+- [x] E5. get-map-items, update-item, equip-item, all seeds and backfill script updated to use Item; equip-item adds transaction-level duplicate-equip validation
+- [x] E6. EquippableItem model and SlotType enum dropped from schema and DB
+- [x] E7. Migration applied, Prisma client regenerated — build clean
+- [x] E8. 251/251 tests pass; build clean; map items and character equipment verified in DB
 
 **Testable after E:** Equipment bonuses show correctly. Map loot displays correctly. Picking up and equipping items works end-to-end. No `EquippableItem` or `SlotType` references remain in codebase.

@@ -11,15 +11,18 @@ export interface EquippableItemData {
   quantity:          number;
   isEquipped:        boolean;
   combatImpactLabel: string;
+  posX:              number | null;
+  posY:              number | null;
 }
 
 export async function getMapItems(mapId: string): Promise<EquippableItemData[]> {
-  return prisma.equippableItem.findMany({
+  return prisma.item.findMany({
     where:   { mapId },
     orderBy: [{ category: "asc" }, { name: "asc" }],
     select: {
       id: true, name: true, category: true, description: true,
       weightLbs: true, quantity: true, isEquipped: true, combatImpactLabel: true,
+      posX: true, posY: true,
     },
   });
 }

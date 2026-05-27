@@ -131,14 +131,14 @@ const FALLBACK_ITEMS: ItemTemplate[] = [
 
 async function main() {
   const maps = await prisma.map.findMany({
-    include: { equippableItems: { select: { id: true } } },
+    include: { items: { select: { id: true }, where: { mapId: { not: null } } } },
   });
 
   console.log(`Found ${maps.length} map(s).`);
 
   for (const map of maps) {
-    if (map.equippableItems.length > 0) {
-      console.log(`  [skip] "${map.name}" — already has ${map.equippableItems.length} item(s).`);
+    if (map.items.length > 0) {
+      console.log(`  [skip] "${map.name}" — already has ${map.items.length} item(s).`);
       continue;
     }
 
@@ -148,8 +148,8 @@ async function main() {
 
     const created = await prisma.$transaction(
       templates.map((t) =>
-        prisma.equippableItem.create({
-          data: { ...t, mapId: map.id },
+        prisma.item.create({
+          data: { ...t, mapId: map.id, type: t.category.toUpperCase() },
         }),
       ),
     );

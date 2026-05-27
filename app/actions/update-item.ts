@@ -25,7 +25,7 @@ export async function updateItem(id: string, patch: UpdateItemPatch): Promise<Ac
   if (Object.keys(data).length === 0) return { success: true };
 
   try {
-    await prisma.equippableItem.update({ where: { id }, data });
+    await prisma.item.update({ where: { id }, data });
     return { success: true };
   } catch (err: any) {
     return { success: false, error: err.message ?? "Update failed." };

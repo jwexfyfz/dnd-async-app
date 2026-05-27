@@ -61,7 +61,8 @@ vi.mock("../../lib/prisma", () => {
       return Promise.resolve({});
     }),
   };
-  const tx = { message: txMessage, character: txChar, activeTurnQueue: txQueue, game: txGame };
+  const txPartyMember  = { update: vi.fn().mockResolvedValue({}) };
+  const tx = { message: txMessage, character: txChar, activeTurnQueue: txQueue, game: txGame, partyMember: txPartyMember };
 
   return {
     prisma: {
@@ -96,14 +97,15 @@ vi.mock("../../lib/prisma", () => {
           },
           storyPrompt: { title: "Dark Dungeon", description: "Shadows.", difficulty: "medium" },
           map:         { data: { name: "Dungeon", rooms: [], pois: [] } },
+          worldState: null,
           state: {
             hp: 24, maxHp: 24,
             narrative_history:       ["Previous event."],
             active_suggestion_chips: [],
             consecutiveMisses:       0,
           },
-          messages:     [],
-          partyMembers: [],
+          messages:      [],
+          partyMembers:  [],
         }),
       },
       $transaction: vi.fn().mockImplementation(async (fn: (tx: any) => Promise<any>) => fn(tx)),
@@ -163,13 +165,14 @@ describe("autoAdvance — happy path", () => {
     expect(data.activeSuggestionChips[0].label).toBe("Press the assault");
   });
 
-  it("dual-writes narrative_history and active_suggestion_chips into game.state", async () => {
+  it("does NOT append to narrative_history or active_suggestion_chips in game.state (D7)", async () => {
     await autoAdvance("game-1", "turn-1", "Strike the goblin");
 
     const state = capturedGameUpdate.data.state as Record<string, any>;
-    expect(Array.isArray(state.narrative_history)).toBe(true);
-    expect(state.narrative_history).toContain("Aldric's blade bites deep.");
-    expect(Array.isArray(state.active_suggestion_chips)).toBe(true);
+    // Dual-write removed in Phase D — old values preserved but new narrative NOT appended.
+    expect(state.narrative_history).not.toContain("Aldric's blade bites deep.");
+    // active_suggestion_chips should not be overwritten with new chips.
+    expect(state.active_suggestion_chips).toEqual([]);
   });
 
   it("deletes the activeTurnQueue row", async () => {
