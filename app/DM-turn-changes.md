@@ -1,6 +1,6 @@
 # Important Guidelines
 * Minimize terminal output; display only absolute necessities.
-* Setup: 1) Verify all requirements. 2) Create a planning file (`todo.md`) to track phases/tasks. 3) Dynamically manage context as tasks finish.
+* Setup: 1) Verify all requirements. 2) Create a planning file to track phases/tasks. 3) Dynamically manage context as tasks finish.
 
 # Context & Objective
 Refactor the 'live battle' feedback loop into a strict, interleaved tabletop D&D turn-based combat system. Isolate player turns from AI processing and strictly enforce initiative tie-breakers, surprise mechanics, user-relative visibility states, anti-hallucination boundaries, and discrete X,Y grid coordinate mechanics. Introduce a live map state tracker for all character, enemy, and asset positions.

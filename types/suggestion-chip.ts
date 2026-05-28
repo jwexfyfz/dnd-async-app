@@ -32,4 +32,6 @@ export interface SuggestionChip {
   action_type:    ActionType;
   movementFeet:   number;          // 0 unless action_type === "movement"
   spellLevel:     number;          // 0 for cantrips/martial; >0 for leveled spells
+  endPosition?:   { x: number; y: number };  // destination tile for movement chips
+  actionTarget?:  { x: number; y: number };  // target tile for ranged attacks / spells
 }

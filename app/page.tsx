@@ -13,7 +13,7 @@ interface ActiveGame {
   updatedAt:              string;
   phase:                  string;
   currentTurnCharacterId: string | null;
-  storyPrompt:            { title: string };
+  story:                  { title: string } | null;
   partyMembers:           Array<{
     characterId: string;
     turnOrder:   number;

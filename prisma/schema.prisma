@@ -95,6 +95,11 @@ model Character {
   activeConditions String[] @default([])
   backpack String[] @default([])
 
+  posX        Int     @default(0)
+  posY        Int     @default(0)
+  isHiding    Boolean @default(false)
+  stealthRoll Int     @default(0)
+
   games            Game[]
   partyMemberships PartyMember[]
 }
@@ -185,6 +190,11 @@ model Enemy {
   posX Int
   posY Int
 
+  isHiding    Boolean @default(false)
+  stealthRoll Int     @default(0)
+  hasReaction Boolean @default(true)
+  isSurprised Boolean @default(false)
+
   status    EnemyStatus @default(DORMANT)
   lootItems Item[]      @relation("EnemyLoot")
 
@@ -260,6 +270,7 @@ model Game {
   pendingRolls     PendingRoll[]
   activeTurnQueues ActiveTurnQueue[]
   gameInventory    GameInventory[]
+  combatSession    CombatSession?
 }
 
 enum GameStatus {
@@ -288,8 +299,10 @@ model PartyMember {
   turnOrder   Int          @default(0)
   joinedAt    DateTime     @default(now())
 
-  posX Int @default(0)
-  posY Int @default(0)
+  posX        Int     @default(0)
+  posY        Int     @default(0)
+  isHiding    Boolean @default(false)
+  stealthRoll Int     @default(0)
 }
 
 enum MemberStatus {
@@ -382,6 +395,19 @@ model GameInventory {
   quantity Int    @default(1)
 
   @@index([gameId])
+}
+
+// ─── Combat Session ───────────────────────────────────────────────────────────
+
+model CombatSession {
+  id                 String   @id @default(uuid())
+  gameId             String   @unique
+  game               Game     @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  initiativeOrder    Json
+  currentTurnIndex   Int      @default(0)
+  currentRoundNumber Int      @default(1)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 }
 
 // ─── Server-Seeded Roll ───────────────────────────────────────────────────────

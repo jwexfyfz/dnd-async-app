@@ -100,6 +100,22 @@ interface MessageData {
   createdAt: string;
 }
 
+interface InitiativeSlot {
+  actorId:     string;
+  actorType:   "CHARACTER" | "ENEMY";
+  initiative:  number;
+  hasReaction: boolean;
+  isSurprised: boolean;
+}
+
+interface CombatSessionData {
+  id:                 string;
+  gameId:             string;
+  initiativeOrder:    InitiativeSlot[];
+  currentTurnIndex:   number;
+  currentRoundNumber: number;
+}
+
 interface GameFull {
   id:                    string;
   phase:                 string;
@@ -112,6 +128,7 @@ interface GameFull {
   map:                   { id: string; name: string; data: MapData };
   messages:              MessageData[];
   partyMembers:          PartyMemberData[];
+  combatSession:         CombatSessionData | null;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -199,6 +216,7 @@ export default function GamePage() {
   const [activeTurnQueue,      setActiveTurnQueue]      = useState<{ turnId: string; rolls: QueueRoll[]; chipLabel: string } | null>(null);
   const [localSuggestionChips,   setLocalSuggestionChips]   = useState<SuggestionChip[] | null>(null);
   const [localNarrativeHistory,  setLocalNarrativeHistory]  = useState<string[]>([]);
+  const [localCombatSession,     setLocalCombatSession]     = useState<CombatSessionData | null>(null);
 
   const initCalledRef  = useRef(false);
   // Stored so it can be cancelled on unmount, preventing a state update on an
@@ -245,6 +263,7 @@ export default function GamePage() {
         setLocalMessages(data.messages);
         setLocalState(data.state);
         setLocalNarrativeHistory(data.narrativeHistory ?? []);
+        setLocalCombatSession(data.combatSession ?? null);
         if (Array.isArray(data.activeSuggestionChips) && data.activeSuggestionChips.length > 0) {
           setLocalSuggestionChips(data.activeSuggestionChips as unknown as SuggestionChip[]);
         }
@@ -327,6 +346,19 @@ export default function GamePage() {
   // ── Chip handler — initializes the turn queue and opens the roll sheet ──
   async function handleChipClick(chip: SuggestionChip) {
     if (isTakingTurn || isInitializing || !localState || activeTurnQueue) return;
+    console.log("[chip-click]", {
+      id:             chip.id,
+      label:          chip.label,
+      type:           chip.type,
+      action_type:    chip.action_type,
+      requiresRoll:   chip.requiresRoll,
+      advantageState: chip.advantageState,
+      movementFeet:   chip.movementFeet,
+      spellLevel:     chip.spellLevel,
+      endPosition:    chip.endPosition ?? null,
+      actionTarget:   chip.actionTarget ?? null,
+      playerPos:      localState.playerPos,
+    });
     setIsTakingTurn(true);
     setDiceResult(null);
     setLevelUpResult(null);
@@ -376,32 +408,50 @@ export default function GamePage() {
   // ── Turn queue callbacks ──
   function handleAdvanceComplete(result: AutoAdvanceResult) {
     if (!result.success || !result.narrative) return;
-    setLocalMessages((prev) => [...prev, {
-      id:        `dm-${Date.now()}`,
-      role:      "DUNGEON_MASTER",
-      content:   result.narrative!,
-      chips:     result.chips?.map((sc) => ({ text: sc.label, type: sc.type })) ?? [],
-      createdAt: new Date().toISOString(),
-    }]);
+    const ts = Date.now();
+    setLocalMessages((prev) => {
+      const next = [...prev, {
+        id:        `dm-${ts}`,
+        role:      "DUNGEON_MASTER" as const,
+        content:   result.narrative!,
+        chips:     result.chips?.map((sc) => ({ text: sc.label, type: sc.type })) ?? [],
+        createdAt: new Date().toISOString(),
+      }];
+      if (result.npcNarrative) {
+        next.push({
+          id:        `dm-npc-${ts}`,
+          role:      "DUNGEON_MASTER" as const,
+          content:   result.npcNarrative,
+          chips:     [],
+          createdAt: new Date().toISOString(),
+        });
+      }
+      return next;
+    });
     if (result.chips && result.chips.length > 0) setLocalSuggestionChips(result.chips);
     if (result.newState) setLocalState(result.newState as unknown as GameState);
     if (result.narrative) setLocalNarrativeHistory((prev) => [...prev, result.narrative!]);
     setLevelUpResult(result.levelUpResult ?? null);
 
-    if (result.combatEffects && result.combatEffects.length > 0) {
-      const overrides: Record<string, number> = {};
+    const applyHpEffects = (effects: { targetId: string; newHp: number }[] | undefined) => {
+      if (!effects || effects.length === 0) return false;
       const myCharId = myMember?.characterId ?? gameData?.character.id;
-      let myCharAffected = false;
-      for (const eff of result.combatEffects) {
+      let affected = false;
+      const overrides: Record<string, number> = {};
+      for (const eff of effects) {
         overrides[eff.targetId] = eff.newHp;
-        if (myCharId && eff.targetId === myCharId) myCharAffected = true;
+        if (myCharId && eff.targetId === myCharId) affected = true;
       }
       setLocalHpOverrides((prev) => ({ ...prev, ...overrides }));
-      if (myCharAffected) {
-        setHpFlashing(true);
-        if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
-        flashTimerRef.current = setTimeout(() => setHpFlashing(false), 800);
-      }
+      return affected;
+    };
+
+    const playerAffected  = applyHpEffects(result.combatEffects);
+    const npcAffected     = applyHpEffects(result.npcCombatEffects);
+    if (playerAffected || npcAffected) {
+      setHpFlashing(true);
+      if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+      flashTimerRef.current = setTimeout(() => setHpFlashing(false), 800);
     }
 
     getGame(gameId).then((res) => {
@@ -409,6 +459,7 @@ export default function GamePage() {
         const fresh = res.data as unknown as GameFull;
         setGameData(fresh);
         setLocalNarrativeHistory(fresh.narrativeHistory ?? []);
+        setLocalCombatSession(fresh.combatSession ?? null);
         const freshHp: Record<string, number> = {};
         if (fresh.partyMembers.length > 0) {
           for (const m of fresh.partyMembers) freshHp[m.characterId] = m.character.currentHp;
@@ -417,6 +468,19 @@ export default function GamePage() {
         }
         setLocalHpOverrides((prev) => ({ ...prev, ...freshHp }));
       }
+    });
+  }
+
+  function handleEndTurn() {
+    handleChipClick({
+      id:             "end-turn-pass",
+      label:          "End Turn",
+      type:           "none",
+      requiresRoll:   false,
+      advantageState: "NONE",
+      action_type:    "free",
+      movementFeet:   0,
+      spellLevel:     0,
     });
   }
 
@@ -562,10 +626,14 @@ export default function GamePage() {
             messages={localMessages}
             chips={currentChips}
             character={gameData.character}
+            partyMembers={partyMembers}
             partyMarkers={isPartyGame ? partyMarkers : []}
             enemyMarkers={enemyMarkers}
             itemMarkers={itemMarkers}
+            hpOverrides={localHpOverrides}
+            combatSession={localCombatSession}
             onChipClick={handleChipClick}
+            onEndTurn={handleEndTurn}
             isInitializing={isInitializing}
             isTakingTurn={isTakingTurn}
             chipsEnabled={(!isPartyGame || isMyTurn) && !activeTurnQueue}
@@ -607,9 +675,10 @@ export default function GamePage() {
 // ─── Tab: The Field ───────────────────────────────────────────────────────────
 
 function FieldTab({
-  state, narrativeHistory, map, story, messages, chips, character, partyMarkers,
-  enemyMarkers, itemMarkers,
-  onChipClick, isInitializing, isTakingTurn, chipsEnabled, diceResult, levelUpResult, skillCheckResult, turnError,
+  state, narrativeHistory, map, story, messages, chips, character, partyMembers,
+  partyMarkers, enemyMarkers, itemMarkers, hpOverrides, combatSession,
+  onChipClick, onEndTurn, isInitializing, isTakingTurn, chipsEnabled,
+  diceResult, levelUpResult, skillCheckResult, turnError,
 }: {
   state:             GameState;
   narrativeHistory:  string[];
@@ -618,10 +687,14 @@ function FieldTab({
   messages:          MessageData[];
   chips:             SuggestionChip[];
   character:         CharacterData;
+  partyMembers:      PartyMemberData[];
   partyMarkers:      PartyMarker[];
   enemyMarkers:      EnemyMarker[];
   itemMarkers:       ItemMarker[];
+  hpOverrides:       Record<string, number>;
+  combatSession:     CombatSessionData | null;
   onChipClick:       (chip: SuggestionChip) => void;
+  onEndTurn:         () => void;
   isInitializing:    boolean;
   isTakingTurn:      boolean;
   chipsEnabled:      boolean;
@@ -666,14 +739,17 @@ function FieldTab({
     narrativeSource: narrativeHistory.length > 0
       ? `narrativeHistory[${narrativeHistory.length - 1}]`
       : lastDmContent ? "message.content (fallback)" : "story.description (fallback)",
-    situationSnippet: situationText.slice(0, 60),
+     situationSnippet: (situationText ?? "").slice(0, 60),
     chipCount:        chips.length,
     affordableCount:  affordableChips.length,
     displayingAll:    affordableChips.length === 0 && chips.length > 0,
   });
 
-  // Show only affordable chips. When empty, the "No further actions" message renders.
-  const displayChips = affordableChips;
+  const inCombat    = combatSession !== null;
+  const allExhausted = mainAction.current === 0 && bonusAction.current === 0 && movementFeet.current === 0;
+
+  // During combat, hide all chips when all resources are spent.
+  const displayChips = (inCombat && allExhausted) ? [] : affordableChips;
 
   function costLabel(type: string, value: number): string {
     if (type === "mainAction")                     return "⚡ 1 Action";
@@ -686,6 +762,15 @@ function FieldTab({
   return (
     <div className="flex flex-col lg:flex-row h-full">
       <div className="flex-1 p-4 sm:p-6 space-y-5 overflow-auto">
+        {inCombat && combatSession && (
+          <InCombatCard
+            combatSession={combatSession}
+            partyMembers={partyMembers}
+            character={character}
+            state={state}
+            hpOverrides={hpOverrides}
+          />
+        )}
         <div>
           <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-2">
             {map.name}
@@ -804,13 +889,13 @@ function FieldTab({
           )}
         </div>
 
-        {chipsEnabled && !isInitializing && (
+        {(inCombat || chipsEnabled) && !isInitializing && (
           <button
-            onClick={resetTurnActions}
+            onClick={inCombat ? onEndTurn : resetTurnActions}
             disabled={isLoading}
             className="w-full text-left text-sm px-3 py-2.5 rounded-lg border-2 border-slate-700 text-slate-700 bg-white font-semibold transition-colors hover:bg-slate-800 hover:text-white hover:border-slate-800 active:bg-slate-900 disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            🛑 End Turn &amp; Pass Action
+            {inCombat ? "⚔️ End Turn" : "🛑 End Turn & Pass Action"}
           </button>
         )}
       </div>
@@ -932,6 +1017,73 @@ function LevelUpCard({ result }: { result: LevelUpResult }) {
           Proficiency Bonus: +{result.proficiencyBonus}
         </span>
       )}
+    </div>
+  );
+}
+
+// ─── In-Combat Card ──────────────────────────────────────────────────────────
+
+function InCombatCard({
+  combatSession, partyMembers, character, state, hpOverrides,
+}: {
+  combatSession: CombatSessionData;
+  partyMembers:  PartyMemberData[];
+  character:     CharacterData;
+  state:         GameState;
+  hpOverrides:   Record<string, number>;
+}) {
+  const slots    = combatSession.initiativeOrder;
+  const activeIdx = combatSession.currentTurnIndex;
+
+  return (
+    <div className="bg-red-50 border border-red-200 rounded-xl p-3">
+      <p className="text-[10px] font-bold text-red-700 uppercase tracking-widest mb-2">
+        ⚔️ In Combat — Round {combatSession.currentRoundNumber}
+      </p>
+      <div className="flex gap-2 overflow-x-auto pb-1">
+        {slots.map((slot, i) => {
+          const isActive = i === activeIdx;
+          let name  = "Unknown";
+          let emoji = "👾";
+          let hp    = 0;
+
+          if (slot.actorType === "CHARACTER") {
+            const member = partyMembers.find((m) => m.characterId === slot.actorId);
+            const char   = member?.character ?? character;
+            name  = char.name;
+            emoji = classEmoji(char.characterClass);
+            hp    = hpOverrides[slot.actorId]
+              ?? state.partyHp?.[slot.actorId]
+              ?? (slot.actorId === character.id ? state.hp : 1);
+          } else {
+            const enemy = state.enemies?.find((e) => e.id === slot.actorId);
+            name  = enemy?.name ?? "Enemy";
+            hp    = enemy?.hp ?? 0;
+          }
+
+          const isDead = hp <= 0;
+
+          return (
+            <div
+              key={slot.actorId}
+              className={[
+                "flex flex-col items-center gap-0.5 px-2 py-1.5 rounded-lg border shrink-0 min-w-[56px] text-center",
+                isActive  ? "bg-red-100 border-red-400 ring-1 ring-red-300"
+                : isDead  ? "bg-slate-50 border-slate-200 opacity-40"
+                          : "bg-white border-slate-200",
+              ].join(" ")}
+            >
+              <span className="text-lg leading-none">{emoji}</span>
+              <span className={`text-[9px] font-semibold leading-tight max-w-[48px] truncate ${isDead ? "line-through text-slate-400" : "text-slate-700"}`}>
+                {name}
+              </span>
+              {slot.isSurprised && !isDead && (
+                <span className="text-[9px]" title="Surprised">🔒</span>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

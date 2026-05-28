@@ -1,5 +1,9 @@
 # Specification: Token-Lean Mechanics-First Action Submission Engine (Party Tab)
 
+# Important Guidelines
+* Minimize terminal output; display only absolute necessities.
+* Setup: 1) Verify all requirements. 2) Create a planning file (`todo.md`) to track phases/tasks. 3) Dynamically manage context as tasks finish.
+
 ## 1. Project Objective & Vision
 Enable a secondary, mechanics-driven pathway for players to configure and submit actions directly from the **Party (Stats)** tab using individual skill rows under the **Actions & Skills** section. 
 

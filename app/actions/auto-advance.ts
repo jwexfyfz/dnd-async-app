@@ -10,10 +10,21 @@ import { computeLevel, XP_BY_DIFFICULTY } from "../../lib/xp";
 import { maxHpAtLevel, proficiencyBonus } from "../../lib/leveling";
 import type { QueueRoll, SuggestionChip } from "../../types/suggestion-chip";
 import type { Chip } from "../../types/chips";
+import { processNpcTurns } from "./process-npc-turns";
+import { lineOfSight } from "../../lib/grid";
 
 const anthropic = new Anthropic({ maxRetries: 4 });
 
 // ─── Prompt builders ──────────────────────────────────────────────────────────
+
+interface CombatPromptInfo {
+  roundNumber:           number;
+  initiativeNames:       string;
+  activeName:            string;
+  activeRole:            "PLAYER" | "NPC";
+  remainingMovementFeet: number;
+  remainingActions:      number;
+}
 
 function buildStaticContext(
   character:    any,
@@ -22,6 +33,7 @@ function buildStaticContext(
   currentAct:   any,
   currentScene: any,
   mapData:      any,
+  combatInfo?:  CombatPromptInfo,
 ): string {
   const rooms    = mapData.rooms?.map((r: any) => `${r.name}: ${r.description}`).join(" | ") ?? "—";
   const pois     = mapData.pois?.map((p: any) => `${p.name} at (${p.x},${p.y})`).join(", ") ?? "—";
@@ -64,7 +76,15 @@ Pos: values are tile coordinates. Use them to determine and narrate spatial real
 - Distance ≤ 1 tile → melee reach; describe the closeness physically (smell, breathing, blade contact).
 - Distance 2–4 tiles → near-range; describe positioning, charging, closing the gap.
 - Distance 5+ tiles → ranged; describe throws, spells, projectiles arcing across the room.
-- After any character (player or enemy) moves, their new x,y MUST appear in stateDeltas (playerPos for the active character; updated enemies array for NPCs). Never let a movement go unrecorded.`;
+- After any character (player or enemy) moves, their new x,y MUST appear in stateDeltas (playerPos for the active character; updated enemies array for NPCs). Never let a movement go unrecorded.${combatInfo ? `
+
+IN COMBAT — Round ${combatInfo.roundNumber}
+Initiative order (do not alter): ${combatInfo.initiativeNames} (active: ${combatInfo.activeName})
+Active actor role: ${combatInfo.activeRole}
+STRICT RULE: initiativeOrder is set at combat start and NEVER changes. You cannot add, remove, or reorder actors. You cannot invent enemies not listed in CURRENT STATE.` : ""}${combatInfo
+  ? (combatInfo.remainingMovementFeet === 0 ? "\nDo not generate movement chips — remaining movement is 0." : "")
+    + (combatInfo.remainingActions === 0 ? "\nDo not generate mainAction chips — remaining actions is 0." : "")
+  : ""}`;
 }
 
 function buildRollSummary(rolls: QueueRoll[]): string {
@@ -89,6 +109,9 @@ function buildDynamicContext(
   consecutiveMisses: number,
   lastEncounterCompleted: boolean,
   mapItems:      { id: string; name: string; isEquipped: boolean; posX: number | null; posY: number | null }[],
+  mapTiles?:     string[][],
+  hiddenEnemyIds?: Set<string>,
+  dbEnemies?:    { id: string; name: string; currentHp: number; maxHp: number; posX: number; posY: number }[],
 ): string {
   // worldState columns → fall back to game.state JSON
   const ws  = worldState ?? {};
@@ -106,9 +129,23 @@ function buildDynamicContext(
     return `${prefix}${char.name}[LVL:${char.level},HP:${char.currentHp}/${char.maxHp},Pos:${pos.x},${pos.y},Weap:${weap},Armor:${armor},Cond:${cond}]`;
   }
 
-  const enemies = (gameState.enemies as { id: string; name: string; hp: number; maxHp: number; x: number; y: number }[] | undefined) ?? [];
-  const enemyStr = enemies.length > 0
-    ? enemies.map((e) => `${e.name}[id:${e.id},HP:${e.hp}/${e.maxHp},Pos:${e.x},${e.y}]`).join(" ")
+  const enemies = dbEnemies
+    ? dbEnemies.map(e => ({ id: e.id, name: e.name, hp: e.currentHp, maxHp: e.maxHp, x: e.posX, y: e.posY }))
+    : ((gameState.enemies as { id: string; name: string; hp: number; maxHp: number; x: number; y: number }[] | undefined) ?? []);
+  const visibleEnemies = enemies.filter(e => !hiddenEnemyIds?.has(e.id));
+
+  // Resolve active actor position for LoS filtering
+  const actorPos: { x: number; y: number } | null = partyMembers.length > 0
+    ? (() => { const m = partyMembers.find((m: any) => m.characterId === currentCharId); return m ? { x: m.posX, y: m.posY } : null; })()
+    : ((gameState.playerPos as { x: number; y: number } | undefined) ?? { x: 0, y: 0 });
+
+  const enemyStr = visibleEnemies.length > 0
+    ? visibleEnemies.map((e) => {
+        const concealed = mapTiles && actorPos && !lineOfSight(actorPos, { x: e.x, y: e.y }, mapTiles);
+        return concealed
+          ? `${e.name}[CONCEALED]`
+          : `${e.name}[id:${e.id},HP:${e.hp}/${e.maxHp},Pos:${e.x},${e.y}]`;
+      }).join(" ")
     : "none";
 
   const groundItems = mapItems.filter((i) => !i.isEquipped && i.posX !== null && i.posY !== null);
@@ -135,12 +172,15 @@ function buildDynamicContext(
     ? `TURN RESOLUTION — narrate around these exact results:\n${buildRollSummary(rolls)}`
     : `TURN RESOLUTION — free action, no dice roll required.\nPlayer action: ${chipLabel}`;
 
-  const hasLivingEnemies = ((gameState.enemies ?? []) as any[]).some((e: any) => (e.hp ?? 0) > 0);
+  const hasLivingEnemies = dbEnemies
+    ? dbEnemies.some(e => e.currentHp > 0)
+    : ((gameState.enemies ?? []) as any[]).some((e: any) => (e.hp ?? 0) > 0);
   const postCombatDirective = lastEncounterCompleted && !hasLivingEnemies
-    ? `\nSTORY TRANSITION: The previous combat encounter just resolved — no enemies remain here. Advance the story now: reveal what the party discovers (loot, a clue, a new passage, an NPC reaction), describe what lies ahead, and set up the next decision. Chips MUST be post-combat actions — exploration, investigation, movement, or social — never attacks against defeated enemies.`
+    ? `\nPOST-COMBAT NOTE: Combat just resolved. After narrating the player's current action normally, briefly weave in what the party discovers in the aftermath (loot, a clue, the silence settling). Chips must be exploration, investigation, movement, or social — not attacks.`
     : "";
 
-  return `CURRENT STATE\n${stateStr}\n\n${turnSection}\nconsecutiveMisses:${consecutiveMisses}${missDirective}${postCombatDirective}`;
+  const groundingRule = `\nNARRATIVE GROUNDING: Only reference entities and objects with explicit coordinates in CURRENT STATE above. Do not invent assets, obstacles, or enemies not listed.`;
+  return `CURRENT STATE\n${stateStr}\n\n${turnSection}\nconsecutiveMisses:${consecutiveMisses}${missDirective}${postCombatDirective}${groundingRule}`;
 }
 
 const CHIP_FORMAT_INSTRUCTION = `chips: array of 3–5 objects for the player's NEXT possible action. Each object:
@@ -172,7 +212,7 @@ Reply with exactly one JSON object. No markdown fences, no prose before or after
 Field details:
 narrative — 3–4 sentences: (1) exact outcome of the action, (2) enemy/NPC/environment reaction, (3–4) what the character now faces. Be specific — name enemies, objects, distances, damage amounts. No vague filler.
 stateDeltas — key/value pairs for any game state changes. Omit party HP — use the combat effect tag instead. PLAYER MOVEMENT: when the active character moves, "playerPos" is REQUIRED with exact integer {x,y} tile coordinates (1–2 tiles toward destination; never null or fractional). ENEMY MOVEMENT: when any enemy moves or attacks, update their x,y in "enemies" — include the FULL enemy list with current HP and updated positions whenever any enemy acts, moves, or takes damage. Omit "enemies" key only if nothing about any enemy changed this turn.
-chips — REQUIRED, never empty. ${CHIP_FORMAT_INSTRUCTION} When no enemies are present, chips MUST be exploration, investigation, movement, or social actions that advance the story. An empty chips array is invalid.
+chips — REQUIRED, never empty. ${CHIP_FORMAT_INSTRUCTION} When no enemies are present, chips MUST be exploration, investigation, movement, or social actions that advance the story. An empty chips array is invalid. CHIP GROUNDING: Every chip must only reference objects, items, enemies, and locations explicitly listed in CURRENT STATE (Items:, Enemies:, inventory, or named map POIs). Do not generate chips for objects not in CURRENT STATE — no invented furniture, scenery props, or improvised weapons unless that item appears in Items: or the character's inventory.
 encounterResult — use the string "completed" if combat fully resolves this turn; otherwise null.
 
 COMBAT EFFECT TAG (engine-only, not shown to players)
@@ -205,13 +245,15 @@ function toLegacyChips(chips: SuggestionChip[]): Chip[] {
 // ─── Action ───────────────────────────────────────────────────────────────────
 
 export interface AutoAdvanceResult {
-  success:       boolean;
-  narrative?:    string;
-  chips?:        SuggestionChip[];
-  newState?:     Record<string, any>;
-  combatEffects?:{ targetId: string; delta: number; type: string; newHp: number }[];
-  levelUpResult?:{ oldLevel: number; newLevel: number; oldMaxHp: number; newMaxHp: number; proficiencyBonus: number };
-  error?:        string;
+  success:           boolean;
+  narrative?:        string;
+  chips?:            SuggestionChip[];
+  newState?:         Record<string, any>;
+  combatEffects?:    { targetId: string; delta: number; type: string; newHp: number }[];
+  npcNarrative?:     string;
+  npcCombatEffects?: { targetId: string; delta: number; type: string; newHp: number }[];
+  levelUpResult?:    { oldLevel: number; newLevel: number; oldMaxHp: number; newMaxHp: number; proficiencyBonus: number };
+  error?:            string;
 }
 
 export async function autoAdvance(
@@ -264,8 +306,49 @@ export async function autoAdvance(
     ? 0
     : (gameState.consecutiveMisses ?? 0) + 1;
 
+  // ── Phase F: combat context for prompt grounding ──────────────────────────
+  const combatSessionNow = await prisma.combatSession.findUnique({ where: { gameId } });
+  let combatInfo: CombatPromptInfo | undefined;
+  let dbEnemies: { id: string; name: string; currentHp: number; maxHp: number; posX: number; posY: number }[] | undefined;
+  if (combatSessionNow) {
+    const order = combatSessionNow.initiativeOrder as { actorId: string; actorType: string }[];
+    const nameMap = new Map<string, string>();
+    for (const pm of game.partyMembers) nameMap.set(pm.characterId, pm.character.name);
+    if (game.partyMembers.length === 0) nameMap.set(game.characterId, game.character.name);
+    for (const e of ((gameState.enemies as { id: string; name: string }[] | undefined) ?? [])) nameMap.set(e.id, e.name);
+    const initiativeNames = order.map(s => nameMap.get(s.actorId) ?? "Unknown").join(" → ");
+    const activeSlot = order[combatSessionNow.currentTurnIndex];
+    const activeRole: "PLAYER" | "NPC" = activeSlot?.actorType === "CHARACTER" ? "PLAYER" : "NPC";
+    combatInfo = {
+      roundNumber:           combatSessionNow.currentRoundNumber,
+      initiativeNames,
+      activeName:            nameMap.get(activeSlot?.actorId ?? "") ?? "Unknown",
+      activeRole,
+      remainingMovementFeet: currentChar.remainingMovementFeet ?? 30,
+      remainingActions:      currentChar.remainingActions ?? 1,
+    };
+    const enemySlotIds = order.filter(s => s.actorType === "ENEMY").map(s => s.actorId);
+    if (enemySlotIds.length > 0) {
+      dbEnemies = await prisma.enemy.findMany({
+        where:  { id: { in: enemySlotIds } },
+        select: { id: true, name: true, currentHp: true, maxHp: true, posX: true, posY: true },
+      });
+    }
+  }
+
   // ── Claude call ───────────────────────────────────────────────────────────
-  const staticCtx  = buildStaticContext(currentChar, game.partyMembers, game.story, game.currentAct, game.currentScene, mapData);
+  // Phase E: load hidden enemy IDs for prompt scrubbing
+  const hiddenEnemyIds = new Set<string>();
+  const stateEnemies = (gameState.enemies as { id: string }[] | undefined) ?? [];
+  if (stateEnemies.length > 0) {
+    const hiding = await prisma.enemy.findMany({
+      where: { id: { in: stateEnemies.map((e: { id: string }) => e.id) }, isHiding: true },
+      select: { id: true },
+    });
+    for (const e of hiding) hiddenEnemyIds.add(e.id);
+  }
+
+  const staticCtx  = buildStaticContext(currentChar, game.partyMembers, game.story, game.currentAct, game.currentScene, mapData, combatInfo);
   const dynamicCtx = buildDynamicContext(
     game.worldState as Record<string, any> | null,
     gameState,
@@ -277,6 +360,9 @@ export async function autoAdvance(
     consecutiveMisses,
     gameState.lastEncounterCompleted === true,
     ((game.map as any).items ?? []) as { id: string; name: string; isEquipped: boolean; posX: number | null; posY: number | null }[],
+    mapData.tiles as string[][] | undefined,
+    hiddenEnemyIds,
+    dbEnemies,
   );
   console.log("[autoAdvance] prompt lengths — static:", staticCtx.length, "dynamic:", dynamicCtx.length);
   const responseInstr = buildResponseInstruction();
@@ -371,12 +457,13 @@ export async function autoAdvance(
     const p = deltas.playerPos as any;
     const w = (mapData.width  as number) ?? 999;
     const h = (mapData.height as number) ?? 999;
-    if (
-      typeof p?.x !== "number" || !Number.isInteger(p.x) || p.x < 0 || p.x >= w ||
-      typeof p?.y !== "number" || !Number.isInteger(p.y) || p.y < 0 || p.y >= h
-    ) {
-      delete deltas.playerPos;
-    }
+    const valid =
+      typeof p?.x === "number" && Number.isInteger(p.x) && p.x >= 0 && p.x < w &&
+      typeof p?.y === "number" && Number.isInteger(p.y) && p.y >= 0 && p.y < h;
+    console.log("[autoAdvance] playerPos delta:", JSON.stringify(p), "valid:", valid, "bounds:", { w, h });
+    if (!valid) delete deltas.playerPos;
+  } else {
+    console.log("[autoAdvance] no playerPos in stateDeltas. action:", chipLabel, "stateDeltas keys:", Object.keys(parsed.stateDeltas ?? {}));
   }
 
   // Capture position before deletion so D5 transaction write has the value
@@ -446,22 +533,27 @@ export async function autoAdvance(
         });
       }
 
-      // Resolve combat HP deltas inside the transaction (consistent snapshot).
+      // Resolve combat HP deltas — route to character OR enemy table (gap fix).
       if (rawEffects.length > 0) {
         const ids   = [...new Set(rawEffects.map((e) => e.targetId))];
-        const chars = await tx.character.findMany({
-          where:  { id: { in: ids } },
-          select: { id: true, currentHp: true, maxHp: true },
-        });
-        const charMap = new Map(chars.map((c) => [c.id, c]));
+        const chars = await tx.character.findMany({ where: { id: { in: ids } }, select: { id: true, currentHp: true, maxHp: true } });
+        const enems = await tx.enemy.findMany({ where: { id: { in: ids } }, select: { id: true, currentHp: true, maxHp: true } });
+        const charIds  = new Set(chars.map((c) => c.id));
+        const enemyIds = new Set(enems.map((e) => e.id));
+        const charMap  = new Map(chars.map((c) => [c.id, c]));
+        const enemMap  = new Map(enems.map((e) => [e.id, e]));
         resolvedEffects = rawEffects
-          .filter((e) => charMap.has(e.targetId))
+          .filter((e) => charIds.has(e.targetId) || enemyIds.has(e.targetId))
           .map((e) => {
-            const c = charMap.get(e.targetId)!;
-            return { ...e, newHp: clampHp(c.currentHp, e.delta, c.maxHp) };
+            const actor = charMap.get(e.targetId) ?? enemMap.get(e.targetId)!;
+            return { ...e, newHp: clampHp(actor.currentHp, e.delta, actor.maxHp) };
           });
         for (const eff of resolvedEffects) {
-          await tx.character.update({ where: { id: eff.targetId }, data: { currentHp: eff.newHp } });
+          if (charIds.has(eff.targetId)) {
+            await tx.character.update({ where: { id: eff.targetId }, data: { currentHp: eff.newHp } });
+          } else {
+            await tx.enemy.update({ where: { id: eff.targetId }, data: { currentHp: eff.newHp } });
+          }
         }
       }
 
@@ -496,12 +588,24 @@ export async function autoAdvance(
     throw err;
   }
 
+  // After player turn commits, run consecutive NPC turns if combat is still active.
+  const sessionAfter = await prisma.combatSession.findUnique({ where: { gameId } });
+  let npcNarrative: string | undefined;
+  let npcCombatEffects: { targetId: string; delta: number; type: string; newHp: number }[] | undefined;
+  if (sessionAfter) {
+    const npcResult = await processNpcTurns(gameId);
+    if (npcResult.narrative) npcNarrative = npcResult.narrative;
+    if (npcResult.combatEffects.length > 0) npcCombatEffects = npcResult.combatEffects;
+  }
+
   return {
-    success:       true,
+    success:          true,
     narrative,
     chips,
     newState,
-    combatEffects: resolvedEffects.length > 0 ? resolvedEffects : undefined,
+    combatEffects:    resolvedEffects.length > 0 ? resolvedEffects : undefined,
+    npcNarrative,
+    npcCombatEffects,
     levelUpResult: didLevelUp ? {
       oldLevel:         previousLevel,
       newLevel,

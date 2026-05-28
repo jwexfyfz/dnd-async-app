@@ -22,6 +22,22 @@ import { maxHpAtLevel, proficiencyBonus } from "../../lib/leveling";
 import { parseCombatEffects, clampHp } from "../../lib/combat-effect"
 import { resolveSkillCheck, SKILL_ABILITY_MAP } from "../../lib/skills"
 import type { SkillCheckResult } from "../../lib/skills";
+import { triggerCombat } from "./trigger-combat";
+import { diagonalDistance, lineOfSight, checkAttackOfOpportunity } from "../../lib/grid";
+import { isCovered, rollStealthCheck, breaksStealth } from "../../lib/stealth";
+
+// ─── Damage expression roller ────────────────────────────────────────────────
+
+import { rollDice } from "../../lib/dice";
+
+function rollDamageExpr(expr: string): number {
+  const m = expr.match(/^(\d+)d(\d+)([+-]\d+)?$/);
+  if (!m) return 1;
+  const count = parseInt(m[1], 10);
+  const sides = parseInt(m[2], 10);
+  const bonus = m[3] ? parseInt(m[3], 10) : 0;
+  return Math.max(1, rollDice(count, sides).total + bonus);
+}
 
 // ─── Response helpers ─────────────────────────────────────────────────────────
 
@@ -75,7 +91,16 @@ function primaryAttackScore(characterClass: string, stats: CharacterStats): numb
 
 // ─── Prompt builders ──────────────────────────────────────────────────────────
 
-function buildStaticPrompt(character: any, allMembers: any[], story: any, currentAct: any, currentScene: any, mapData: any): string {
+interface CombatPromptInfo {
+  roundNumber:           number;
+  initiativeNames:       string;
+  activeName:            string;
+  activeRole:            "PLAYER" | "NPC";
+  remainingMovementFeet: number;
+  remainingActions:      number;
+}
+
+function buildStaticPrompt(character: any, allMembers: any[], story: any, currentAct: any, currentScene: any, mapData: any, combatInfo?: CombatPromptInfo): string {
   const rooms = mapData.rooms?.map((r: any) => `${r.name}: ${r.description}`).join(" | ") ?? "—";
   const pois  = mapData.pois?.map((p: any) => `${p.name} [${p.symbol}] at (${p.x},${p.y})`).join(", ") ?? "—";
 
@@ -97,7 +122,18 @@ function buildStaticPrompt(character: any, allMembers: any[], story: any, curren
     ? `CURRENT SCENE ${currentScene.order}: ${currentScene.title}\n${currentScene.description}\nObjectives: ${(currentScene.objectives as string[]).join("; ")}`
     : "";
 
-  return `You are a skilled, atmospheric Dungeon Master running an async D&D 5e campaign. Your prose is vivid but concise — 2–4 sentences of present-tense narration per turn. You create tension, wonder, and consequence without overwrought description.
+  const combatBlock = combatInfo ? `IN COMBAT — Round ${combatInfo.roundNumber}
+Initiative order (do not alter): ${combatInfo.initiativeNames} (active: ${combatInfo.activeName})
+Active actor role: ${combatInfo.activeRole}
+STRICT RULE: initiativeOrder is set at combat start and NEVER changes. You cannot add, remove, or reorder actors. You cannot invent enemies not listed in CURRENT STATE.
+
+` : "";
+  const combatChipRules = combatInfo
+    ? (combatInfo.remainingMovementFeet === 0 ? " Do not generate movement chips — remaining movement is 0." : "")
+      + (combatInfo.remainingActions === 0 ? " Do not generate mainAction chips — remaining actions is 0." : "")
+    : "";
+
+  return `${combatBlock}You are a skilled, atmospheric Dungeon Master running an async D&D 5e campaign. Your prose is vivid but concise — 2–4 sentences of present-tense narration per turn. You create tension, wonder, and consequence without overwrought description.
 
 PARTY
 ${partyLines}
@@ -133,7 +169,8 @@ Always reply with a single JSON object — no markdown fences, no extra text.
   "encounterResult": "completed" | null,
   "skillName": "ExactSkillName" | null
 }
-chips: REQUIRED 3–5 options, never empty. Each chip has "text" (under 6 words, situationally specific), "type" (skill from the list above), "requiresRoll" (true/false), "advantageState" ("NONE"|"ADVANTAGE"|"DISADVANTAGE"), "action_type" ("mainAction"|"bonusAction"|"movement"|"free"), "movementFeet" (0 unless movement), "spellLevel" (0 for martial/cantrip). When no enemies are present, chips MUST be exploration, investigation, movement, or social actions — never attacks against defeated enemies.
+chips: REQUIRED 3–5 options, never empty. Each chip has "text" (under 6 words, situationally specific), "type" (skill from the list above), "requiresRoll" (true/false), "advantageState" ("NONE"|"ADVANTAGE"|"DISADVANTAGE"), "action_type" ("mainAction"|"bonusAction"|"movement"|"free"), "movementFeet" (0 unless movement), "spellLevel" (0 for martial/cantrip). When no enemies are present, chips MUST be exploration, investigation, movement, or social actions — never attacks against defeated enemies.${combatChipRules}
+CHIP GROUNDING: Every chip must only reference objects, items, enemies, and locations that are explicitly listed in CURRENT STATE (Items:, Enemies:, inventory, or named map POIs). Do not generate chips for objects that do not appear in CURRENT STATE — no invented furniture, scenery props, or improvised weapons unless that item is explicitly listed in Items: or the character's inventory.
 encounterResult: set to "completed" ONLY when a combat encounter fully resolves this turn — enemy defeated, fled, or room cleared. Set to null on all other turns including exploration, dialogue, and non-combat actions. Do not set "completed" for partial victories or ongoing combat.
 skillName: if this player action narratively warrants a skill check, return the EXACT canonical skill name from this list — Acrobatics, Animal Handling, Arcana, Athletics, Deception, History, Insight, Intimidation, Investigation, Medicine, Nature, Perception, Performance, Persuasion, Religion, Sleight of Hand, Stealth, Survival. Return null on all other turns (combat attacks, exploration without a check, dialogue without a roll).
 
@@ -158,7 +195,10 @@ function buildDynamicStatePrompt(
   diceResult:    D20Result,
   consecutiveMisses: number,
   mapItems:      { id: string; name: string; isEquipped: boolean; posX: number | null; posY: number | null }[],
+  mapTiles?:     string[][],
   mechanicalContext?: string,
+  hiddenEnemyIds?: Set<string>,
+  dbEnemies?:    { id: string; name: string; currentHp: number; maxHp: number; posX: number; posY: number }[],
 ): string {
   // worldState columns → fall back to game.state JSON
   const ws    = worldState ?? {};
@@ -177,9 +217,23 @@ function buildDynamicStatePrompt(
     return `${prefix}${char.name}[LVL:${char.level},HP:${char.currentHp}/${char.maxHp},Pos:${pos.x},${pos.y},Weap:${weap},Armor:${armor},Cond:${cond}]`;
   }
 
-  const enemies = (gameState.enemies as { id: string; name: string; hp: number; maxHp: number; x: number; y: number }[] | undefined) ?? [];
-  const enemyStr = enemies.length > 0
-    ? enemies.map((e) => `${e.name}[id:${e.id},HP:${e.hp}/${e.maxHp},Pos:${e.x},${e.y}]`).join(" ")
+  const enemies = dbEnemies
+    ? dbEnemies.map(e => ({ id: e.id, name: e.name, hp: e.currentHp, maxHp: e.maxHp, x: e.posX, y: e.posY }))
+    : ((gameState.enemies as { id: string; name: string; hp: number; maxHp: number; x: number; y: number }[] | undefined) ?? []);
+  const visibleEnemies = enemies.filter(e => !hiddenEnemyIds?.has(e.id));
+
+  // Resolve active actor position for LoS filtering
+  const actorPos: { x: number; y: number } | null = partyMembers.length > 0
+    ? (() => { const m = partyMembers.find((m: any) => m.characterId === currentCharId); return m ? { x: m.posX, y: m.posY } : null; })()
+    : ((gameState.playerPos as { x: number; y: number } | undefined) ?? { x: 0, y: 0 });
+
+  const enemyStr = visibleEnemies.length > 0
+    ? visibleEnemies.map((e) => {
+        const concealed = mapTiles && actorPos && !lineOfSight(actorPos, { x: e.x, y: e.y }, mapTiles);
+        return concealed
+          ? `${e.name}[CONCEALED]`
+          : `${e.name}[id:${e.id},HP:${e.hp}/${e.maxHp},Pos:${e.x},${e.y}]`;
+      }).join(" ")
     : "none";
 
   const groundItems = mapItems.filter((i) => !i.isEquipped && i.posX !== null && i.posY !== null);
@@ -222,12 +276,15 @@ consecutiveMisses: ${consecutiveMisses}`;
     ? `\n\nMECHANICAL CONTEXT\n${mechanicalContext}\nNarration rules: Do NOT reproduce the skill name, outcome, DC, roll value, or proficiency bonus in your narrative. Describe the result dramatically without mechanical exposition.`
     : "";
 
-  const hasLivingEnemies = ((gameState.enemies ?? []) as any[]).some((e: any) => (e.hp ?? 0) > 0);
+  const hasLivingEnemies = dbEnemies
+    ? dbEnemies.some(e => e.currentHp > 0)
+    : ((gameState.enemies ?? []) as any[]).some((e: any) => (e.hp ?? 0) > 0);
   const postCombatDirective = gameState.lastEncounterCompleted === true && !hasLivingEnemies
-    ? `\n\nSTORY TRANSITION: The previous combat encounter just resolved — no enemies remain here. Advance the story now: reveal what the party discovers (loot, a clue, a new passage, an NPC reaction), describe what lies ahead, and set up the next decision. Chips MUST be post-combat actions — exploration, investigation, movement, or social — never attacks against defeated enemies.`
+    ? `\n\nPOST-COMBAT NOTE: Combat just resolved. After narrating the player's current action normally, briefly weave in what the party discovers in the aftermath (loot, a clue, the silence settling). Chips must be exploration, investigation, movement, or social — not attacks.`
     : "";
 
-  return `${stateSection}${diceSection}${missDirective}${levelUpDirective}${mechanicalContextBlock}${postCombatDirective}`;
+  const groundingRule = `\nNARRATIVE GROUNDING: Only reference entities and objects with explicit coordinates in CURRENT STATE above. Do not invent assets, obstacles, or enemies not listed.`;
+  return `${stateSection}${diceSection}${missDirective}${levelUpDirective}${mechanicalContextBlock}${postCombatDirective}${groundingRule}`;
 }
 
 function buildConversationMessages(
@@ -273,16 +330,25 @@ export interface TurnResult {
   combatEffects?:   { targetId: string; delta: number; type: string; newHp: number }[];
   skillCheckResult?: SkillCheckResult;
   activeRollContext?: ActiveRollContext;
+  combatStarted?:   boolean;
 }
 
 // _seededD20 is an internal escape hatch for complete-turn.ts: when provided,
 // the dice roll step is skipped and this pre-verified value is used directly.
 // Never pass this from client code — the server-seeded flow enforces integrity.
+interface ChipSpatial {
+  action_type?:  string;
+  endPosition?:  { x: number; y: number };
+  actionTarget?: { x: number; y: number };
+  type?:         string;
+}
+
 export async function takeTurn(
   gameId:       string,
   chipText:     string,
   chipType?:    ChipType,
   _seededD20?:  number,
+  chipSpatial?: ChipSpatial,
 ): Promise<TurnResult> {
   const sanitizedAction = sanitizeChipText(chipText);
 
@@ -307,12 +373,37 @@ export async function takeTurn(
   });
   if (!game) return { success: false, error: "Game not found." };
 
-  // Verify it's this user's turn when the game has a party.
+  // ─── Combat intercept rule ────────────────────────────────────────────────
+  // If no CombatSession exists and the chip is aggressive with living enemies,
+  // roll initiative and start combat — discard the chip, no AI call.
+  const combatSession = await prisma.combatSession.findUnique({ where: { gameId } });
+  if (!combatSession) {
+    const aggressiveKeywords = ["attack", "strike", "hit", "shoot", "stab", "slash", "smash", "fire", "cast", "charge"];
+    const isAggressive = aggressiveKeywords.some((kw) => sanitizedAction.toLowerCase().includes(kw));
+    const gameStateCheck = game.state as Record<string, any>;
+    const livingEnemies = ((gameStateCheck.enemies ?? []) as any[]).filter((e: any) => (e.hp ?? 0) > 0);
+    if (isAggressive && livingEnemies.length > 0) {
+      const enemyIds = livingEnemies.map((e: any) => e.id as string);
+      const result = await triggerCombat(gameId, enemyIds);
+      if (!result.success) return { success: false, error: result.error };
+      return { success: true, combatStarted: true };
+    }
+  }
+
+  // ─── Verify it's this user's turn ────────────────────────────────────────
   const callerMember = game.partyMembers.find((m) => m.userId === user.id);
   if (game.partyMembers.length > 0) {
     if (!callerMember) return { success: false, error: "You are not in this game." };
     if (!game.currentTurnCharacterId) return { success: false, error: "The adventure has not started yet." };
-    if (game.currentTurnCharacterId !== callerMember.characterId) {
+
+    if (combatSession) {
+      // Session-based turn gate: use initiative order instead of currentTurnCharacterId
+      const order = combatSession.initiativeOrder as { actorId: string; actorType: string }[];
+      const activeSlot = order[combatSession.currentTurnIndex];
+      if (!activeSlot || activeSlot.actorId !== callerMember.characterId) {
+        return { success: false, error: "It's not your turn." };
+      }
+    } else if (game.currentTurnCharacterId !== callerMember.characterId) {
       return { success: false, error: "It's not your turn." };
     }
   } else if (game.character.userId !== user.id) {
@@ -338,11 +429,95 @@ export async function takeTurn(
     : stats.wisdom.total;
   const modifier       = abilityModifier(relevantScore);
 
+  // ─── Spatial setup (needed for both first-call pre-checks and full execution) ─
+  const tiles = mapData.tiles as string[][] | undefined;
+  const actorCurrentPos: { x: number; y: number } = callerMember
+    ? { x: callerMember.posX, y: callerMember.posY }
+    : { x: currentCharacter.posX, y: currentCharacter.posY };
+
   // Server-Seeded Roll: when the caller provides a chipType, do not complete the
   // turn. Return a pending roll context so the client can present the dice UI
   // before submitting the actual roll result in a follow-up request.
   if (chipType !== undefined) {
+    // Phase E: reject stealth action if actor is not adjacent to a wall
+    if (chipType === "stealth" && (!tiles || !isCovered(actorCurrentPos, tiles))) {
+      return { success: false, error: "You need cover to hide." };
+    }
     return { success: true, activeRollContext: buildRollContext(chipType, dc, modifier) };
+  }
+
+  // ─── Spatial validation (Phase D) ────────────────────────────────────────
+  // Movement distance validation — only enforced during combat (outside combat the AI controls movement).
+  let validatedMovDist = 0;
+  if (chipSpatial?.action_type === "movement" && chipSpatial.endPosition && combatSession) {
+    validatedMovDist = diagonalDistance(actorCurrentPos, chipSpatial.endPosition);
+    if (validatedMovDist > currentCharacter.remainingMovementFeet) {
+      return { success: false, error: "Movement exceeds remaining movement speed." };
+    }
+  }
+
+  // LoS validation — reject ranged attacks with no line of sight to the target.
+  if (chipSpatial?.actionTarget && combatSession && tiles) {
+    if (!lineOfSight(actorCurrentPos, chipSpatial.actionTarget, tiles)) {
+      return { success: false, error: "No line of sight to target." };
+    }
+  }
+
+  // AoO pre-check — resolve before the AI call so we can apply effects in the transaction.
+  type AoOPrepared = { enemyId: string; slotIdx: number; attackBonus: number; damageDice: string } | null;
+  let preparedAoO: AoOPrepared = null;
+  if (chipSpatial?.action_type === "movement" && chipSpatial.endPosition && combatSession) {
+    const order = combatSession.initiativeOrder as { actorId: string; actorType: string; hasReaction: boolean; isSurprised: boolean }[];
+    const reactiveSlots = order.filter((s) => s.actorType === "ENEMY" && s.hasReaction && !s.isSurprised);
+    if (reactiveSlots.length > 0) {
+      const reactiveIds = reactiveSlots.map((s) => s.actorId);
+      const dbEnemies = await prisma.enemy.findMany({
+        where: { id: { in: reactiveIds } },
+        select: { id: true, posX: true, posY: true, attackBonus: true, damageDice: true },
+      });
+      const aooEnemies = dbEnemies.map((e) => ({
+        id: e.id, pos: { x: e.posX, y: e.posY }, hasReaction: true, isSurprised: false,
+      }));
+      const triggerId = checkAttackOfOpportunity(actorCurrentPos, chipSpatial.endPosition, aooEnemies);
+      if (triggerId) {
+        const rec = dbEnemies.find((e) => e.id === triggerId)!;
+        preparedAoO = {
+          enemyId:     triggerId,
+          slotIdx:     order.findIndex((s) => s.actorId === triggerId),
+          attackBonus: rec.attackBonus,
+          damageDice:  rec.damageDice,
+        };
+      }
+    }
+  }
+
+  // Phase F: build combat context for prompt grounding
+  let combatInfo: CombatPromptInfo | undefined;
+  let dbEnemies: { id: string; name: string; currentHp: number; maxHp: number; posX: number; posY: number }[] | undefined;
+  if (combatSession) {
+    const order = combatSession.initiativeOrder as { actorId: string; actorType: string }[];
+    const nameMap = new Map<string, string>();
+    for (const pm of game.partyMembers) nameMap.set(pm.characterId, pm.character.name);
+    if (game.partyMembers.length === 0) nameMap.set(game.characterId, game.character.name);
+    for (const e of ((gameState.enemies as { id: string; name: string }[] | undefined) ?? [])) nameMap.set(e.id, e.name);
+    const initiativeNames = order.map(s => nameMap.get(s.actorId) ?? "Unknown").join(" → ");
+    const activeSlot = order[combatSession.currentTurnIndex];
+    const activeRole: "PLAYER" | "NPC" = activeSlot?.actorType === "CHARACTER" ? "PLAYER" : "NPC";
+    combatInfo = {
+      roundNumber:           combatSession.currentRoundNumber,
+      initiativeNames,
+      activeName:            nameMap.get(activeSlot?.actorId ?? "") ?? "Unknown",
+      activeRole,
+      remainingMovementFeet: currentCharacter.remainingMovementFeet,
+      remainingActions:      currentCharacter.remainingActions,
+    };
+    const enemySlotIds = order.filter(s => s.actorType === "ENEMY").map(s => s.actorId);
+    if (enemySlotIds.length > 0) {
+      dbEnemies = await prisma.enemy.findMany({
+        where:  { id: { in: enemySlotIds } },
+        select: { id: true, name: true, currentHp: true, maxHp: true, posX: true, posY: true },
+      });
+    }
   }
 
   const diceResult: D20Result = _seededD20 !== undefined
@@ -362,6 +537,21 @@ export async function takeTurn(
   const prevMisses      = (gameState.consecutiveMisses as number | undefined) ?? 0;
   const consecutiveMisses = diceResult.success ? 0 : prevMisses + 1;
 
+  // Phase E: actor hiding state + hidden enemy IDs for prompt scrubbing
+  const actorIsHiding: boolean = callerMember
+    ? callerMember.isHiding
+    : ((currentCharacter as any).isHiding ?? false);
+
+  const hiddenEnemyIds = new Set<string>();
+  const stateEnemies = (gameState.enemies as { id: string }[] | undefined) ?? [];
+  if (stateEnemies.length > 0) {
+    const hiding = await prisma.enemy.findMany({
+      where: { id: { in: stateEnemies.map(e => e.id) }, isHiding: true },
+      select: { id: true },
+    });
+    for (const e of hiding) hiddenEnemyIds.add(e.id);
+  }
+
   let response;
   try {
     response = await anthropic.messages.create({
@@ -370,7 +560,7 @@ export async function takeTurn(
       system: [
         {
           type:          "text",
-          text:          buildStaticPrompt(game.character, game.partyMembers, game.story, game.currentAct, game.currentScene, mapData),
+          text:          buildStaticPrompt(game.character, game.partyMembers, game.story, game.currentAct, game.currentScene, mapData, combatInfo),
           cache_control: { type: "ephemeral" },
         },
         {
@@ -384,6 +574,10 @@ export async function takeTurn(
             diceResult,
             consecutiveMisses,
             (game.map as any).items ?? [],
+            mapData.tiles as string[][] | undefined,
+            undefined,
+            hiddenEnemyIds,
+            dbEnemies,
           ),
         },
       ],
@@ -457,7 +651,7 @@ export async function takeTurn(
         system: [
           {
             type:          "text",
-            text:          buildStaticPrompt(game.character, game.partyMembers, game.story, game.currentAct, game.currentScene, mapData),
+            text:          buildStaticPrompt(game.character, game.partyMembers, game.story, game.currentAct, game.currentScene, mapData, combatInfo),
             cache_control: { type: "ephemeral" },
           },
           {
@@ -471,7 +665,10 @@ export async function takeTurn(
               diceResult,
               consecutiveMisses,
               (game.map as any).items ?? [],
+              mapData.tiles as string[][] | undefined,
               mechanicalContext,
+              hiddenEnemyIds,
+              dbEnemies,
             ),
           },
         ],
@@ -640,38 +837,114 @@ export async function takeTurn(
           version:               { increment: 1 },
         },
       });
-      // Resolve combat HP deltas inside the transaction so currentHp is read
-      // from the same serialisable snapshot as the write, preventing stale
-      // values under concurrent turns.
+      // Resolve combat HP deltas — route to character OR enemy table (gap fix).
       if (rawEffects.length > 0) {
-        const affectedIds   = [...new Set(rawEffects.map((e) => e.targetId))];
-        const affectedChars = await tx.character.findMany({
-          where:  { id: { in: affectedIds } },
-          select: { id: true, currentHp: true, maxHp: true },
-        });
-        const charMap = new Map(affectedChars.map((c) => [c.id, c]));
+        const affectedIds     = [...new Set(rawEffects.map((e) => e.targetId))];
+        const affectedChars   = await tx.character.findMany({ where: { id: { in: affectedIds } }, select: { id: true, currentHp: true, maxHp: true } });
+        const affectedEnemies = await tx.enemy.findMany({ where: { id: { in: affectedIds } }, select: { id: true, currentHp: true, maxHp: true } });
+        const charIds   = new Set(affectedChars.map((c) => c.id));
+        const enemyIds  = new Set(affectedEnemies.map((e) => e.id));
+        const charHpMap  = new Map(affectedChars.map((c) => [c.id, c]));
+        const enemyHpMap = new Map(affectedEnemies.map((e) => [e.id, e]));
         resolvedEffects = rawEffects
-          .filter((e) => charMap.has(e.targetId))
+          .filter((e) => charIds.has(e.targetId) || enemyIds.has(e.targetId))
           .map((e) => {
-            const c = charMap.get(e.targetId)!;
-            return { ...e, newHp: clampHp(c.currentHp, e.delta, c.maxHp) };
+            const actor = charHpMap.get(e.targetId) ?? enemyHpMap.get(e.targetId)!;
+            return { ...e, newHp: clampHp(actor.currentHp, e.delta, actor.maxHp) };
           });
-      }
-      for (const eff of resolvedEffects) {
-        await tx.character.update({
-          where: { id: eff.targetId },
-          data:  { currentHp: eff.newHp },
-        });
+        for (const eff of resolvedEffects) {
+          if (charIds.has(eff.targetId)) {
+            await tx.character.update({ where: { id: eff.targetId }, data: { currentHp: eff.newHp } });
+          } else {
+            await tx.enemy.update({ where: { id: eff.targetId }, data: { currentHp: eff.newHp } });
+          }
+        }
       }
 
-      // D5: write PartyMember.posX/posY for party games
-      if (newPlayerPos) {
+      // Combat-end: delete CombatSession when player kills the last enemy.
+      if (encounterCompleted && combatSession) {
+        const slotEnemyIds = (combatSession.initiativeOrder as { actorId: string; actorType: string }[])
+          .filter((s) => s.actorType === "ENEMY")
+          .map((s) => s.actorId);
+        if (slotEnemyIds.length > 0) {
+          const hpOverrides = new Map(resolvedEffects.map((e) => [e.targetId, e.newHp]));
+          const slotEnemyHps = await tx.enemy.findMany({ where: { id: { in: slotEnemyIds } }, select: { id: true, currentHp: true } });
+          const allDead = slotEnemyHps.every((e) => (hpOverrides.get(e.id) ?? e.currentHp) <= 0);
+          if (allDead) {
+            await tx.combatSession.delete({ where: { gameId } });
+          }
+        }
+      }
+
+      // AoO processing — attack roll + damage + clear enemy reaction slot
+      if (preparedAoO) {
+        const charAC = 10 + abilityModifier(stats.dexterity.total);
+        const aooAtk = rollD20Check(preparedAoO.attackBonus, charAC, "AC");
+        if (aooAtk.success) {
+          const dmg  = rollDamageExpr(preparedAoO.damageDice);
+          const cHp  = await tx.character.findUnique({ where: { id: currentCharId }, select: { currentHp: true, maxHp: true } });
+          if (cHp) {
+            const newHp = Math.max(0, cHp.currentHp - dmg);
+            await tx.character.update({ where: { id: currentCharId }, data: { currentHp: newHp } });
+            resolvedEffects.push({ targetId: currentCharId, delta: -dmg, type: "reaction_attack", newHp });
+          }
+        }
+        // Clear hasReaction on the enemy's initiative slot
+        const currentOrder = combatSession!.initiativeOrder as any[];
+        const updatedOrder = currentOrder.map((slot, idx) =>
+          idx === preparedAoO!.slotIdx ? { ...slot, hasReaction: false } : slot,
+        );
+        await tx.combatSession.update({ where: { gameId }, data: { initiativeOrder: updatedOrder } });
+      }
+
+      // D5: write position — chipSpatial.endPosition takes precedence over AI stateDeltas.playerPos
+      const finalPos = chipSpatial?.endPosition ?? newPlayerPos;
+      if (finalPos) {
         const callerRecord = game.partyMembers.find((m) => m.characterId === currentCharId);
         if (callerRecord) {
           await tx.partyMember.update({
             where: { id: callerRecord.id },
-            data:  { posX: newPlayerPos.x, posY: newPlayerPos.y },
+            data:  { posX: finalPos.x, posY: finalPos.y },
           });
+        } else {
+          // Solo game: write to Character.posX/posY
+          await tx.character.update({ where: { id: currentCharId }, data: { posX: finalPos.x, posY: finalPos.y } });
+        }
+      }
+
+      // Decrement remainingMovementFeet when a validated endPosition was used
+      if (chipSpatial?.endPosition && validatedMovDist > 0) {
+        await tx.character.update({
+          where: { id: currentCharId },
+          data:  { remainingMovementFeet: Math.max(0, currentCharacter.remainingMovementFeet - validatedMovDist) },
+        });
+      }
+
+      // Phase E: stealth state management
+      const finalPos2 = chipSpatial?.endPosition ?? newPlayerPos;
+      if (chipSpatial?.type === "stealth") {
+        const stealthRoll = rollStealthCheck(abilityModifier(stats.dexterity.total));
+        if (callerMember) {
+          await tx.partyMember.update({ where: { id: callerMember.id }, data: { isHiding: true, stealthRoll } });
+        } else {
+          await tx.character.update({ where: { id: currentCharId }, data: { isHiding: true, stealthRoll } });
+        }
+      } else if (actorIsHiding && breaksStealth(chipSpatial?.type ?? "")) {
+        if (callerMember) {
+          await tx.partyMember.update({ where: { id: callerMember.id }, data: { isHiding: false } });
+        } else {
+          await tx.character.update({ where: { id: currentCharId }, data: { isHiding: false } });
+        }
+      } else if (finalPos2 && actorIsHiding && tiles) {
+        const stillCovered = isCovered(finalPos2, tiles);
+        const gameEnemies = (gameState.enemies as { x: number; y: number }[] | undefined) ?? [];
+        const exposed = !stillCovered && gameEnemies.some(e => lineOfSight(finalPos2, { x: e.x, y: e.y }, tiles!));
+        if (exposed) {
+          if (callerMember) {
+            await tx.partyMember.update({ where: { id: callerMember.id }, data: { isHiding: false } });
+          } else {
+            await tx.character.update({ where: { id: currentCharId }, data: { isHiding: false } });
+          }
         }
       }
 
