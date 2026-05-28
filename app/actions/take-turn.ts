@@ -75,7 +75,7 @@ function primaryAttackScore(characterClass: string, stats: CharacterStats): numb
 
 // ─── Prompt builders ──────────────────────────────────────────────────────────
 
-function buildStaticPrompt(character: any, allMembers: any[], storyPrompt: any, mapData: any): string {
+function buildStaticPrompt(character: any, allMembers: any[], story: any, currentAct: any, currentScene: any, mapData: any): string {
   const rooms = mapData.rooms?.map((r: any) => `${r.name}: ${r.description}`).join(" | ") ?? "—";
   const pois  = mapData.pois?.map((p: any) => `${p.name} [${p.symbol}] at (${p.x},${p.y})`).join(", ") ?? "—";
 
@@ -85,13 +85,29 @@ function buildStaticPrompt(character: any, allMembers: any[], storyPrompt: any, 
       ).join("\n")
     : `  ${character.name}[id:${character.id},${character.characterClass},S${character.baseStrength}D${character.baseDexterity}C${character.baseConstitution}I${character.baseIntelligence}W${character.baseWisdom}Ch${character.baseCharisma}]`;
 
+  const actSummaries = story?.acts
+    ?.map((a: any) => `  Act ${a.order}: ${a.title} — ${a.summary}`)
+    .join("\n") ?? "";
+
+  const actBlock = currentAct
+    ? `CURRENT ACT ${currentAct.order}: ${currentAct.title}\n${currentAct.playerFacingDescription}`
+    : "";
+
+  const sceneBlock = currentScene
+    ? `CURRENT SCENE ${currentScene.order}: ${currentScene.title}\n${currentScene.description}\nObjectives: ${(currentScene.objectives as string[]).join("; ")}`
+    : "";
+
   return `You are a skilled, atmospheric Dungeon Master running an async D&D 5e campaign. Your prose is vivid but concise — 2–4 sentences of present-tense narration per turn. You create tension, wonder, and consequence without overwrought description.
 
 PARTY
 ${partyLines}
 
-SCENARIO: ${storyPrompt.title}
-${storyPrompt.description}
+OVERARCHING STORY: ${story?.title ?? "Unknown"}
+${actSummaries}
+
+${actBlock}
+
+${sceneBlock}
 
 MAP: ${mapData.name ?? "Unknown Location"}
 Rooms: ${rooms}
@@ -103,7 +119,9 @@ Always reply with a single JSON object — no markdown fences, no extra text.
   "narrative": "2–4 sentences. Vivid, present tense. Address the active character by name.",
   "stateDeltas": {
     // Only include fields that changed this turn. Omit everything else.
-    // "playerPos": {x,y}    (active character's new position)
+    // "playerPos": {x,y}    REQUIRED when character moves — exact integer tile coords.
+    //   Advance 1–2 tiles toward the destination using POI coordinates from the MAP section.
+    //   Never omit playerPos for movement actions; never use null or fractional values.
     // "inventory": [...]     (full updated shared inventory)
     // "plotFlags": [...]     (full updated list)
     // "activeObjective": "..." (if the objective changed)
@@ -204,7 +222,8 @@ consecutiveMisses: ${consecutiveMisses}`;
     ? `\n\nMECHANICAL CONTEXT\n${mechanicalContext}\nNarration rules: Do NOT reproduce the skill name, outcome, DC, roll value, or proficiency bonus in your narrative. Describe the result dramatically without mechanical exposition.`
     : "";
 
-  const postCombatDirective = gameState.lastEncounterCompleted === true
+  const hasLivingEnemies = ((gameState.enemies ?? []) as any[]).some((e: any) => (e.hp ?? 0) > 0);
+  const postCombatDirective = gameState.lastEncounterCompleted === true && !hasLivingEnemies
     ? `\n\nSTORY TRANSITION: The previous combat encounter just resolved — no enemies remain here. Advance the story now: reveal what the party discovers (loot, a clue, a new passage, an NPC reaction), describe what lies ahead, and set up the next decision. Chips MUST be post-combat actions — exploration, investigation, movement, or social — never attacks against defeated enemies.`
     : "";
 
@@ -274,9 +293,11 @@ export async function takeTurn(
   const game = await prisma.game.findUnique({
     where:   { id: gameId },
     include: {
-      character:   { include: { mainHand: { select: { name: true } }, armor: { select: { name: true } } } },
-      storyPrompt: true,
-      map:         { include: { items: { select: { id: true, name: true, isEquipped: true, posX: true, posY: true } } } },
+      character:    { include: { mainHand: { select: { name: true } }, armor: { select: { name: true } } } },
+      story:        { include: { acts: { select: { order: true, title: true, summary: true }, orderBy: { order: "asc" } } } },
+      currentAct:   true,
+      currentScene: true,
+      map:          { include: { items: { select: { id: true, name: true, isEquipped: true, posX: true, posY: true } } } },
       messages:    { orderBy: { createdAt: "asc" } },
       partyMembers: {
         include: { character: { include: { mainHand: { select: { name: true } }, armor: { select: { name: true } } } } },
@@ -349,7 +370,7 @@ export async function takeTurn(
       system: [
         {
           type:          "text",
-          text:          buildStaticPrompt(game.character, game.partyMembers, game.storyPrompt, mapData),
+          text:          buildStaticPrompt(game.character, game.partyMembers, game.story, game.currentAct, game.currentScene, mapData),
           cache_control: { type: "ephemeral" },
         },
         {
@@ -436,7 +457,7 @@ export async function takeTurn(
         system: [
           {
             type:          "text",
-            text:          buildStaticPrompt(game.character, game.partyMembers, game.storyPrompt, mapData),
+            text:          buildStaticPrompt(game.character, game.partyMembers, game.story, game.currentAct, game.currentScene, mapData),
             cache_control: { type: "ephemeral" },
           },
           {
@@ -495,7 +516,7 @@ export async function takeTurn(
   // ─── XP Award ─────────────────────────────────────────────────────────────
   const encounterCompleted = finalParsed.encounterResult === "completed";
   const xpAwarded = encounterCompleted
-    ? (XP_BY_DIFFICULTY[game.storyPrompt.difficulty] ?? 0)
+    ? (XP_BY_DIFFICULTY[game.story?.difficulty ?? "Standard"] ?? 0)
     : 0;
   const currentXp     = (currentCharacter.xp ?? 0) + xpAwarded;
   const previousLevel  = currentCharacter.level ?? 1;
@@ -505,6 +526,19 @@ export async function takeTurn(
   // Apply stateDeltas. For party games, route per-character fields into party-scoped maps.
   const newState: Record<string, any> = { ...gameState, consecutiveMisses };
   const deltas = { ...finalParsed.stateDeltas };
+
+  // Discard playerPos if coordinates are not valid integers within map bounds.
+  if (deltas.playerPos !== undefined) {
+    const p = deltas.playerPos as any;
+    const w = (mapData.width  as number) ?? 999;
+    const h = (mapData.height as number) ?? 999;
+    if (
+      typeof p?.x !== "number" || !Number.isInteger(p.x) || p.x < 0 || p.x >= w ||
+      typeof p?.y !== "number" || !Number.isInteger(p.y) || p.y < 0 || p.y >= h
+    ) {
+      delete deltas.playerPos;
+    }
+  }
 
   // Capture position before deletion so D5 transaction write has the value
   const newPlayerPos = deltas.playerPos as { x: number; y: number } | undefined;
@@ -535,7 +569,9 @@ export async function takeTurn(
     delete newState.levelUpNote;
   }
 
-  if (encounterCompleted) {
+  // Only trust encounterCompleted if no enemy in the updated state still has HP > 0.
+  const stillHasLivingEnemies = ((newState.enemies ?? []) as any[]).some((e: any) => (e.hp ?? 0) > 0);
+  if (encounterCompleted && !stillHasLivingEnemies) {
     newState.lastEncounterCompleted = true;
   } else {
     delete newState.lastEncounterCompleted;
@@ -600,7 +636,6 @@ export async function takeTurn(
           state:                 newState,
           activeSuggestionChips: suggestionChips as any,
           narrativeHistory:      { push: finalParsed.narrative },
-          currentScenario:       finalParsed.narrative,
           currentTurnCharacterId:nextCharId,
           version:               { increment: 1 },
         },

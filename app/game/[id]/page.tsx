@@ -108,7 +108,7 @@ interface GameFull {
   activeSuggestionChips: SuggestionChip[] | null;
   narrativeHistory:      string[];
   character:             CharacterData;
-  storyPrompt:           { title: string; description: string };
+  story:           { title: string; description: string } | null;
   map:                   { id: string; name: string; data: MapData };
   messages:              MessageData[];
   partyMembers:          PartyMemberData[];
@@ -441,7 +441,7 @@ export default function GamePage() {
     );
   }
 
-  const { character, storyPrompt, map, partyMembers } = gameData;
+  const { character, story, map, partyMembers } = gameData;
   const isPartyGame  = partyMembers.length > 1;
   const myCharId     = myMember?.characterId ?? character.id;
 
@@ -459,13 +459,18 @@ export default function GamePage() {
     ? (localState.partyMaxHp?.[myCharId] ?? localState.maxHp)
     : localState.maxHp;
 
-  // Build party markers for the map — one emoji per character.
-  const partyMarkers: PartyMarker[] = partyMembers.map((m) => ({
+  // Build party markers for the map — current user's character first so find()
+  // always renders their character when multiple occupy the same tile.
+  const rawPartyMarkers: PartyMarker[] = partyMembers.map((m) => ({
     characterId:   m.characterId,
     pos:           localState.partyPositions?.[m.characterId] ?? localState.playerPos,
     emoji:         classEmoji(m.character.characterClass),
     isCurrentTurn: m.characterId === gameData.currentTurnCharacterId,
   }));
+  const partyMarkers: PartyMarker[] = [
+    ...rawPartyMarkers.filter((m) => m.characterId === myCharId),
+    ...rawPartyMarkers.filter((m) => m.characterId !== myCharId),
+  ];
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
@@ -502,7 +507,7 @@ export default function GamePage() {
             ← Roster
           </Link>
           <div className="text-center">
-            <p className="text-sm font-semibold text-slate-800">{storyPrompt.title}</p>
+            <p className="text-sm font-semibold text-slate-800">{story?.title}</p>
             <p className="text-xs text-slate-400">{isPartyGame ? `${partyMembers.length} players` : character.name}</p>
           </div>
           <UserMenu />
@@ -553,7 +558,7 @@ export default function GamePage() {
             state={localState}
             narrativeHistory={localNarrativeHistory}
             map={map}
-            storyPrompt={storyPrompt}
+            story={story}
             messages={localMessages}
             chips={currentChips}
             character={gameData.character}
@@ -582,7 +587,7 @@ export default function GamePage() {
           />
         )}
         {activeTab === "chronicle" && (
-          <ChronicleTab storyPrompt={storyPrompt} messages={localMessages} />
+          <ChronicleTab story={story} messages={localMessages} />
         )}
       </div>
       {activeTurnQueue && (
@@ -602,14 +607,14 @@ export default function GamePage() {
 // ─── Tab: The Field ───────────────────────────────────────────────────────────
 
 function FieldTab({
-  state, narrativeHistory, map, storyPrompt, messages, chips, character, partyMarkers,
+  state, narrativeHistory, map, story, messages, chips, character, partyMarkers,
   enemyMarkers, itemMarkers,
   onChipClick, isInitializing, isTakingTurn, chipsEnabled, diceResult, levelUpResult, skillCheckResult, turnError,
 }: {
   state:             GameState;
   narrativeHistory:  string[];
   map:               { name: string; data: MapData };
-  storyPrompt:       { title: string; description: string };
+  story:       { title: string; description: string } | null;
   messages:          MessageData[];
   chips:             SuggestionChip[];
   character:         CharacterData;
@@ -631,7 +636,7 @@ function FieldTab({
   // narrativeHistory from dedicated DB column; fall back to last DM message then scenario description.
   const situationText = narrativeHistory.at(-1)
     ?? lastDmContent
-    ?? storyPrompt.description;
+    ?? story?.description;
   const isLoading     = isInitializing || isTakingTurn;
 
 
@@ -660,7 +665,7 @@ function FieldTab({
   console.log("[field-tab] render", {
     narrativeSource: narrativeHistory.length > 0
       ? `narrativeHistory[${narrativeHistory.length - 1}]`
-      : lastDmContent ? "message.content (fallback)" : "storyPrompt.description (fallback)",
+      : lastDmContent ? "message.content (fallback)" : "story.description (fallback)",
     situationSnippet: situationText.slice(0, 60),
     chipCount:        chips.length,
     affordableCount:  affordableChips.length,
@@ -1869,9 +1874,9 @@ function MemberAbilitiesPane({ char }: { char: CharacterData }) {
 // ─── Tab: Chronicle ───────────────────────────────────────────────────────────
 
 function ChronicleTab({
-  storyPrompt, messages,
+  story, messages,
 }: {
-  storyPrompt: { title: string; description: string };
+  story: { title: string; description: string } | null;
   messages:    MessageData[];
 }) {
   // Only show the most recent messages — older history is stored in the DB
@@ -1883,13 +1888,13 @@ function ChronicleTab({
     <div className="p-4 sm:p-6 max-w-2xl space-y-6">
       <div>
         <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1">Chronicle</p>
-        <p className="text-xs text-slate-400">{storyPrompt.title}</p>
+        <p className="text-xs text-slate-400">{story?.title}</p>
       </div>
 
       {/* Opening scene is always shown first */}
       <div className="border-l-2 border-amber-300 pl-4">
         <p className="text-xs text-slate-400 mb-1">Opening</p>
-        <p className="text-sm text-slate-700 leading-relaxed">{storyPrompt.description}</p>
+        <p className="text-sm text-slate-700 leading-relaxed">{story?.description}</p>
       </div>
 
       {trimmed && (

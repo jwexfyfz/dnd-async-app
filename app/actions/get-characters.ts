@@ -18,7 +18,7 @@ export async function getCharacters() {
           take:    1,
           orderBy: { updatedAt: "desc" },
           include: {
-            storyPrompt:  { select: { title: true } },
+            story:  { select: { title: true } },
             partyMembers: {
               orderBy: { turnOrder: "asc" },
               include: {
@@ -34,7 +34,7 @@ export async function getCharacters() {
           include: {
             game: {
               include: {
-                storyPrompt:  { select: { title: true } },
+                story:  { select: { title: true } },
                 partyMembers: {
                   orderBy: { turnOrder: "asc" },
                   include: {

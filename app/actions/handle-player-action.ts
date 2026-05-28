@@ -232,7 +232,9 @@ export function generateDeterministicChips(
 
 export function buildNarrativeMessages(
   storyTitle:       string,
-  storyDescription: string,
+  actTitle:         string,
+  sceneTitle:       string,
+  sceneDescription: string,
   characterName:    string,
   characterClass:   string,
   recentNarratives: string[],
@@ -253,7 +255,8 @@ export function buildNarrativeMessages(
 
   const content = `You are a skilled Dungeon Master narrating a D&D 5e campaign.
 
-Scenario: ${storyTitle} — ${storyDescription}
+Story: ${storyTitle} | Act: ${actTitle} | Scene: ${sceneTitle}
+${sceneDescription}
 Character: ${characterName} (${characterClass})${historyBlock}
 
 The player takes this action: "${actionId}"
@@ -302,9 +305,11 @@ export async function handlePlayerAction(
   const game = await prisma.game.findUnique({
     where:   { id: gameId },
     include: {
-      character:   true,
-      storyPrompt: true,
-      map:         true,
+      character:    true,
+      story:        true,
+      currentAct:   true,
+      currentScene: true,
+      map:          true,
       messages:    { orderBy: { createdAt: "asc" } },
       partyMembers: {
         include:  { character: true },
@@ -351,8 +356,10 @@ export async function handlePlayerAction(
       model:      DM_MODEL,
       max_tokens: DM_MAX_TOKENS,
       messages:   buildNarrativeMessages(
-        game.storyPrompt.title,
-        game.storyPrompt.description,
+        game.story?.title ?? "",
+        game.currentAct?.title ?? "",
+        game.currentScene?.title ?? "",
+        game.currentScene?.description ?? "",
         currentChar.name,
         currentChar.characterClass,
         recentNarratives,
@@ -405,10 +412,10 @@ export async function handlePlayerAction(
       };
 
       await tx.message.create({
-        data: { gameId, role: "PLAYER", content: sanitizedAction },
+        data: { gameId, role: "PLAYER", content: sanitizedAction, sceneId: game.currentSceneId },
       });
       await tx.message.create({
-        data: { gameId, role: "DUNGEON_MASTER", content: narrative, chips },
+        data: { gameId, role: "DUNGEON_MASTER", content: narrative, chips, sceneId: game.currentSceneId },
       });
       await tx.game.update({
         where: { id: gameId },
@@ -416,7 +423,6 @@ export async function handlePlayerAction(
           state:                 updatedState,
           activeSuggestionChips: suggestionChips as any,
           narrativeHistory:      { push: narrative },
-          currentScenario:       narrative,
           version:               { increment: 1 },
         },
       });

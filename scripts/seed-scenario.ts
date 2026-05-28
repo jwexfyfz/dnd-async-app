@@ -15,13 +15,13 @@ async function main() {
   const game = await prisma.game.findFirst({
     where:   { status: "ACTIVE" },
     orderBy: { updatedAt: "desc" },
-    include: { character: true, storyPrompt: true, map: true },
+    include: { character: true, story: true, currentAct: true, currentScene: true, map: true },
   });
 
   if (!game) { console.log("No active games found."); return; }
 
   const char = game.character;
-  console.log(`Seeding game ${game.id} — ${char.name} the ${char.characterClass} (${game.storyPrompt.title})`);
+  console.log(`Seeding game ${game.id} — ${char.name} the ${char.characterClass} (${game.story?.title ?? game.currentScene?.title ?? "Unknown"})`);
 
   const scenario = `${char.name} steps into a torchlit guard room. Two goblin sentries snap to attention — one levels a rusty crossbow from behind an overturned table, the other grips a jagged shortsword and bares its teeth. A heavy iron door on the far wall bears a padlock; beside it hangs a ring of keys, just out of reach. The air reeks of damp fur and stale ale.`;
 
@@ -81,7 +81,6 @@ async function main() {
   await prisma.game.update({
     where: { id: game.id },
     data: {
-      currentScenario:       scenario,
       narrativeHistory:      { set: [scenario] },
       activeSuggestionChips: chips as any,
       // Also patch game.state so the map renderer / objective line still has data

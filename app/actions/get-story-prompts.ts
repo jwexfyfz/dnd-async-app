@@ -2,16 +2,14 @@
 
 import { prisma } from "../../lib/prisma";
 
-// Returns all available story prompts shown on the "Choose Your Adventure" screen.
-// These are seeded records — not user-generated — so no auth check is needed.
 export async function getStoryPrompts() {
   try {
-    const prompts = await prisma.storyPrompt.findMany({
+    const stories = await prisma.story.findMany({
       orderBy: { difficulty: "asc" },
     });
-    return { success: true, data: prompts };
+    return { success: true, data: stories };
   } catch (error: any) {
-    console.error("Failed to fetch story prompts:", error);
+    console.error("Failed to fetch stories:", error);
     return { success: false, error: error.message, data: [] };
   }
 }

@@ -11,7 +11,9 @@ export async function getGame(gameId: string) {
     where:   { id: gameId },
     include: {
       character:    true,
-      storyPrompt:  true,
+      story:        true,
+      currentAct:   true,
+      currentScene: true,
       map:          true,
       messages:     { orderBy: { createdAt: "asc" } },
       partyMembers: {

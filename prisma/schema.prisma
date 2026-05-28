@@ -11,7 +11,7 @@ datasource db {
 model User {
   id               String        @id @default(uuid())
   email            String        @unique
-  displayName      String?       // Populated from Google OAuth full_name on first action
+  displayName      String?
   createdAt        DateTime      @default(now())
   characters       Character[]
   partyMemberships PartyMember[]
@@ -19,20 +19,14 @@ model User {
 
 // ─── Items ────────────────────────────────────────────────────────────────────
 
-// Unified item model — merges former Item (character-owned) and EquippableItem (map loot).
-// type: "WEAPON" | "ARMOR" | "SHIELD" | "FOCUS" | "RING" | "CONSUMABLE"
-// statKey: null (no ability effect) or one of the six ability names
-// mapId set  → map loot; characterId FK (via Character slots) indicates ownership
 model Item {
   id                String  @id @default(uuid())
   name              String
   type              String  @default("")
 
-  // Stat bonus — DB-powered per-ability bonus, no JSON
   statKey           String?
   statModifierBonus Int     @default(0)
 
-  // Map loot fields (merged from EquippableItem)
   mapId             String?
   map               Map?    @relation(fields: [mapId], references: [id], onDelete: Cascade)
   category          String  @default("")
@@ -42,9 +36,16 @@ model Item {
   isEquipped        Boolean @default(false)
   combatImpactLabel String  @default("")
 
-  // Grid position within the map — null when item is in a backpack or slot (not on the ground)
   posX  Int?
   posY  Int?
+
+  // Locked until a scene activates (null = visible from act start)
+  activeFromSceneId String?
+  activeFromScene   Scene?  @relation("SceneLockedItems", fields: [activeFromSceneId], references: [id])
+
+  // Enemy loot — appears on the enemy's tile when defeated
+  enemyId String?
+  enemy   Enemy?  @relation("EnemyLoot", fields: [enemyId], references: [id])
 
   equippedAsMainHand Character[] @relation("CharacterMainHand")
   equippedAsOffHand  Character[] @relation("CharacterOffHand")
@@ -63,7 +64,6 @@ model Character {
   user           User          @relation(fields: [userId], references: [id])
   characterClass String
 
-  // Base ability scores — before equipment bonuses
   baseStrength     Int @default(8)
   baseDexterity    Int @default(8)
   baseConstitution Int @default(8)
@@ -77,7 +77,6 @@ model Character {
   currentHp    Int @default(10)
   skillProficiencies String[] @default([])
 
-  // Equipment slots — nullable FK to Item
   mainHandId String?
   mainHand   Item?   @relation("CharacterMainHand", fields: [mainHandId], references: [id])
   offHandId  String?
@@ -87,25 +86,128 @@ model Character {
   ringId     String?
   ring       Item?   @relation("CharacterRing", fields: [ringId], references: [id])
 
-  // Turn resource tracking — decremented during combat, reset each round.
-  // Defaults match the universal base caps (1 action / 1 bonus / 30 ft).
   remainingActions      Int @default(1)
   remainingBonusActions Int @default(1)
   remainingMovementFeet Int @default(30)
   remainingReactions    Int @default(1)
   hasCastedBonusSpell   Boolean  @default(false)
 
-  // Active status conditions (e.g. ["Poisoned", "Prone"])
   activeConditions String[] @default([])
-
-  // Unequipped item IDs
   backpack String[] @default([])
 
   games            Game[]
   partyMemberships PartyMember[]
 }
 
-// ─── World Content (seeded) ───────────────────────────────────────────────────
+// ─── Story / Act / Scene ──────────────────────────────────────────────────────
+
+model Story {
+  id          String @id @default(uuid())
+  title       String @unique
+  description String // Short blurb shown in game selection
+  difficulty  String @default("Standard") // Beginner | Standard | Veteran
+
+  acts  Act[]
+  games Game[]
+}
+
+model Act {
+  id                      String @id @default(uuid())
+  storyId                 String
+  story                   Story  @relation(fields: [storyId], references: [id])
+  order                   Int    // 1-based within the story
+  title                   String
+  summary                 String // Always fed to AI DM — enables foreshadowing
+  playerFacingDescription String // Shown to players when act begins
+
+  map     Map?
+  scenes  Scene[]
+  enemies Enemy[]
+  games   Game[]
+
+  @@unique([storyId, order])
+  @@index([storyId])
+}
+
+model Scene {
+  id          String   @id @default(uuid())
+  actId       String
+  act         Act      @relation(fields: [actId], references: [id])
+  order       Int      // 1-based within the act
+  title       String
+  description String   // Full scene brief fed to AI DM on entry
+  objectives  String[]
+
+  // Scene 1 of each act uses ACT_START; others require a trigger.
+  triggerType      SceneTriggerType
+  triggerEnemyId   String? // ENEMY_DEFEATED: enemy id whose death fires this
+  triggerItemId    String? // ITEM_FOUND: item id pickup that fires this
+  triggerAreaX     Int?    // AREA_REACHED: tile x
+  triggerAreaY     Int?    // AREA_REACHED: tile y
+  triggerTurnLimit Int?    // TURN_LIMIT: AI forces progression after N scene turns
+
+  // Written by AI when scene ends; replaces full message log for past-scene context
+  summary     String?
+  completedAt DateTime?
+
+  enemies  Enemy[]
+  items    Item[]    @relation("SceneLockedItems")
+  messages Message[]
+  games    Game[]
+
+  @@unique([actId, order])
+  @@index([actId])
+}
+
+model Enemy {
+  id      String @id @default(uuid())
+  actId   String
+  act     Act    @relation(fields: [actId], references: [id])
+  sceneId String // activates when this scene starts
+  scene   Scene  @relation(fields: [sceneId], references: [id])
+
+  name        String
+  description String @default("")
+
+  maxHp        Int
+  currentHp    Int
+  strength     Int    @default(10)
+  dexterity    Int    @default(10)
+  constitution Int    @default(10)
+  intelligence Int    @default(10)
+  wisdom       Int    @default(10)
+  charisma     Int    @default(10)
+
+  armorClass  Int    @default(10)
+  attackBonus Int    @default(0)
+  damageDice  String // e.g. "1d6+2"
+
+  posX Int
+  posY Int
+
+  status    EnemyStatus @default(DORMANT)
+  lootItems Item[]      @relation("EnemyLoot")
+
+  @@index([actId])
+  @@index([sceneId])
+}
+
+enum SceneTriggerType {
+  ACT_START      // auto-fires when act begins (always used for scene 1)
+  AREA_REACHED   // any party member steps on triggerAreaX/Y
+  ENEMY_DEFEATED // triggerEnemyId is killed
+  ITEM_FOUND     // triggerItemId is picked up
+  TURN_LIMIT     // AI DM forces transition after triggerTurnLimit turns
+}
+
+enum EnemyStatus {
+  DORMANT   // future scene — hidden from players and AI context
+  ACTIVE    // current scene — visible and targetable
+  DEFEATED
+  FLED
+}
+
+// ─── Map ─────────────────────────────────────────────────────────────────────
 
 model Map {
   id   String @id @default(uuid())
@@ -113,54 +215,41 @@ model Map {
   // { width, height, tiles[][], playerStart: {x,y}, rooms[], pois[] }
   data Json
 
-  stories          StoryPrompt[]
-  games            Game[]
-  items            Item[]
-}
-
-model StoryPrompt {
-  id          String @id @default(uuid())
-  title       String @unique
-  description String
-  difficulty  String
-  mapId       String
-  map         Map    @relation(fields: [mapId], references: [id])
+  actId String? @unique // one map per act
+  act   Act?    @relation(fields: [actId], references: [id])
 
   games Game[]
+  items Item[]
 }
 
 // ─── Active Game ──────────────────────────────────────────────────────────────
 
 model Game {
-  id            String      @id @default(uuid())
-  characterId   String      // The host character (created the game)
-  character     Character   @relation(fields: [characterId], references: [id])
-  storyPromptId String
-  storyPrompt   StoryPrompt @relation(fields: [storyPromptId], references: [id])
-  mapId         String
-  map           Map         @relation(fields: [mapId], references: [id])
-  status        GameStatus  @default(ACTIVE)
+  id          String    @id @default(uuid())
+  characterId String
+  character   Character @relation(fields: [characterId], references: [id])
 
-  // LOBBY = waiting for players to join; ACTIVE = playing; COMPLETED = done.
-  // Default is ACTIVE so that legacy games (created before party system) work
-  // without needing a migration to back-fill the column.
-  phase GamePhase @default(ACTIVE)
+  storyId String?
+  story   Story?  @relation(fields: [storyId], references: [id])
 
-  // Set by startAdventure when the game transitions from LOBBY → ACTIVE.
-  // Advances after each turn following the DEX-ordered turn sequence.
+  currentActId String?
+  currentAct   Act?    @relation(fields: [currentActId], references: [id])
+
+  currentSceneId String?
+  currentScene   Scene?  @relation(fields: [currentSceneId], references: [id])
+
+  mapId String
+  map   Map    @relation(fields: [mapId], references: [id])
+
+  status GameStatus @default(ACTIVE)
+  phase  GamePhase  @default(ACTIVE)
+
   currentTurnCharacterId String?
 
-  // World state JSON read/updated by the AI DM each turn.
-  // Solo games: { playerPos, hp, maxHp, inventory, equipped, ... }
-  // Party games: extends with { partyPositions, partyHp, partyMaxHp }
   state Json
+  version Int @default(0)
 
-  version Int @default(0) // optimistic lock counter — increment on every state write
-
-  // Phase B pillars — populated by autoAdvance, read by prompt builder and Field tab.
-  // Null until first turn completes; legacy games fall back to game.state JSON.
   worldState           Json?
-  currentScenario      String?
   narrativeHistory     String[] @default([])
   activeSuggestionChips Json?
 
@@ -187,8 +276,6 @@ enum GamePhase {
 
 // ─── Party ────────────────────────────────────────────────────────────────────
 
-// One row per character in a game. Includes the host (created automatically
-// when the game is created) and any players who join via the lobby URL.
 model PartyMember {
   id          String       @id @default(uuid())
   gameId      String
@@ -198,11 +285,9 @@ model PartyMember {
   userId      String
   user        User         @relation(fields: [userId], references: [id])
   status      MemberStatus @default(JOINED)
-  // Assigned by startAdventure, sorted by DEX desc. 0 = goes first.
   turnOrder   Int          @default(0)
   joinedAt    DateTime     @default(now())
 
-  // Grid position — dual-written alongside game.state.partyPositions until Phase D cutover.
   posX Int @default(0)
   posY Int @default(0)
 }
@@ -220,8 +305,11 @@ model Message {
   game    Game        @relation(fields: [gameId], references: [id])
   role    MessageRole
   content String
-  // AI-generated action chips; only on DUNGEON_MASTER messages.
   chips   Json?
+
+  // Scoped to the active scene when written — enables per-scene context windowing
+  sceneId String?
+  scene   Scene?  @relation(fields: [sceneId], references: [id])
 
   createdAt DateTime @default(now())
 }
@@ -231,19 +319,15 @@ enum MessageRole {
   DUNGEON_MASTER
 }
 
-
 // ─── Class Progression ───────────────────────────────────────────────────────
 
-// Lookup table: one row per (characterClass, level) pair, levels 1–20.
-// Logical link to Character: JOIN ON characterClass = Character.characterClass
-//                                AND level = Character.level
 model ClassProgression {
   id               String @id @default(uuid())
-  characterClass   String           // "Fighter" | "Rogue" | "Cleric" | "Wizard"
-  level            Int              // 1–20
+  characterClass   String
+  level            Int
   proficiencyBonus Int
-  featuresUnlocked String[]         // feature name slugs unlocked at this level
-  resourcePoolMax  Int?             // spell slots, rage charges, etc. (null = none)
+  featuresUnlocked String[]
+  resourcePoolMax  Int?
 
   features ClassFeature[]
 
@@ -253,15 +337,14 @@ model ClassProgression {
 
 // ─── Class Feature ───────────────────────────────────────────────────────────
 
-// Detail record for a single feature unlocked at a given class + level.
 model ClassFeature {
   id             String @id @default(uuid())
   characterClass String
   level          Int
   name           String
   description    String
-  icon           String           @default("🍃") // Default passive/free icon
-  costType       String           @default("free") // Default to free action to avoid breaking existing code
+  icon           String @default("🍃")
+  costType       String @default("free")
 
   classProgression ClassProgression @relation(fields: [characterClass, level], references: [characterClass, level])
 
@@ -270,21 +353,16 @@ model ClassFeature {
 
 // ─── Active Turn Queue ────────────────────────────────────────────────────────
 
-// Short-lived roll queue created when a player taps a suggestion chip.
-// Holds the ordered roll array for the turn (attack, damage, saves, etc.).
-// Purged by autoAdvance on COMPLETED; expiresAt is a safety TTL.
 model ActiveTurnQueue {
   id               String          @id @default(uuid())
   gameId           String
   game             Game            @relation(fields: [gameId], references: [id], onDelete: Cascade)
-  characterId      String          // character who initiated this turn
+  characterId      String
   status           TurnQueueStatus @default(PENDING_ROLLS)
   currentRollIndex Int             @default(0)
-  // Ordered Roll[] array per spec — each entry tracks type, label, diceFormula,
-  // dc, advantageState, naturalResult, secondaryNaturalResult, totalResult, isSuccess.
   rolls            Json
   createdAt        DateTime        @default(now())
-  expiresAt        DateTime        // safety TTL (now + 10 min); purged if autoAdvance never fires
+  expiresAt        DateTime
 
   @@index([gameId])
 }
@@ -296,8 +374,6 @@ enum TurnQueueStatus {
 
 // ─── Game Inventory ───────────────────────────────────────────────────────────
 
-// Normalized shared party loot — replaces game.state.inventory string array.
-// Each row is one distinct item type; quantity tracks item count.
 model GameInventory {
   id       String @id @default(uuid())
   gameId   String
@@ -310,17 +386,14 @@ model GameInventory {
 
 // ─── Server-Seeded Roll ───────────────────────────────────────────────────────
 
-// Short-lived record that binds a rollRequestId to a crypto-secure d20 result.
-// Written by /api/rolls/secure-seed; read when the turn is resolved.
-// TTL of 5 minutes enforced by expiresAt (purged on resolution).
 model PendingRoll {
   id        String   @id @default(uuid())
-  requestId String   @unique             // rollRequestId from buildRollContext
+  requestId String   @unique
   gameId    String
   game      Game     @relation(fields: [gameId], references: [id], onDelete: Cascade)
-  d20       Int                          // 1–20, rejection-sampled from crypto.getRandomValues
+  d20       Int
   createdAt DateTime @default(now())
-  expiresAt DateTime                     // now + 5 min
+  expiresAt DateTime
 
   @@index([gameId])
 }

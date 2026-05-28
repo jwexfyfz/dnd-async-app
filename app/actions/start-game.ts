@@ -11,13 +11,12 @@ interface StartGameResult {
 
 export async function startGame(
   characterId: string,
-  storyPromptId: string
+  storyId: string
 ): Promise<StartGameResult> {
   const supabase = await createSupabaseServerClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { success: false, error: "Not authenticated." };
 
-  // If this character already has a lobby or active game, return it.
   const existingGame = await prisma.game.findFirst({
     where:  { characterId, status: "ACTIVE" },
     select: { id: true },
@@ -29,14 +28,19 @@ export async function startGame(
     return { success: false, error: "Character not found." };
   }
 
-  const storyPrompt = await prisma.storyPrompt.findUnique({
-    where:   { id: storyPromptId },
-    include: { map: true },
+  // Load Act 1 and its map to get the starting position.
+  const act1 = await prisma.act.findFirst({
+    where:   { storyId, order: 1 },
+    include: { map: true, scenes: { where: { order: 1 } } },
   });
-  if (!storyPrompt) return { success: false, error: "Story not found." };
+  if (!act1 || !act1.map) return { success: false, error: "Story not found or missing map." };
 
-  const startingHp = character.maxHp;
-  const mapData    = storyPrompt.map.data as { playerStart: { x: number; y: number } };
+  const story = await prisma.story.findUnique({ where: { id: storyId } });
+  if (!story) return { success: false, error: "Story not found." };
+
+  const mapData     = act1.map.data as { playerStart: { x: number; y: number } };
+  const startingHp  = character.maxHp;
+  const act1scene1  = act1.scenes[0];
 
   const initialState = {
     playerPos:       mapData.playerStart,
@@ -46,10 +50,9 @@ export async function startGame(
     equipped:        { weapon: null as string | null, armor: null as string | null },
     npcsEncountered: [] as { name: string; disposition: string; note: string }[],
     plotFlags:       [] as string[],
-    activeObjective: storyPrompt.title,
+    activeObjective: act1.title,
   };
 
-  // Upsert the user's display name so party cards show their Google name.
   const displayName =
     (user.user_metadata?.full_name as string | undefined) ||
     (user.user_metadata?.name    as string | undefined) ||
@@ -62,17 +65,16 @@ export async function startGame(
   });
 
   try {
-    // Create the game in LOBBY phase — the host starts the actual adventure
-    // from the lobby page once other players have joined.
     const game = await prisma.game.create({
       data: {
         characterId,
-        storyPromptId,
-        mapId: storyPrompt.mapId,
-        state:  initialState,
-        status: "ACTIVE",
-        phase:  "LOBBY",
-        // Add the host as the first party member.
+        storyId,
+        currentActId:   act1.id,
+        currentSceneId: act1scene1?.id ?? null,
+        mapId:          act1.map.id,
+        state:          initialState,
+        status:         "ACTIVE",
+        phase:          "LOBBY",
         partyMembers: {
           create: {
             characterId,

@@ -5,6 +5,7 @@
 - No speculative file reads — only files directly related to the active task.
 - Stop and ask after 3 consecutive failures; don't auto-fix indefinitely.
 - No redundant builds — only rebuild after an actual file change.
+- Minimize output when responding - only display what is absolutely necessary to continue
 
 ## Commands
 - Dev: `npm run dev`

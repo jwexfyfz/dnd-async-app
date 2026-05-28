@@ -18,7 +18,9 @@ const anthropic = new Anthropic({ maxRetries: 4 });
 function buildStaticContext(
   character:    any,
   allMembers:   any[],
-  storyPrompt:  any,
+  story:        any,
+  currentAct:   any,
+  currentScene: any,
   mapData:      any,
 ): string {
   const rooms    = mapData.rooms?.map((r: any) => `${r.name}: ${r.description}`).join(" | ") ?? "—";
@@ -29,17 +31,40 @@ function buildStaticContext(
       ).join("\n")
     : `  ${character.name}[id:${character.id},${character.characterClass}]`;
 
+  const actSummaries = story?.acts
+    ?.map((a: any) => `  Act ${a.order}: ${a.title} — ${a.summary}`)
+    .join("\n") ?? "";
+
+  const actBlock = currentAct
+    ? `CURRENT ACT ${currentAct.order}: ${currentAct.title}\n${currentAct.playerFacingDescription}`
+    : "";
+
+  const sceneBlock = currentScene
+    ? `CURRENT SCENE ${currentScene.order}: ${currentScene.title}\n${currentScene.description}\nObjectives: ${(currentScene.objectives as string[]).join("; ")}`
+    : "";
+
   return `You are an immersive Dungeon Master running an async D&D 5e campaign. Write 3–4 sentences of specific, present-tense narration. Every sentence must name something concrete — a weapon connecting, an enemy recoiling, a door groaning open, a trap clicking. Never write vague filler ("the dungeon stirs", "you press on"). Describe: (1) the exact result of the player's action, (2) how the environment or enemy reacts, (3) what the character now faces so the next choices are obvious.
 
 PARTY
 ${partyStr}
 
-SCENARIO: ${storyPrompt.title}
-${storyPrompt.description}
+OVERARCHING STORY: ${story?.title ?? "Unknown"}
+${actSummaries}
+
+${actBlock}
+
+${sceneBlock}
 
 MAP: ${mapData.name ?? "Unknown"}
 Rooms: ${rooms}
-Points of interest: ${pois}`;
+Points of interest: ${pois}
+
+SPATIAL RULES
+Pos: values are tile coordinates. Use them to determine and narrate spatial reality every turn:
+- Distance ≤ 1 tile → melee reach; describe the closeness physically (smell, breathing, blade contact).
+- Distance 2–4 tiles → near-range; describe positioning, charging, closing the gap.
+- Distance 5+ tiles → ranged; describe throws, spells, projectiles arcing across the room.
+- After any character (player or enemy) moves, their new x,y MUST appear in stateDeltas (playerPos for the active character; updated enemies array for NPCs). Never let a movement go unrecorded.`;
 }
 
 function buildRollSummary(rolls: QueueRoll[]): string {
@@ -110,7 +135,8 @@ function buildDynamicContext(
     ? `TURN RESOLUTION — narrate around these exact results:\n${buildRollSummary(rolls)}`
     : `TURN RESOLUTION — free action, no dice roll required.\nPlayer action: ${chipLabel}`;
 
-  const postCombatDirective = lastEncounterCompleted
+  const hasLivingEnemies = ((gameState.enemies ?? []) as any[]).some((e: any) => (e.hp ?? 0) > 0);
+  const postCombatDirective = lastEncounterCompleted && !hasLivingEnemies
     ? `\nSTORY TRANSITION: The previous combat encounter just resolved — no enemies remain here. Advance the story now: reveal what the party discovers (loot, a clue, a new passage, an NPC reaction), describe what lies ahead, and set up the next decision. Chips MUST be post-combat actions — exploration, investigation, movement, or social — never attacks against defeated enemies.`
     : "";
 
@@ -145,7 +171,7 @@ Reply with exactly one JSON object. No markdown fences, no prose before or after
 
 Field details:
 narrative — 3–4 sentences: (1) exact outcome of the action, (2) enemy/NPC/environment reaction, (3–4) what the character now faces. Be specific — name enemies, objects, distances, damage amounts. No vague filler.
-stateDeltas — key/value pairs for any game state changes (playerPos, inventory, etc.). Omit HP — use the combat effect tag instead. Use "enemies":[{"id":"kebab-slug","name":"...","hp":N,"maxHp":N,"x":N,"y":N}] with the FULL enemy list whenever any enemy appears, moves, or changes HP; omit key if no enemies change.
+stateDeltas — key/value pairs for any game state changes. Omit party HP — use the combat effect tag instead. PLAYER MOVEMENT: when the active character moves, "playerPos" is REQUIRED with exact integer {x,y} tile coordinates (1–2 tiles toward destination; never null or fractional). ENEMY MOVEMENT: when any enemy moves or attacks, update their x,y in "enemies" — include the FULL enemy list with current HP and updated positions whenever any enemy acts, moves, or takes damage. Omit "enemies" key only if nothing about any enemy changed this turn.
 chips — REQUIRED, never empty. ${CHIP_FORMAT_INSTRUCTION} When no enemies are present, chips MUST be exploration, investigation, movement, or social actions that advance the story. An empty chips array is invalid.
 encounterResult — use the string "completed" if combat fully resolves this turn; otherwise null.
 
@@ -210,7 +236,9 @@ export async function autoAdvance(
     where:   { id: gameId },
     include: {
       character:    { include: { mainHand: { select: { name: true } }, armor: { select: { name: true } } } },
-      storyPrompt:  true,
+      story:        { include: { acts: { select: { order: true, title: true, summary: true }, orderBy: { order: "asc" } } } },
+      currentAct:   true,
+      currentScene: true,
       map:          { include: { items: { select: { id: true, name: true, isEquipped: true, posX: true, posY: true } } } },
       partyMembers: {
         include: { character: { include: { mainHand: { select: { name: true } }, armor: { select: { name: true } } } } },
@@ -237,7 +265,7 @@ export async function autoAdvance(
     : (gameState.consecutiveMisses ?? 0) + 1;
 
   // ── Claude call ───────────────────────────────────────────────────────────
-  const staticCtx  = buildStaticContext(currentChar, game.partyMembers, game.storyPrompt, mapData);
+  const staticCtx  = buildStaticContext(currentChar, game.partyMembers, game.story, game.currentAct, game.currentScene, mapData);
   const dynamicCtx = buildDynamicContext(
     game.worldState as Record<string, any> | null,
     gameState,
@@ -261,6 +289,8 @@ export async function autoAdvance(
     recentMessages.unshift({ role: "user", content: "The adventure begins." });
   }
   recentMessages.push({ role: "user", content: `Player action: ${chipLabel}` });
+  // Prefill the first character of the assistant's response to guarantee JSON output.
+  recentMessages.push({ role: "assistant", content: "{" });
 
   let rawText: string;
   try {
@@ -274,7 +304,8 @@ export async function autoAdvance(
       messages: recentMessages,
     });
     const block = response.content.find((b): b is Anthropic.TextBlock => b.type === "text");
-    rawText = block?.text ?? "";
+    // Prepend the prefill character so the full JSON object can be parsed.
+    rawText = "{" + (block?.text ?? "");
   } catch (err: any) {
     console.error("autoAdvance AI error:", err.message);
     return { success: false, error: "The DM is temporarily unavailable." };
@@ -323,7 +354,7 @@ export async function autoAdvance(
 
   // ── XP / level-up ────────────────────────────────────────────────────────
   const encounterCompleted = parsed.encounterResult === "completed";
-  const xpAwarded   = encounterCompleted ? (XP_BY_DIFFICULTY[game.storyPrompt.difficulty] ?? 0) : 0;
+  const xpAwarded   = encounterCompleted ? (XP_BY_DIFFICULTY[game.story?.difficulty ?? "Standard"] ?? 0) : 0;
   const currentXp   = (currentChar.xp ?? 0) + xpAwarded;
   const previousLevel = currentChar.level ?? 1;
   const newLevel    = computeLevel(currentXp);
@@ -334,6 +365,19 @@ export async function autoAdvance(
   const newState: Record<string, any> = { ...gameState, consecutiveMisses };
   const deltas = { ...(parsed.stateDeltas ?? {}) };
   for (const key of RULES_ENGINE_KEYS) delete deltas[key];
+
+  // Discard playerPos if coordinates are not valid integers within map bounds.
+  if (deltas.playerPos !== undefined) {
+    const p = deltas.playerPos as any;
+    const w = (mapData.width  as number) ?? 999;
+    const h = (mapData.height as number) ?? 999;
+    if (
+      typeof p?.x !== "number" || !Number.isInteger(p.x) || p.x < 0 || p.x >= w ||
+      typeof p?.y !== "number" || !Number.isInteger(p.y) || p.y < 0 || p.y >= h
+    ) {
+      delete deltas.playerPos;
+    }
+  }
 
   // Capture position before deletion so D5 transaction write has the value
   const newPlayerPos = deltas.playerPos as { x: number; y: number } | undefined;
@@ -356,7 +400,9 @@ export async function autoAdvance(
     delete newState.levelUpNote;
   }
 
-  if (encounterCompleted) {
+  // Only trust encounterCompleted if no enemy in the updated state still has HP > 0.
+  const stillHasLivingEnemies = ((newState.enemies ?? []) as any[]).some((e: any) => (e.hp ?? 0) > 0);
+  if (encounterCompleted && !stillHasLivingEnemies) {
     newState.lastEncounterCompleted = true;
   } else {
     delete newState.lastEncounterCompleted;
@@ -385,9 +431,9 @@ export async function autoAdvance(
       const current = await tx.game.findUnique({ where: { id: gameId }, select: { version: true } });
       if (!current || current.version !== expectedVersion) throw new Error("STALE_TURN");
 
-      await tx.message.create({ data: { gameId, role: "PLAYER", content: chipLabel } });
+      await tx.message.create({ data: { gameId, role: "PLAYER", content: chipLabel, sceneId: game.currentSceneId } });
       await tx.message.create({
-        data: { gameId, role: "DUNGEON_MASTER", content: narrative, chips: toLegacyChips(chips) },
+        data: { gameId, role: "DUNGEON_MASTER", content: narrative, chips: toLegacyChips(chips), sceneId: game.currentSceneId },
       });
 
       if (xpAwarded > 0 || didLevelUp) {
@@ -424,7 +470,6 @@ export async function autoAdvance(
         data: {
           state:                 newState,
           worldState,
-          currentScenario:       narrative,
           narrativeHistory:      { push: narrative },
           activeSuggestionChips: chips as any,
           currentTurnCharacterId:nextCharId,

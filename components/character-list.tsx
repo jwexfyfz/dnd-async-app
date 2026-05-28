@@ -18,7 +18,7 @@ interface ActiveGame {
   updatedAt:              string;
   phase:                  string;
   currentTurnCharacterId: string | null;
-  storyPrompt:            { title: string };
+  story:                  { title: string } | null;
   partyMembers:           PartyMemberSlot[];
 }
 
@@ -119,7 +119,7 @@ export default function CharacterList({ characters, loading, onDeleted }: Props)
                   </h2>
                   <p className="text-sm text-slate-600">
                     This character is currently in{" "}
-                    <strong>{targetGame!.storyPrompt.title}</strong>. Deleting
+                    <strong>{targetGame!.story?.title}</strong>. Deleting
                     them will permanently remove them from the party and
                     irreversibly change the story for everyone else.
                   </p>
@@ -245,7 +245,7 @@ function CharacterCard({
         <div className="space-y-2 border-t border-slate-100 pt-3">
           <div>
             <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest">Campaign</p>
-            <p className="text-xs font-medium text-slate-700 truncate">{game.storyPrompt.title}</p>
+            <p className="text-xs font-medium text-slate-700 truncate">{game.story?.title}</p>
           </div>
 
           {game.phase === "LOBBY" ? (

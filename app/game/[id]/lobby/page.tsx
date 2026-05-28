@@ -38,7 +38,7 @@ interface GameData {
   id:          string;
   characterId: string;
   phase:       string;
-  storyPrompt: { title: string; description: string; difficulty: string };
+  story: { title: string; description: string; difficulty: string };
   partyMembers: PartyMember[];
 }
 
@@ -218,7 +218,7 @@ export default function LobbyPage() {
           <div>
             <h1 className="text-xl font-bold text-slate-900">Join the Adventure</h1>
             <p className="text-sm text-slate-500 mt-1">
-              Sign in to join <strong>{gameData.storyPrompt.title}</strong>.
+              Sign in to join <strong>{gameData.story.title}</strong>.
             </p>
           </div>
           <div className="text-4xl">{gameData.partyMembers.map(m => classEmoji(m.character.characterClass)).join(" ")}</div>
@@ -247,7 +247,7 @@ export default function LobbyPage() {
           <div>
             <h1 className="text-xl font-bold text-slate-900">Create a Character First</h1>
             <p className="text-sm text-slate-500 mt-1">
-              You need a hero before you can join <strong>{gameData.storyPrompt.title}</strong>.
+              You need a hero before you can join <strong>{gameData.story.title}</strong>.
             </p>
           </div>
           <Link
@@ -279,12 +279,12 @@ export default function LobbyPage() {
         {/* Scenario card */}
         <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
           <div className="flex items-start justify-between gap-3 mb-2">
-            <h1 className="text-lg font-bold text-slate-900">{gameData.storyPrompt.title}</h1>
-            <span className={`shrink-0 text-xs font-semibold px-2 py-0.5 border rounded-full ${diffStyle[gameData.storyPrompt.difficulty] ?? "bg-slate-100 text-slate-600 border-slate-200"}`}>
-              {gameData.storyPrompt.difficulty}
+            <h1 className="text-lg font-bold text-slate-900">{gameData.story.title}</h1>
+            <span className={`shrink-0 text-xs font-semibold px-2 py-0.5 border rounded-full ${diffStyle[gameData.story.difficulty] ?? "bg-slate-100 text-slate-600 border-slate-200"}`}>
+              {gameData.story.difficulty}
             </span>
           </div>
-          <p className="text-sm text-slate-600 leading-relaxed">{gameData.storyPrompt.description}</p>
+          <p className="text-sm text-slate-600 leading-relaxed">{gameData.story.description}</p>
         </div>
 
         {/* Invite link — only shown to members/host */}

@@ -34,7 +34,9 @@ export async function initializeGame(gameId: string): Promise<InitResult> {
     where:   { id: gameId },
     include: {
       character:    true,
-      storyPrompt:  true,
+      story:        { include: { acts: { select: { order: true, title: true, summary: true }, orderBy: { order: "asc" } } } },
+      currentAct:   true,
+      currentScene: true,
       map:          true,
       messages:     { take: 1 },
       partyMembers: { select: { userId: true } },
@@ -70,7 +72,7 @@ export async function initializeGame(gameId: string): Promise<InitResult> {
 
   // Build the same static/dynamic split used in takeTurn so that this
   // first call primes the cache for all future turns.
-  const staticPrompt = buildStaticPrompt(game.character, game.storyPrompt, mapData);
+  const staticPrompt = buildStaticPrompt(game.character, game.story, game.currentAct, game.currentScene, mapData);
   const dynamicPrompt = buildDynamicStatePrompt(gameState);
 
   let response;
@@ -137,9 +139,13 @@ export async function initializeGame(gameId: string): Promise<InitResult> {
 
 // ─── Shared prompt helpers (duplicated from take-turn to avoid circular imports) ──
 
-function buildStaticPrompt(character: any, storyPrompt: any, mapData: any): string {
+function buildStaticPrompt(character: any, story: any, currentAct: any, currentScene: any, mapData: any): string {
   const rooms = mapData.rooms?.map((r: any) => `${r.name}: ${r.description}`).join(" | ") ?? "—";
   const pois  = mapData.pois?.map((p: any) => `${p.name} [${p.symbol}] at (${p.x},${p.y})`).join(", ") ?? "—";
+
+  const actSummaries = story?.acts?.map((a: any) => `  Act ${a.order}: ${a.title} — ${a.summary}`).join("\n") ?? "";
+  const actBlock     = currentAct ? `CURRENT ACT ${currentAct.order}: ${currentAct.title}\n${currentAct.playerFacingDescription}` : "";
+  const sceneBlock   = currentScene ? `CURRENT SCENE ${currentScene.order}: ${currentScene.title}\n${currentScene.description}\nObjectives: ${(currentScene.objectives as string[]).join("; ")}` : "";
 
   return `You are a skilled, atmospheric Dungeon Master running an async D&D 5e campaign. Your prose is vivid but concise — 2–4 sentences of present-tense narration per turn. You create tension, wonder, and consequence without overwrought description.
 
@@ -147,8 +153,12 @@ CHARACTER
 Name: ${character.name} | Class: ${character.characterClass}
 STR ${character.baseStrength} | DEX ${character.baseDexterity} | CON ${character.baseConstitution} | INT ${character.baseIntelligence} | WIS ${character.baseWisdom} | CHA ${character.baseCharisma}
 
-SCENARIO: ${storyPrompt.title}
-${storyPrompt.description}
+OVERARCHING STORY: ${story?.title ?? "Unknown"}
+${actSummaries}
+
+${actBlock}
+
+${sceneBlock}
 
 MAP: ${mapData.name ?? "Unknown Location"}
 Rooms: ${rooms}
