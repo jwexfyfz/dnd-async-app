@@ -1,0 +1,49 @@
+{
+  "version": "1.0",
+  "timestamp": "2026-05-29T16:41:47.667Z",
+  "phase": "gamemap",
+  "phase_name": "GameMap Per-Game Isolation",
+  "phase_dir": ".planning",
+  "plan": "C",
+  "task": "C4",
+  "total_tasks": 10,
+  "status": "paused",
+  "completed_tasks": [
+    {"id": "C1", "name": "lib/chip-candidates.ts", "status": "done", "note": "Pure fn — no changes needed"},
+    {"id": "C2", "name": "lib/scene-advance.ts", "status": "done", "note": "Already reads GameMap.data; callers need gameId/currentActId added"},
+    {"id": "C7", "name": "components/turn-queue-sheet.tsx", "status": "done", "note": "No map/enemy reads — no changes"},
+    {"id": "C8", "name": "hooks/useTurnQueue.ts", "status": "done", "note": "No map/enemy reads — no changes"},
+    {"id": "C9", "name": "GameInventory cleanup", "status": "done", "note": "Zero references found anywhere"},
+    {"id": "C10", "name": "lib/create-game-map.ts", "status": "done", "note": "Already implemented"},
+    {"id": "get-map-items", "name": "app/actions/get-map-items.ts", "status": "done", "note": "Rewritten to accept gameId, reads GameMap.data for ground items + character FKs for equipped/backpack"}
+  ],
+  "remaining_tasks": [
+    {"id": "C4", "name": "app/actions/auto-advance.ts", "status": "not_started", "note": "Remove game.map include; load GameMap separately; fix Enemy.currentHp/posX/posY/isHiding queries→GameMap.data; fix item pickup→GameMap.data; fix HP resolution write→GameMap.data; add gameId+currentActId to checkSceneTrigger; fix act transition (remove mapId, add createGameMap); fix scene enemy loading"},
+    {"id": "C5", "name": "app/actions/take-turn.ts", "status": "not_started", "note": "Same as C4; also fix AoO dbEnemies posX/posY→GameMap.data; fix encounterCompleted check (Enemy.currentHp gone→GameMap.data)"},
+    {"id": "C3", "name": "app/actions/handle-player-action.ts", "status": "not_started", "note": "Review only — no map include, no enemy writes, no checkSceneTrigger; likely no changes needed"},
+    {"id": "C6", "name": "app/game/[id]/page.tsx + components", "status": "not_started", "note": "Change getMapItems(gameData.map.id) → getMapItems(gameData.id); pass gameId down to MemberInventoryPane and TotalACCard instead of mapId; PartyTab mapId prop → gameId"}
+  ],
+  "decisions": [
+    {"decision": "getMapItems now accepts gameId not mapId", "rationale": "Item.mapId removed from schema; items now tracked in GameMap.data.items"},
+    {"decision": "Enemy HP/position reads come from GameMap.data.enemies, not Enemy table rows", "rationale": "Enemy.currentHp, posX, posY, isHiding removed from schema in migration 20260529120000"},
+    {"decision": "Enemy HP writes go to GameMap.data.enemies[].currentHp via gameMap.update in transaction", "rationale": "Enemy.currentHp no longer exists"},
+    {"decision": "Item pickup marks GameMap.data.items[].isPickedUp=true instead of Item.posX=null", "rationale": "Item.posX/posY removed from schema"}
+  ],
+  "blockers": [],
+  "human_actions_pending": [],
+  "uncommitted_files": [
+    "app/actions/get-map-items.ts",
+    "app/actions/auto-advance.ts (pre-existing changes, not yet fixed)",
+    "app/actions/take-turn.ts (pre-existing changes, not yet fixed)",
+    "app/game/[id]/page.tsx (pre-existing changes, not yet fixed)",
+    "prisma/schema.prisma",
+    "prisma/seed*.ts/mjs",
+    "lib/chip-candidates.ts (new)",
+    "lib/create-game-map.ts (new)",
+    "lib/scene-advance.ts (new)",
+    "lib/weapon-types.ts (new)",
+    "prisma/migrations/20260529120000_add_game_map_and_cleanup/ (applied)"
+  ],
+  "next_action": "Open app/actions/auto-advance.ts and make the following changes in order: (1) Remove 'map: { include: { items } }' from game query at line 251; (2) After loading game, add GameMap query; (3) Replace 'game.map.data' with gmData; (4) Fix enemy pre-load (lines 278-288); (5) Fix dbEnemies query (lines 302-326); (6) Fix hiddenEnemyIds (lines 330-338); (7) Fix mapItems for prompt (line 369); (8) Fix HP resolution in transaction (lines 579-599); (9) Fix item pickup (lines 625-659); (10) Add gameId+currentActId to checkSceneTrigger calls; (11) Fix act transition (remove mapId, add createGameMap import and call)",
+  "context_notes": "Phase A (schema) and Phase B (backfill) are complete. The migration removed Enemy.currentHp/posX/posY/isHiding and Item.mapId/posX/posY. Game.mapId is gone. GameMap model is live and backfilled with 2 games verified. The code files (auto-advance.ts, take-turn.ts, page.tsx) still reference the old schema fields and will TypeScript-error on build. get-map-items.ts was just fixed this session. scene-advance.ts was already correct."
+}
