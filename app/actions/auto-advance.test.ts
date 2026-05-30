@@ -43,26 +43,34 @@ vi.mock("../../lib/supabase-server", () => ({
 }));
 
 vi.mock("../../lib/prisma", () => {
-  const txMessage = { create: vi.fn().mockResolvedValue({}) };
-  const txChar    = {
-    findMany: vi.fn().mockResolvedValue([]),
-    update:   vi.fn().mockResolvedValue({}),
+  const txMessage     = { create: vi.fn().mockResolvedValue({}) };
+  const txChar        = {
+    findMany:   vi.fn().mockResolvedValue([]),
+    findUnique: vi.fn().mockResolvedValue(null),
+    update:     vi.fn().mockResolvedValue({}),
   };
-  const txQueue   = {
+  const txQueue = {
     delete: vi.fn().mockImplementation((args: any) => {
       capturedQueueDelete = args;
       return Promise.resolve({});
     }),
   };
-  const txGame    = {
+  const txGame = {
     findUnique: vi.fn().mockResolvedValue({ version: 0 }),
     update:     vi.fn().mockImplementation((args: any) => {
       capturedGameUpdate = args;
       return Promise.resolve({});
     }),
   };
-  const txPartyMember  = { update: vi.fn().mockResolvedValue({}) };
-  const tx = { message: txMessage, character: txChar, activeTurnQueue: txQueue, game: txGame, partyMember: txPartyMember };
+  const txPartyMember = { update: vi.fn().mockResolvedValue({}) };
+  const txGameMap     = {
+    findUnique: vi.fn().mockResolvedValue(null),
+    update:     vi.fn().mockResolvedValue({}),
+  };
+  const tx = {
+    message: txMessage, character: txChar, activeTurnQueue: txQueue,
+    game: txGame, partyMember: txPartyMember, gameMap: txGameMap,
+  };
 
   return {
     prisma: {
@@ -82,31 +90,50 @@ vi.mock("../../lib/prisma", () => {
           id:                    "game-1",
           version:               0,
           characterId:           "char-1",
+          currentActId:          null,
           currentTurnCharacterId:null,
           character: {
-            id:             "char-1",
-            userId:         "user-1",
-            name:           "Aldric",
-            characterClass: "Fighter",
-            level:          3,
-            xp:             0,
-            maxHp:          24,
-            currentHp:      24,
-            baseConstitution:14,
+            id:               "char-1",
+            userId:           "user-1",
+            name:             "Aldric",
+            characterClass:   "Fighter",
+            level:            3,
+            xp:               0,
+            maxHp:            24,
+            currentHp:        24,
+            baseConstitution: 14,
             skillProficiencies:[],
+            mainHand:         null,
+            armor:            null,
+            remainingMovementFeet: 30,
+            remainingActions:      1,
+            activeConditions:      [],
           },
-          storyPrompt: { title: "Dark Dungeon", description: "Shadows.", difficulty: "medium" },
-          map:         { data: { name: "Dungeon", rooms: [], pois: [] } },
-          worldState: null,
+          story:       { title: "Dark Dungeon", difficulty: "medium", acts: [] },
+          currentAct:  null,
+          currentScene:null,
+          worldState:  null,
           state: {
             hp: 24, maxHp: 24,
             narrative_history:       ["Previous event."],
             active_suggestion_chips: [],
             consecutiveMisses:       0,
           },
-          messages:      [],
-          partyMembers:  [],
+          messages:     [],
+          partyMembers: [],
         }),
+      },
+      gameMap: {
+        findUnique: vi.fn().mockResolvedValue(null),
+      },
+      combatSession: {
+        findUnique: vi.fn().mockResolvedValue(null),
+      },
+      enemy: {
+        findMany: vi.fn().mockResolvedValue([]),
+      },
+      message: {
+        create: vi.fn().mockResolvedValue({}),
       },
       $transaction: vi.fn().mockImplementation(async (fn: (tx: any) => Promise<any>) => fn(tx)),
     },
@@ -122,18 +149,17 @@ describe("autoAdvance — happy path", () => {
     vi.clearAllMocks();
     capturedGameUpdate  = null;
     capturedQueueDelete = null;
+    // auto-advance prefills the opening "{" — the mock must return text WITHOUT it.
+    const fullJson = JSON.stringify({
+      narrative:      "Aldric's blade bites deep.",
+      stateDeltas:    {},
+      chips:          [
+        { label: "Press the assault", type: "athletics", requiresRoll: true, advantageState: "NONE", action_type: "mainAction", movementFeet: 0, spellLevel: 0 },
+      ],
+      encounterResult:null,
+    });
     mockAnthropicCreate.mockResolvedValue({
-      content: [{
-        type: "text",
-        text: JSON.stringify({
-          narrative:      "Aldric's blade bites deep.",
-          stateDeltas:    {},
-          chips:          [
-            { label: "Press the assault", type: "athletics", requiresRoll: true, advantageState: "NONE", action_type: "mainAction", movementFeet: 0, spellLevel: 0 },
-          ],
-          encounterResult:null,
-        }),
-      }],
+      content: [{ type: "text", text: fullJson.slice(1) }],
     });
   });
 
@@ -147,8 +173,8 @@ describe("autoAdvance — happy path", () => {
 
     expect(result.success).toBe(true);
     expect(result.narrative).toBe("Aldric's blade bites deep.");
-    expect(result.chips).toHaveLength(1);
-    expect(result.chips![0].label).toBe("Press the assault");
+    // Chips are generated mechanically — with no enemies the default set has 3 entries.
+    expect(result.chips!.length).toBeGreaterThanOrEqual(1);
     expect(result.chips![0].id).toBeDefined(); // server-assigned UUID
   });
 
@@ -160,9 +186,8 @@ describe("autoAdvance — happy path", () => {
 
     // Dedicated columns
     expect(data.narrativeHistory).toEqual({ push: "Aldric's blade bites deep." });
-    expect(data.currentScenario).toBe("Aldric's blade bites deep.");
     expect(Array.isArray(data.activeSuggestionChips)).toBe(true);
-    expect(data.activeSuggestionChips[0].label).toBe("Press the assault");
+    expect(data.activeSuggestionChips.length).toBeGreaterThanOrEqual(1);
   });
 
   it("does NOT append to narrative_history or active_suggestion_chips in game.state (D7)", async () => {

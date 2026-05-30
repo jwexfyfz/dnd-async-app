@@ -9,15 +9,17 @@ interface TurnQueueSheetProps {
   turnId:            string;
   initialRolls:      QueueRoll[];
   chipLabel:         string;
+  endPosition?:      { x: number; y: number };
+  itemId?:           string;
   onAdvanceComplete: (result: AutoAdvanceResult) => void;
   onDone:            () => void;
 }
 
 export default function TurnQueueSheet({
-  gameId, turnId, initialRolls, chipLabel, onAdvanceComplete, onDone,
+  gameId, turnId, initialRolls, chipLabel, endPosition, itemId, onAdvanceComplete, onDone,
 }: TurnQueueSheetProps) {
   const { phase, rolls, currentRollIndex, error, rollCurrent } = useTurnQueue(
-    gameId, turnId, initialRolls, chipLabel, onAdvanceComplete, onDone,
+    gameId, turnId, initialRolls, chipLabel, onAdvanceComplete, onDone, endPosition, itemId,
   );
 
   const isSliding      = phase === "sliding";

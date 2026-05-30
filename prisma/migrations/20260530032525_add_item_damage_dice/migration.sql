@@ -1,0 +1,6 @@
+-- AlterTable
+ALTER TABLE "GameMap" ALTER COLUMN "updatedAt" DROP DEFAULT;
+
+-- AlterTable
+ALTER TABLE "Item" ADD COLUMN     "attackBonus" INTEGER NOT NULL DEFAULT 0,
+ADD COLUMN     "damageDice" TEXT NOT NULL DEFAULT '1d4';

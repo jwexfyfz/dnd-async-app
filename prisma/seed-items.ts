@@ -118,6 +118,11 @@ interface ItemBlueprint {
   quantity:          number;
   isEquipped:        boolean;
   combatImpactLabel: string;
+  weaponType:        string;
+  rangeFeet:         number;
+  damageDice:        string;
+  attackBonus:       number;
+  blocksMovement?:   boolean;
 }
 
 // ─── Per-environment item builders ────────────────────────────────────────────
@@ -135,28 +140,28 @@ function buildItems(
     case "underground-storage":
       items.push(
         hi
-          ? { name: "Bone-Handled Stiletto", category: "Weapon",     description: "A slender dagger with a grip carved from old bone. Unsettling to hold.",             weightLbs: 0.75, quantity: 1, isEquipped: false, combatImpactLabel: "+5 Damage, +1 to Hit" }
-          : { name: "Rusty Dagger",          category: "Weapon",     description: "A short blade eaten by rust. Still cuts, but not prettily.",                         weightLbs: 1.0,  quantity: 1, isEquipped: false, combatImpactLabel: "+3 Damage" },
+          ? { name: "Bone-Handled Stiletto", category: "Weapon",     weaponType: "melee",        rangeFeet: 5,   damageDice: "1d4+1", attackBonus: 1, description: "A slender dagger with a grip carved from old bone. Unsettling to hold.",             weightLbs: 0.75, quantity: 1, isEquipped: false, combatImpactLabel: "+5 Damage, +1 to Hit" }
+          : { name: "Rusty Dagger",          category: "Weapon",     weaponType: "melee",        rangeFeet: 5,   damageDice: "1d4",   attackBonus: 0, description: "A short blade eaten by rust. Still cuts, but not prettily.",                         weightLbs: 1.0,  quantity: 1, isEquipped: false, combatImpactLabel: "+3 Damage" },
         hi
-          ? { name: "Padded Leather Vest",   category: "Armor",      description: "Layered leather panels stitched with coarse thread. Better than nothing.",            weightLbs: 5.0,  quantity: 1, isEquipped: false, combatImpactLabel: "+2 AC" }
-          : { name: "Tattered Cloak",        category: "Armor",      description: "A moth-eaten wool cloak. Offers little warmth and less respect.",                    weightLbs: 2.5,  quantity: 1, isEquipped: false, combatImpactLabel: "+1 AC" },
+          ? { name: "Padded Leather Vest",   category: "Armor",      weaponType: "melee",        rangeFeet: 5,   damageDice: "1d4",   attackBonus: 0, description: "Layered leather panels stitched with coarse thread. Better than nothing.",            weightLbs: 5.0,  quantity: 1, isEquipped: false, combatImpactLabel: "+2 AC" }
+          : { name: "Tattered Cloak",        category: "Armor",      weaponType: "melee",        rangeFeet: 5,   damageDice: "1d4",   attackBonus: 0, description: "A moth-eaten wool cloak. Offers little warmth and less respect.",                    weightLbs: 2.5,  quantity: 1, isEquipped: false, combatImpactLabel: "+1 AC" },
         signals.has("chest")
-          ? { name: "Arcane Vial",           category: "Consumable", description: "A sealed glass tube pulsing with faint blue energy.",                                weightLbs: 0.25, quantity: 1, isEquipped: false, combatImpactLabel: "+10 Temp HP" }
-          : { name: "Healing Potion",        category: "Consumable", description: "A vial of shimmering red liquid. Tastes of copper and honey.",                       weightLbs: 0.5,  quantity: 2, isEquipped: false, combatImpactLabel: "Heal 8 HP" },
+          ? { name: "Arcane Vial",           category: "Consumable", weaponType: "melee",        rangeFeet: 5,   damageDice: "1d4",   attackBonus: 0, description: "A sealed glass tube pulsing with faint blue energy.",                                weightLbs: 0.25, quantity: 1, isEquipped: false, combatImpactLabel: "+10 Temp HP" }
+          : { name: "Healing Potion",        category: "Consumable", weaponType: "melee",        rangeFeet: 5,   damageDice: "1d4",   attackBonus: 0, description: "A vial of shimmering red liquid. Tastes of copper and honey.",                       weightLbs: 0.5,  quantity: 2, isEquipped: false, combatImpactLabel: "Heal 8 HP" },
       );
       break;
 
     case "mining":
       items.push(
         hi
-          ? { name: "Reinforced Mining Pick", category: "Weapon",     description: "A heavy iron pick with a reinforced steel head. Doubles as a brutal weapon.",        weightLbs: 7.0, quantity: 1, isEquipped: false, combatImpactLabel: "+6 Damage, Armor Piercing" }
-          : { name: "Miner's Pickaxe",        category: "Weapon",     description: "A standard-issue pickaxe, worn smooth from years of use.",                          weightLbs: 5.0, quantity: 1, isEquipped: false, combatImpactLabel: "+4 Damage" },
+          ? { name: "Reinforced Mining Pick", category: "Weapon",     weaponType: "melee",        rangeFeet: 5,   damageDice: "1d6+2", attackBonus: 0, description: "A heavy iron pick with a reinforced steel head. Doubles as a brutal weapon.",        weightLbs: 7.0, quantity: 1, isEquipped: false, combatImpactLabel: "+6 Damage, Armor Piercing" }
+          : { name: "Miner's Pickaxe",        category: "Weapon",     weaponType: "melee",        rangeFeet: 5,   damageDice: "1d6",   attackBonus: 0, description: "A standard-issue pickaxe, worn smooth from years of use.",                          weightLbs: 5.0, quantity: 1, isEquipped: false, combatImpactLabel: "+4 Damage" },
         hi
-          ? { name: "Studded Leather Apron",  category: "Armor",      description: "Thick leather set with iron rivets. Covers the torso against rock and blade alike.", weightLbs: 8.0, quantity: 1, isEquipped: false, combatImpactLabel: "+3 AC" }
-          : { name: "Leather Work Gloves",    category: "Armor",      description: "Hardened leather gloves that protect hands in tight tunnels.",                       weightLbs: 0.5, quantity: 1, isEquipped: false, combatImpactLabel: "+1 AC, +2 Grapple" },
+          ? { name: "Studded Leather Apron",  category: "Armor",      weaponType: "melee",        rangeFeet: 5,   damageDice: "1d4",   attackBonus: 0, description: "Thick leather set with iron rivets. Covers the torso against rock and blade alike.", weightLbs: 8.0, quantity: 1, isEquipped: false, combatImpactLabel: "+3 AC" }
+          : { name: "Leather Work Gloves",    category: "Armor",      weaponType: "melee",        rangeFeet: 5,   damageDice: "1d4",   attackBonus: 0, description: "Hardened leather gloves that protect hands in tight tunnels.",                       weightLbs: 0.5, quantity: 1, isEquipped: false, combatImpactLabel: "+1 AC, +2 Grapple" },
         signals.has("lantern") || signals.has("ore")
-          ? { name: "Flask of Lamp Oil",      category: "Consumable", description: "A sealed tin flask of refined lamp oil. Burns long and hot.",                        weightLbs: 1.0, quantity: 3, isEquipped: false, combatImpactLabel: "+6 Fire Damage (thrown)" }
-          : { name: "Smelling Salts",         category: "Consumable", description: "A cloth pouch of sharp ammonia crystals. Snapped under the nose, it jolts the unconscious awake.", weightLbs: 0.1, quantity: 2, isEquipped: false, combatImpactLabel: "Remove Stunned condition" },
+          ? { name: "Flask of Lamp Oil",      category: "Consumable", weaponType: "thrown",       rangeFeet: 20,  damageDice: "1d6",   attackBonus: 0, description: "A sealed tin flask of refined lamp oil. Burns long and hot.",                        weightLbs: 1.0, quantity: 3, isEquipped: false, combatImpactLabel: "+6 Fire Damage (thrown)" }
+          : { name: "Smelling Salts",         category: "Consumable", weaponType: "melee",        rangeFeet: 5,   damageDice: "1d4",   attackBonus: 0, description: "A cloth pouch of sharp ammonia crystals. Snapped under the nose, it jolts the unconscious awake.", weightLbs: 0.1, quantity: 2, isEquipped: false, combatImpactLabel: "Remove Stunned condition" },
       );
       break;
 
@@ -164,48 +169,48 @@ function buildItems(
       // Arena loot starts equipped — fighters enter the ring ready.
       items.push(
         hi
-          ? { name: "Gladiator's Blade",      category: "Weapon", description: "A broad-bladed short sword etched with arena tallies.",                              weightLbs: 2.5, quantity: 1, isEquipped: true, combatImpactLabel: "+7 Damage, +2 to Hit" }
-          : { name: "Gladiator's Shortsword", category: "Weapon", description: "A well-balanced shortsword issued to arena fighters. The grip is wrapped in leather.", weightLbs: 2.0, quantity: 1, isEquipped: true, combatImpactLabel: "+6 Damage, +1 to Hit" },
+          ? { name: "Gladiator's Blade",      category: "Weapon", weaponType: "melee",        rangeFeet: 5,   damageDice: "1d6+2", attackBonus: 2, description: "A broad-bladed short sword etched with arena tallies.",                              weightLbs: 2.5, quantity: 1, isEquipped: true, combatImpactLabel: "+7 Damage, +2 to Hit" }
+          : { name: "Gladiator's Shortsword", category: "Weapon", weaponType: "melee",        rangeFeet: 5,   damageDice: "1d6",   attackBonus: 1, description: "A well-balanced shortsword issued to arena fighters. The grip is wrapped in leather.", weightLbs: 2.0, quantity: 1, isEquipped: true, combatImpactLabel: "+6 Damage, +1 to Hit" },
         hi
-          ? { name: "Banded Arena Shield",  category: "Armor",  description: "An iron-banded wooden shield bearing the arena crest.",                              weightLbs: 7.5, quantity: 1, isEquipped: true, combatImpactLabel: "+3 AC, Block Reaction" }
-          : { name: "Iron Shield",          category: "Armor",  description: "A plain round shield of hammered iron. Heavy but dependable.",                        weightLbs: 6.0, quantity: 1, isEquipped: true, combatImpactLabel: "+2 AC" },
+          ? { name: "Banded Arena Shield",  category: "Armor",  weaponType: "melee",        rangeFeet: 5,   damageDice: "1d4",   attackBonus: 0, description: "An iron-banded wooden shield bearing the arena crest.",                              weightLbs: 7.5, quantity: 1, isEquipped: true, combatImpactLabel: "+3 AC, Block Reaction" }
+          : { name: "Iron Shield",          category: "Armor",  weaponType: "melee",        rangeFeet: 5,   damageDice: "1d4",   attackBonus: 0, description: "A plain round shield of hammered iron. Heavy but dependable.",                        weightLbs: 6.0, quantity: 1, isEquipped: true, combatImpactLabel: "+2 AC" },
       );
       if (hi) {
-        items.push({ name: "Battle Stimulant", category: "Consumable", description: "A vial of alchemical tincture. Drinking it burns the throat and sharpens the body.", weightLbs: 0.1, quantity: 1, isEquipped: false, combatImpactLabel: "+4 Damage for 2 turns" });
+        items.push({ name: "Battle Stimulant", category: "Consumable", weaponType: "melee", rangeFeet: 5, damageDice: "1d4", attackBonus: 0, description: "A vial of alchemical tincture. Drinking it burns the throat and sharpens the body.", weightLbs: 0.1, quantity: 1, isEquipped: false, combatImpactLabel: "+4 Damage for 2 turns" });
       }
       break;
 
     case "wilderness":
       items.push(
         hi
-          ? { name: "Recurve Hunting Bow",    category: "Weapon",     description: "A recurve bow of laminated horn and wood. Pulls hard; shoots true.",               weightLbs: 2.0, quantity: 1, isEquipped: false, combatImpactLabel: "+5 Damage, 60ft Range" }
-          : { name: "Hunter's Shortbow",      category: "Weapon",     description: "A simple shortbow carved from a single ash stave.",                               weightLbs: 1.5, quantity: 1, isEquipped: false, combatImpactLabel: "+4 Damage, 40ft Range" },
+          ? { name: "Recurve Hunting Bow",    category: "Weapon",     weaponType: "ranged_heavy", rangeFeet: 150, damageDice: "1d8",   attackBonus: 0, description: "A recurve bow of laminated horn and wood. Pulls hard; shoots true.",               weightLbs: 2.0, quantity: 1, isEquipped: false, combatImpactLabel: "+5 Damage, 150ft Range" }
+          : { name: "Hunter's Shortbow",      category: "Weapon",     weaponType: "ranged_light", rangeFeet: 80,  damageDice: "1d6",   attackBonus: 0, description: "A simple shortbow carved from a single ash stave.",                               weightLbs: 1.5, quantity: 1, isEquipped: false, combatImpactLabel: "+4 Damage, 80ft Range" },
         hi
-          ? { name: "Ranger's Studded Cloak", category: "Armor",      description: "A hooded cloak set with iron studs. Breaks up your silhouette in tree cover.",     weightLbs: 4.0, quantity: 1, isEquipped: false, combatImpactLabel: "+2 AC, Stealth Advantage" }
-          : { name: "Ranger's Cloak",         category: "Armor",      description: "A mottled green-brown cloak favoured by wilderness scouts.",                       weightLbs: 2.0, quantity: 1, isEquipped: false, combatImpactLabel: "+1 AC, Stealth Advantage" },
-        { name: "Healing Herb Bundle",        category: "Consumable", description: "A tied bundle of dried medicinal herbs. Chewed or brewed into a paste.",           weightLbs: 0.2, quantity: 3, isEquipped: false, combatImpactLabel: "Heal 6 HP over 2 turns" },
+          ? { name: "Ranger's Studded Cloak", category: "Armor",      weaponType: "melee",        rangeFeet: 5,   damageDice: "1d4",   attackBonus: 0, description: "A hooded cloak set with iron studs. Breaks up your silhouette in tree cover.",     weightLbs: 4.0, quantity: 1, isEquipped: false, combatImpactLabel: "+2 AC, Stealth Advantage" }
+          : { name: "Ranger's Cloak",         category: "Armor",      weaponType: "melee",        rangeFeet: 5,   damageDice: "1d4",   attackBonus: 0, description: "A mottled green-brown cloak favoured by wilderness scouts.",                       weightLbs: 2.0, quantity: 1, isEquipped: false, combatImpactLabel: "+1 AC, Stealth Advantage" },
+        { name: "Healing Herb Bundle",        category: "Consumable", weaponType: "melee",        rangeFeet: 5,   damageDice: "1d4",   attackBonus: 0, description: "A tied bundle of dried medicinal herbs. Chewed or brewed into a paste.",           weightLbs: 0.2, quantity: 3, isEquipped: false, combatImpactLabel: "Heal 6 HP over 2 turns" },
       );
       break;
 
     case "dungeon":
       items.push(
         hi
-          ? { name: "Tempered Longsword",  category: "Weapon",     description: "A well-tempered longsword with a single fuller. Holds an edge in the cold dark.",    weightLbs: 3.5,  quantity: 1, isEquipped: false, combatImpactLabel: "+7 Damage, Crit on 19-20" }
-          : { name: "Dungeon Shortsword",  category: "Weapon",     description: "A shortsword built for the cramped corridors of old keeps.",                          weightLbs: 2.0,  quantity: 1, isEquipped: false, combatImpactLabel: "+5 Damage" },
+          ? { name: "Tempered Longsword",  category: "Weapon",     weaponType: "melee",        rangeFeet: 5,   damageDice: "1d8+2", attackBonus: 0, description: "A well-tempered longsword with a single fuller. Holds an edge in the cold dark.",    weightLbs: 3.5,  quantity: 1, isEquipped: false, combatImpactLabel: "+7 Damage, Crit on 19-20" }
+          : { name: "Dungeon Shortsword",  category: "Weapon",     weaponType: "melee",        rangeFeet: 5,   damageDice: "1d6",   attackBonus: 0, description: "A shortsword built for the cramped corridors of old keeps.",                          weightLbs: 2.0,  quantity: 1, isEquipped: false, combatImpactLabel: "+5 Damage" },
         hi
-          ? { name: "Chainmail Hauberk",   category: "Armor",      description: "Interlocked iron rings covering the torso. Heavy but reliable in sustained fighting.", weightLbs: 40.0, quantity: 1, isEquipped: false, combatImpactLabel: "+4 AC" }
-          : { name: "Banded Leather Vest", category: "Armor",      description: "Stiff leather reinforced with riveted iron bands across the chest.",                  weightLbs: 12.0, quantity: 1, isEquipped: false, combatImpactLabel: "+3 AC" },
+          ? { name: "Chainmail Hauberk",   category: "Armor",      weaponType: "melee",        rangeFeet: 5,   damageDice: "1d4",   attackBonus: 0, description: "Interlocked iron rings covering the torso. Heavy but reliable in sustained fighting.", weightLbs: 40.0, quantity: 1, isEquipped: false, combatImpactLabel: "+4 AC" }
+          : { name: "Banded Leather Vest", category: "Armor",      weaponType: "melee",        rangeFeet: 5,   damageDice: "1d4",   attackBonus: 0, description: "Stiff leather reinforced with riveted iron bands across the chest.",                  weightLbs: 12.0, quantity: 1, isEquipped: false, combatImpactLabel: "+3 AC" },
         signals.has("altar")
-          ? { name: "Blessed Scroll",      category: "Consumable", description: "Parchment inscribed with a warding prayer. Crumbles to ash after use.",               weightLbs: 0.1,  quantity: 1, isEquipped: false, combatImpactLabel: "Cast Shield of Faith" }
-          : { name: "Antitoxin Vial",      category: "Consumable", description: "A bitter liquid that neutralises common poisons for about an hour.",                  weightLbs: 0.2,  quantity: 2, isEquipped: false, combatImpactLabel: "Resist Poison 1 hour" },
+          ? { name: "Blessed Scroll",      category: "Consumable", weaponType: "melee",        rangeFeet: 5,   damageDice: "1d4",   attackBonus: 0, description: "Parchment inscribed with a warding prayer. Crumbles to ash after use.",               weightLbs: 0.1,  quantity: 1, isEquipped: false, combatImpactLabel: "Cast Shield of Faith" }
+          : { name: "Antitoxin Vial",      category: "Consumable", weaponType: "melee",        rangeFeet: 5,   damageDice: "1d4",   attackBonus: 0, description: "A bitter liquid that neutralises common poisons for about an hour.",                  weightLbs: 0.2,  quantity: 2, isEquipped: false, combatImpactLabel: "Resist Poison 1 hour" },
       );
       break;
 
     default: // generic
       items.push(
-        { name: "Short Sword",    category: "Weapon",     description: "A plain double-edged sword of modest length. The adventurer's standard.", weightLbs: 2.0,  quantity: 1, isEquipped: false, combatImpactLabel: "+4 Damage" },
-        { name: "Leather Armour", category: "Armor",      description: "Boiled and hardened leather shaped into a fitted cuirass.",                weightLbs: 10.0, quantity: 1, isEquipped: false, combatImpactLabel: "+2 AC" },
-        { name: "Trail Ration",   category: "Consumable", description: "Hard tack and dried meat wrapped in cloth. Keeps for weeks.",             weightLbs: 0.5,  quantity: 3, isEquipped: false, combatImpactLabel: "Restore 2 HP" },
+        { name: "Short Sword",    category: "Weapon",     weaponType: "melee", rangeFeet: 5, damageDice: "1d6",   attackBonus: 0, description: "A plain double-edged sword of modest length. The adventurer's standard.", weightLbs: 2.0,  quantity: 1, isEquipped: false, combatImpactLabel: "+4 Damage" },
+        { name: "Leather Armour", category: "Armor",      weaponType: "melee", rangeFeet: 5, damageDice: "1d4",   attackBonus: 0, description: "Boiled and hardened leather shaped into a fitted cuirass.",                weightLbs: 10.0, quantity: 1, isEquipped: false, combatImpactLabel: "+2 AC" },
+        { name: "Trail Ration",   category: "Consumable", weaponType: "melee", rangeFeet: 5, damageDice: "1d4",   attackBonus: 0, description: "Hard tack and dried meat wrapped in cloth. Keeps for weeks.",             weightLbs: 0.5,  quantity: 3, isEquipped: false, combatImpactLabel: "Restore 2 HP" },
       );
   }
 
@@ -215,18 +220,18 @@ function buildItems(
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main() {
-  const maps = await prisma.map.findMany({
-    include: { items: { select: { id: true }, where: { mapId: { not: null } } } },
-  });
+  const maps = await prisma.map.findMany({ select: { id: true, name: true, data: true } });
 
   console.log(`\nFound ${maps.length} map(s) in the database.\n`);
 
-  for (const map of maps) {
-    if (map.items.length > 0) {
-      console.log(`  [skip]  "${map.name}" — already has ${map.items.length} item(s).`);
-      continue;
-    }
+  const existingCount = await prisma.item.count();
+  if (existingCount > 0) {
+    console.log(`  [skip] ${existingCount} item(s) already exist in item table.`);
+    console.log("Done.\n");
+    return;
+  }
 
+  for (const map of maps) {
     const data       = parseMapData(map.data);
     const env        = classifyEnv(map.name, data.rooms);
     const complexity = computeComplexity(data);
@@ -235,7 +240,7 @@ async function main() {
 
     const created = await prisma.$transaction(
       blueprints.map((bp) =>
-        prisma.item.create({ data: { ...bp, mapId: map.id, type: bp.category.toUpperCase() } }),
+        prisma.item.create({ data: { ...bp, type: bp.category.toUpperCase(), blocksMovement: bp.blocksMovement ?? false } }),
       ),
     );
 

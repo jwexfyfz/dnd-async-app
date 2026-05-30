@@ -309,7 +309,6 @@ export async function handlePlayerAction(
       story:        true,
       currentAct:   true,
       currentScene: true,
-      map:          true,
       messages:    { orderBy: { createdAt: "asc" } },
       partyMembers: {
         include:  { character: true },
@@ -377,6 +376,12 @@ export async function handlePlayerAction(
     return { success: false, error: "The DM is temporarily unavailable." };
   }
 
+  const actorCurrentPos: { x: number; y: number } = (() => {
+    const m = game.partyMembers.find((m: any) => m.characterId === currentCharId);
+    if (m) return { x: m.posX, y: m.posY };
+    return (gameState.playerPos as { x: number; y: number } | undefined) ?? { x: 0, y: 0 };
+  })();
+
   // ── Deterministic chip generation (no LLM) ────────────────────────────────
   const chips = generateDeterministicChips(currentChar.characterClass, rollResult, success);
   // Promote to SuggestionChip format for the new dedicated column.
@@ -389,6 +394,8 @@ export async function handlePlayerAction(
     action_type:    "mainAction",
     movementFeet:   0,
     spellLevel:     0,
+    endPosition:    { ...actorCurrentPos },
+    actionTarget:   { ...actorCurrentPos },
   }));
 
   // ── Steps 2 + 3: Atomic transaction ──────────────────────────────────────

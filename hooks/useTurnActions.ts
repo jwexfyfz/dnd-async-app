@@ -91,6 +91,25 @@ export function useTurnActions(
     };
   }, [storageKey]);
 
+  // Sync up when DB values exceed local state — indicates a server-side round reset.
+  // Safe to apply because consumeResource only decrements; DB can only be higher
+  // after processNpcTurns resets action economy at the start of a new round.
+  useEffect(() => {
+    if (!initialRemaining) return;
+    const { remainingActions: dbA, remainingBonusActions: dbB, remainingMovementFeet: dbM } = initialRemaining;
+    setState(prev => {
+      if (dbA <= prev.mainAction.current && dbB <= prev.bonusAction.current && dbM <= prev.movementFeet.current) {
+        return prev;
+      }
+      return {
+        mainAction:   { current: Math.max(prev.mainAction.current,   dbA), max: caps.maxAction       },
+        bonusAction:  { current: Math.max(prev.bonusAction.current,  dbB), max: caps.maxBonusAction  },
+        movementFeet: { current: Math.max(prev.movementFeet.current, dbM), max: caps.maxMovementFeet },
+      };
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialRemaining?.remainingActions, initialRemaining?.remainingBonusActions, initialRemaining?.remainingMovementFeet]);
+
   // Reset to max only when caps genuinely change (e.g. level-up).
   // Comparing previous vs current caps — rather than a "did mount" flag —
   // is immune to React Strict Mode's double-fire, which would cause the flag
@@ -151,6 +170,7 @@ export function useTurnActions(
 
   // Restores every pool to its max and clears the stored mid-turn state.
   const resetTurnActions = useCallback((): void => {
+    console.log("[useTurnActions] resetTurnActions called", { characterId, storageKey });
     setState((prev) => {
       const next: TurnActionState = {
         mainAction:   { current: prev.mainAction.max,   max: prev.mainAction.max   },

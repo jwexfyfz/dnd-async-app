@@ -14,6 +14,27 @@ export interface ResolveRollResult {
   error?:     string;
 }
 
+/**
+ * Helper function to dynamically parse and roll any standard dice notation (e.g., "1d8", "2d6").
+ * It extracts the number of dice and sides, rolls them securely, and sums them up.
+ * Returns 0 if the formula doesn't contain a valid dice notation.
+ */
+function rollDiceFormula(formula: string): number {
+  // Regex looks for "XdX" (case-insensitive)
+  const match = formula.match(/^(\d+)d(\d+)/i);
+  if (!match) return 0;
+
+  const count = parseInt(match[1], 10);
+  const sides = parseInt(match[2], 10);
+  
+  let total = 0;
+  for (let i = 0; i < count; i++) {
+    // randomInt is [min, max), so sides + 1 makes it inclusive
+    total += randomInt(1, sides + 1);
+  }
+  return total;
+}
+
 export async function resolveRoll(
   gameId: string,
   turnId: string,
@@ -33,7 +54,7 @@ export async function resolveRoll(
 
   const roll     = { ...rolls[idx] };
   const modifier = parseModifier(roll.diceFormula);
-  const natural  = randomInt(1, 21); // crypto-secure [1, 20]
+  const natural  = rollDiceFormula(roll.diceFormula) || randomInt(1, 21); // crypto-secure [1, 20]
   const total    = natural + modifier;
   const isSuccess = roll.dc !== null ? total >= roll.dc : null;
 

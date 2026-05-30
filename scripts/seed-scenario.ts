@@ -15,7 +15,7 @@ async function main() {
   const game = await prisma.game.findFirst({
     where:   { status: "ACTIVE" },
     orderBy: { updatedAt: "desc" },
-    include: { character: true, story: true, currentAct: true, currentScene: true, map: true },
+    include: { character: true, story: true, currentAct: true, currentScene: true },
   });
 
   if (!game) { console.log("No active games found."); return; }

@@ -244,6 +244,8 @@ describe("buildNarrativeMessages", () => {
     const messages = buildNarrativeMessages(
       "The Dark Dungeon",
       "Shadows cling to every stone.",
+      "The Goblin's Lair",
+      "A dank chamber reeking of rot.",
       "Aldric",
       "Fighter",
       [],
@@ -263,18 +265,18 @@ describe("buildNarrativeMessages", () => {
   });
 
   it("labels roll 20 as CRITICAL SUCCESS", () => {
-    const [msg] = buildNarrativeMessages("S","D","Hero","Fighter",[],  "Act", 20, 12, 1, true);
+    const [msg] = buildNarrativeMessages("S","D","Scene","Desc","Hero","Fighter",[], "Act", 20, 12, 1, true);
     expect(msg.content).toContain("CRITICAL SUCCESS");
   });
 
   it("labels roll 1 as FUMBLE", () => {
-    const [msg] = buildNarrativeMessages("S","D","Hero","Fighter",[], "Act", 1, 12, 0, false);
+    const [msg] = buildNarrativeMessages("S","D","Scene","Desc","Hero","Fighter",[], "Act", 1, 12, 0, false);
     expect(msg.content).toContain("FUMBLE");
   });
 
   it("includes recent narrative history when provided", () => {
     const history = ["First event happened.", "Second event unfolded."];
-    const [msg] = buildNarrativeMessages("S","D","Hero","Fighter", history, "Act", 10, 12, 0, true);
+    const [msg] = buildNarrativeMessages("S","D","Scene","Desc","Hero","Fighter", history, "Act", 10, 12, 0, true);
     expect(msg.content).toContain("First event happened.");
     expect(msg.content).toContain("Second event unfolded.");
   });

@@ -18,6 +18,7 @@ export interface QueueRoll {
   totalResult:            number | null;
   isSuccess:              boolean | null;
   skipped:                boolean;  // auto-skipped (e.g. miss → skip damage)
+  targetEnemyId?:         string;   // attack rolls only — enemy being targeted
 }
 
 // Replaces the legacy Chip type for chips stored in Game.activeSuggestionChips.
@@ -32,6 +33,7 @@ export interface SuggestionChip {
   action_type:    ActionType;
   movementFeet:   number;          // 0 unless action_type === "movement"
   spellLevel:     number;          // 0 for cantrips/martial; >0 for leveled spells
-  endPosition?:   { x: number; y: number };  // destination tile for movement chips
-  actionTarget?:  { x: number; y: number };  // target tile for ranged attacks / spells
+  endPosition:    { x: number; y: number };   // destination tile (playerPos for non-movement)
+  actionTarget:   { x: number; y: number };   // target tile (playerPos for self-targeting)
+  itemId?:        string;                     // map item ID to pick up when chip is executed
 }

@@ -27,6 +27,8 @@ export function useTurnQueue(
   chipLabel:         string,
   onAdvanceComplete: (result: AutoAdvanceResult) => void,
   onDone:            () => void,
+  endPosition?:      { x: number; y: number },
+  itemId?:           string,
 ): UseTurnQueueReturn {
   const noRolls = initialRolls.length === 0;
 
@@ -47,7 +49,7 @@ export function useTurnQueue(
     advanceFired.current = true;
     setPhase("auto-advancing");
 
-    const result = await autoAdvance(gameId, turnId, chipLabel);
+    const result = await autoAdvance(gameId, turnId, chipLabel, endPosition, itemId);
     if (result.success) {
       onAdvanceRef.current(result);
     } else {
@@ -58,7 +60,7 @@ export function useTurnQueue(
     setTimeout(() => {
       onDoneRef.current();
     }, 1500);
-  }, [gameId, turnId, chipLabel]);
+  }, [gameId, turnId, chipLabel, endPosition]);
 
   // Free-action chips (no rolls) auto-advance immediately on mount.
   useEffect(() => {

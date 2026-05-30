@@ -37,8 +37,8 @@ export async function initializeGame(gameId: string): Promise<InitResult> {
       story:        { include: { acts: { select: { order: true, title: true, summary: true }, orderBy: { order: "asc" } } } },
       currentAct:   true,
       currentScene: true,
-      map:          true,
       messages:     { take: 1 },
+      gameMaps: { orderBy: { createdAt: "desc" as const }, take: 1 },
       partyMembers: { select: { userId: true } },
     },
   });
@@ -67,7 +67,7 @@ export async function initializeGame(gameId: string): Promise<InitResult> {
   if (!isHost) return { success: false, error: "Access denied." };
 
   const client  = new Anthropic();
-  const mapData = game.map.data as Record<string, any>;
+  const mapData = ((game as any).gameMaps?.[0]?.data ?? {}) as Record<string, any>;
   const gameState = game.state as Record<string, any>;
 
   // Build the same static/dynamic split used in takeTurn so that this

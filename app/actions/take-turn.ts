@@ -23,21 +23,19 @@ import { parseCombatEffects, clampHp } from "../../lib/combat-effect"
 import { resolveSkillCheck, SKILL_ABILITY_MAP } from "../../lib/skills"
 import type { SkillCheckResult } from "../../lib/skills";
 import { triggerCombat } from "./trigger-combat";
+import { checkSceneTrigger } from "../../lib/scene-advance";
 import { diagonalDistance, lineOfSight, checkAttackOfOpportunity } from "../../lib/grid";
 import { isCovered, rollStealthCheck, breaksStealth } from "../../lib/stealth";
+import { buildChipCandidates, candidatesToChips } from "../../lib/chip-candidates";
+import type { ChipCandidate } from "../../lib/chip-candidates";
+import type { GameTile } from "../../lib/tile-types";
+import { findActor } from "../../lib/game-map-utils";
+import { getActorVisibleTiles, debugLogVisibilityGrid } from "../../lib/visibility";
 
 // ─── Damage expression roller ────────────────────────────────────────────────
 
 import { rollDice } from "../../lib/dice";
-
-function rollDamageExpr(expr: string): number {
-  const m = expr.match(/^(\d+)d(\d+)([+-]\d+)?$/);
-  if (!m) return 1;
-  const count = parseInt(m[1], 10);
-  const sides = parseInt(m[2], 10);
-  const bonus = m[3] ? parseInt(m[3], 10) : 0;
-  return Math.max(1, rollDice(count, sides).total + bonus);
-}
+import { computeAttackDamage, rollDamageExpr } from "../../lib/mechanical-damage";
 
 // ─── Response helpers ─────────────────────────────────────────────────────────
 
@@ -162,15 +160,14 @@ Always reply with a single JSON object — no markdown fences, no extra text.
     // "plotFlags": [...]     (full updated list)
     // "activeObjective": "..." (if the objective changed)
     // "npcsEncountered": [{name, disposition, note}]
-    // "enemies": [{"id":"kebab-slug","name":"...","hp":N,"maxHp":N,"x":N,"y":N}]
-    //   Full list whenever any enemy appears, moves, or changes HP. Use existing id from CURRENT STATE; assign new kebab slug for new enemies. Omit when no enemy changes.
+    // "enemies": [{"id":"kebab-slug","name":"...","x":N,"y":N}]
+    //   Full list whenever any enemy appears or moves. Use existing id from CURRENT STATE; assign new kebab slug for new enemies. Never include "hp" — HP is computed from dice rolls only. Omit when no enemy changes.
+    // "mapUpdate": [{"x":N,"y":N,"tile":"F"}, ...]
+    //   Include when opening a door (D→F) or revealing unknown tiles (?→F). Copy coordinates from the POI's interactEffect.mapUpdate. Only D→F and ?→F are accepted.
   },
-  "chips": [{"text": "Under 6 words", "type": "perception", "requiresRoll": true, "advantageState": "NONE", "action_type": "mainAction", "movementFeet": 0, "spellLevel": 0}],
   "encounterResult": "completed" | null,
   "skillName": "ExactSkillName" | null
 }
-chips: REQUIRED 3–5 options, never empty. Each chip has "text" (under 6 words, situationally specific), "type" (skill from the list above), "requiresRoll" (true/false), "advantageState" ("NONE"|"ADVANTAGE"|"DISADVANTAGE"), "action_type" ("mainAction"|"bonusAction"|"movement"|"free"), "movementFeet" (0 unless movement), "spellLevel" (0 for martial/cantrip). When no enemies are present, chips MUST be exploration, investigation, movement, or social actions — never attacks against defeated enemies.${combatChipRules}
-CHIP GROUNDING: Every chip must only reference objects, items, enemies, and locations that are explicitly listed in CURRENT STATE (Items:, Enemies:, inventory, or named map POIs). Do not generate chips for objects that do not appear in CURRENT STATE — no invented furniture, scenery props, or improvised weapons unless that item is explicitly listed in Items: or the character's inventory.
 encounterResult: set to "completed" ONLY when a combat encounter fully resolves this turn — enemy defeated, fled, or room cleared. Set to null on all other turns including exploration, dialogue, and non-combat actions. Do not set "completed" for partial victories or ongoing combat.
 skillName: if this player action narratively warrants a skill check, return the EXACT canonical skill name from this list — Acrobatics, Animal Handling, Arcana, Athletics, Deception, History, Insight, Intimidation, Investigation, Medicine, Nature, Perception, Performance, Persuasion, Religion, Sleight of Hand, Stealth, Survival. Return null on all other turns (combat attacks, exploration without a check, dialogue without a roll).
 
@@ -178,12 +175,13 @@ DICE RULES — YOU MUST FOLLOW THESE EXACTLY
 The DICE RESULT in your context is code-generated and final. You MUST narrate around it — never contradict, alter, or invent a different outcome. The roll is a mechanical fact.
 
 COMBAT EFFECT TAG — ENGINE SIGNAL, HIDDEN FROM PLAYERS
-Whenever the narrative causes HP to change for any character (damage or healing), append one self-closing XML tag per affected character on its own line, placed after the closing brace of the JSON object:
-<combat_effect target_id="CHAR_ID" delta="N" type="TYPE" />
-  • target_id — the [id:…] value for that character from the PARTY list above
+Player weapon attack damage is computed mechanically from dice rolls — DO NOT emit combat_effect for it.
+Only emit combat_effect for: healing (potions, spells), environmental/trap damage, AoE spell damage, poison/condition damage not from a direct weapon attack roll.
+Format: <combat_effect target_id="ENTITY_ID" delta="N" type="TYPE" />
+  • target_id — for ENEMIES use the exact [id:…] value from the ENEMIES list; for party members use their character ID
   • delta     — integer HP change; negative for damage (e.g. "-8"), positive for healing (e.g. "5")
   • type      — short source label: "damage" | "healing" | "poison" | "fire" | "fall" | etc.
-If multiple characters are affected in one turn, emit one tag per character. If no HP changes this turn, omit the tag entirely — do not emit it for exploration, dialogue, or non-HP events.`;
+Omit entirely if no HP changes this turn.`;
 }
 
 function buildDynamicStatePrompt(
@@ -194,7 +192,7 @@ function buildDynamicStatePrompt(
   currentCharId: string,
   diceResult:    D20Result,
   consecutiveMisses: number,
-  mapItems:      { id: string; name: string; isEquipped: boolean; posX: number | null; posY: number | null }[],
+  mapItems:      { id: string; name: string; type: string; isEquipped: boolean; posX: number | null; posY: number | null }[],
   mapTiles?:     string[][],
   mechanicalContext?: string,
   hiddenEnemyIds?: Set<string>,
@@ -220,7 +218,7 @@ function buildDynamicStatePrompt(
   const enemies = dbEnemies
     ? dbEnemies.map(e => ({ id: e.id, name: e.name, hp: e.currentHp, maxHp: e.maxHp, x: e.posX, y: e.posY }))
     : ((gameState.enemies as { id: string; name: string; hp: number; maxHp: number; x: number; y: number }[] | undefined) ?? []);
-  const visibleEnemies = enemies.filter(e => !hiddenEnemyIds?.has(e.id));
+  const visibleEnemies = enemies.filter(e => e.hp > 0 && !hiddenEnemyIds?.has(e.id));
 
   // Resolve active actor position for LoS filtering
   const actorPos: { x: number; y: number } | null = partyMembers.length > 0
@@ -305,9 +303,8 @@ function buildConversationMessages(
   return out;
 }
 
-// ─── Action ───────────────────────────────────────────────────────────────────
 
-import type { Chip } from "../../types/chips";
+// ─── Action ───────────────────────────────────────────────────────────────────
 
 interface LevelUpResult {
   oldLevel:         number;
@@ -320,7 +317,7 @@ interface LevelUpResult {
 export interface TurnResult {
   success:          boolean;
   narrative?:       string;
-  chips?:           Chip[];
+  chips?:           SuggestionChip[];
   newState?:        Record<string, unknown>;
   error?:           string;
   diceResult?:      D20Result;
@@ -359,19 +356,34 @@ export async function takeTurn(
   const game = await prisma.game.findUnique({
     where:   { id: gameId },
     include: {
-      character:    { include: { mainHand: { select: { name: true } }, armor: { select: { name: true } } } },
+      character:    { include: { mainHand: { select: { name: true, rangeFeet: true, damageDice: true, attackBonus: true } }, armor: { select: { name: true } } } },
       story:        { include: { acts: { select: { order: true, title: true, summary: true }, orderBy: { order: "asc" } } } },
       currentAct:   true,
       currentScene: true,
-      map:          { include: { items: { select: { id: true, name: true, isEquipped: true, posX: true, posY: true } } } },
       messages:    { orderBy: { createdAt: "asc" } },
       partyMembers: {
-        include: { character: { include: { mainHand: { select: { name: true } }, armor: { select: { name: true } } } } },
+        include: { character: { include: { mainHand: { select: { name: true, rangeFeet: true, damageDice: true, attackBonus: true } }, armor: { select: { name: true } } } } },
         orderBy: { turnOrder: "asc" },
       },
     },
   });
   if (!game) return { success: false, error: "Game not found." };
+
+  const activeGameMap = game.currentActId
+    ? await prisma.gameMap.findUnique({
+        where:  { gameId_actId: { gameId, actId: game.currentActId } },
+        select: { id: true, data: true },
+      })
+    : null;
+  const gmData  = (activeGameMap?.data ?? {}) as Record<string, any>;
+  const mapData = gmData;
+
+  console.log("[take-turn] scene:", {
+    id:          game.currentScene?.id ?? null,
+    triggerType: game.currentScene?.triggerType ?? null,
+    triggerAreaX: game.currentScene?.triggerAreaX ?? null,
+    triggerAreaY: game.currentScene?.triggerAreaY ?? null,
+  });
 
   // ─── Combat intercept rule ────────────────────────────────────────────────
   // If no CombatSession exists and the chip is aggressive with living enemies,
@@ -415,8 +427,30 @@ export async function takeTurn(
 
   const contextWindow     = game.messages.slice(-ROLLING_WINDOW_SIZE);
   const gameState         = game.state as Record<string, any>;
-  const mapData           = game.map.data as Record<string, any>;
   const currentCharacter  = callerMember ? callerMember.character : game.character;
+
+  if (game.currentScene) {
+    const gmEnemyStateForInit = (gmData.enemyState ?? {}) as Record<string, { currentHp: number; maxHp: number }>;
+    const gmTilesForInit      = (gmData.tiles ?? []) as GameTile[][];
+    const validInitIds = gmTilesForInit.length > 0 ? Object.keys(gmEnemyStateForInit) : null;
+    const sceneEnemyTemplates = await prisma.enemy.findMany({
+      where:  { sceneId: game.currentScene.id, ...(validInitIds ? { id: { in: validInitIds } } : {}) },
+      select: { id: true, name: true, maxHp: true },
+    });
+    if (sceneEnemyTemplates.length > 0) {
+      const currentIds = new Set((gameState.enemies as any[] | undefined ?? []).map((e: any) => e.id));
+      const idsStale   = !sceneEnemyTemplates.every((e: { id: string }) => currentIds.has(e.id));
+      if (!gameState.enemies || (gameState.enemies as any[]).length === 0 || idsStale) {
+        gameState.enemies = sceneEnemyTemplates.flatMap((e: { id: string; name: string; maxHp: number }) => {
+          const st  = gmEnemyStateForInit[e.id];
+          const pos = gmTilesForInit.length > 0 ? findActor(gmTilesForInit, e.id) : null;
+          if (gmTilesForInit.length > 0 && !pos) return [];
+          return [{ id: e.id, name: e.name, hp: st?.currentHp ?? e.maxHp, maxHp: st?.maxHp ?? e.maxHp, x: pos?.x ?? 0, y: pos?.y ?? 0 }];
+        });
+        await prisma.game.update({ where: { id: gameId }, data: { state: gameState } });
+      }
+    }
+  }
 
   // Resolve effective stats (base + equipment bonuses) before any modifier math.
   // Must complete before the d20 roll so the modifier uses the equipment-adjusted total.
@@ -430,10 +464,22 @@ export async function takeTurn(
   const modifier       = abilityModifier(relevantScore);
 
   // ─── Spatial setup (needed for both first-call pre-checks and full execution) ─
-  const tiles = mapData.tiles as string[][] | undefined;
+  // Convert GameTile[][] → string[][] for lineOfSight / isCovered / buildChipCandidates.
+  const rawGameTiles = (gmData.tiles ?? []) as Array<Array<{ t: string }>>;
+  const tiles: string[][] | undefined = rawGameTiles.length > 0
+    ? rawGameTiles.map(row => row.map(t => t.t))
+    : undefined;
   const actorCurrentPos: { x: number; y: number } = callerMember
     ? { x: callerMember.posX, y: callerMember.posY }
     : { x: currentCharacter.posX, y: currentCharacter.posY };
+
+  if (rawGameTiles.length > 0) {
+    const playerVisSet = getActorVisibleTiles(rawGameTiles as unknown as GameTile[][], actorCurrentPos.x, actorCurrentPos.y);
+    const enemyMarkers = ((gameState.enemies as { id: string; hp: number; x: number; y: number }[] | undefined) ?? [])
+      .filter((e) => e.hp > 0)
+      .map((e) => ({ x: e.x, y: e.y, char: "E" }));
+    debugLogVisibilityGrid(rawGameTiles as unknown as GameTile[][], playerVisSet, actorCurrentPos.x, actorCurrentPos.y, `Player ${currentCharacter.name}`, enemyMarkers);
+  }
 
   // Server-Seeded Roll: when the caller provides a chipType, do not complete the
   // turn. Return a pending roll context so the client can present the dice UI
@@ -471,9 +517,16 @@ export async function takeTurn(
     const reactiveSlots = order.filter((s) => s.actorType === "ENEMY" && s.hasReaction && !s.isSurprised);
     if (reactiveSlots.length > 0) {
       const reactiveIds = reactiveSlots.map((s) => s.actorId);
-      const dbEnemies = await prisma.enemy.findMany({
-        where: { id: { in: reactiveIds } },
-        select: { id: true, posX: true, posY: true, attackBonus: true, damageDice: true },
+      const gmEnemyStateForAoO = (gmData.enemyState ?? {}) as Record<string, unknown>;
+      const validReactiveIds = rawGameTiles.length > 0 ? reactiveIds.filter(id => !!gmEnemyStateForAoO[id]) : reactiveIds;
+      const aooTemplates = await prisma.enemy.findMany({
+        where: { id: { in: validReactiveIds } },
+        select: { id: true, attackBonus: true, damageDice: true },
+      });
+      const gmEnemiesForAoO = (gmData.enemies ?? []) as Array<{ enemyId: string; posX: number; posY: number }>;
+      const dbEnemies = aooTemplates.map(e => {
+        const gm = gmEnemiesForAoO.find(g => g.enemyId === e.id);
+        return { ...e, posX: gm?.posX ?? 0, posY: gm?.posY ?? 0 };
       });
       const aooEnemies = dbEnemies.map((e) => ({
         id: e.id, pos: { x: e.posX, y: e.posY }, hasReaction: true, isSurprised: false,
@@ -513,12 +566,33 @@ export async function takeTurn(
     };
     const enemySlotIds = order.filter(s => s.actorType === "ENEMY").map(s => s.actorId);
     if (enemySlotIds.length > 0) {
-      dbEnemies = await prisma.enemy.findMany({
-        where:  { id: { in: enemySlotIds } },
-        select: { id: true, name: true, currentHp: true, maxHp: true, posX: true, posY: true },
+      const gmEnemyStateForCombat = (gmData.enemyState ?? {}) as Record<string, { currentHp: number; maxHp: number }>;
+      const gmTilesForCombat      = (gmData.tiles ?? []) as GameTile[][];
+      const validCombatSlotIds    = gmTilesForCombat.length > 0 ? enemySlotIds.filter(id => !!gmEnemyStateForCombat[id]) : enemySlotIds;
+      const enemyTemplatesForCombat = await prisma.enemy.findMany({
+        where:  { id: { in: validCombatSlotIds } },
+        select: { id: true, name: true, maxHp: true },
+      });
+      dbEnemies = enemyTemplatesForCombat.map(e => {
+        const st  = gmEnemyStateForCombat[e.id];
+        const pos = gmTilesForCombat.length > 0 ? findActor(gmTilesForCombat, e.id) : null;
+        return { id: e.id, name: e.name, currentHp: st?.currentHp ?? e.maxHp, maxHp: st?.maxHp ?? e.maxHp, posX: pos?.x ?? 0, posY: pos?.y ?? 0 };
       });
     }
   }
+
+  const candidateEnemies = dbEnemies
+    ? dbEnemies.map(e => ({ id: e.id, name: e.name, hp: e.currentHp, maxHp: e.maxHp, x: e.posX, y: e.posY }))
+    : ((gameState.enemies as { id: string; name: string; hp: number; maxHp: number; x: number; y: number }[] | undefined) ?? []);
+  const weaponRangeFeet = (currentCharacter.mainHand as any)?.rangeFeet ?? 5;
+  const candidates = buildChipCandidates({
+    playerPos:             actorCurrentPos,
+    enemies:               candidateEnemies,
+    weaponRangeFeet,
+    remainingMovementFeet: currentCharacter.remainingMovementFeet,
+    mapTiles:              tiles,
+    pois:                  ((mapData.pois ?? []) as { name: string; x: number; y: number }[]),
+  });
 
   const diceResult: D20Result = _seededD20 !== undefined
     ? {
@@ -543,13 +617,9 @@ export async function takeTurn(
     : ((currentCharacter as any).isHiding ?? false);
 
   const hiddenEnemyIds = new Set<string>();
-  const stateEnemies = (gameState.enemies as { id: string }[] | undefined) ?? [];
-  if (stateEnemies.length > 0) {
-    const hiding = await prisma.enemy.findMany({
-      where: { id: { in: stateEnemies.map(e => e.id) }, isHiding: true },
-      select: { id: true },
-    });
-    for (const e of hiding) hiddenEnemyIds.add(e.id);
+  const gmEnemiesForHiding = (gmData.enemies ?? []) as Array<{ enemyId: string; isHiding: boolean }>;
+  for (const e of gmEnemiesForHiding) {
+    if (e.isHiding) hiddenEnemyIds.add(e.enemyId);
   }
 
   let response;
@@ -573,8 +643,21 @@ export async function takeTurn(
             currentCharId,
             diceResult,
             consecutiveMisses,
-            (game.map as any).items ?? [],
-            mapData.tiles as string[][] | undefined,
+            (() => {
+              const tileArr = (gmData.tiles ?? []) as Array<Array<{ t: string; item?: string }>>;
+              const iState  = (gmData.itemState ?? {}) as Record<string, { isPickedUp: boolean; isVisible: boolean }>;
+              const out: { id: string; name: string; type: string; isEquipped: boolean; posX: number; posY: number }[] = [];
+              for (let _y = 0; _y < tileArr.length; _y++) {
+                for (let _x = 0; _x < tileArr[_y].length; _x++) {
+                  const tid = tileArr[_y][_x].item;
+                  if (!tid) continue;
+                  const st = iState[tid];
+                  if (st && !st.isPickedUp && st.isVisible) out.push({ id: tid, name: tid, type: "", isEquipped: false, posX: _x, posY: _y });
+                }
+              }
+              return out;
+            })(),
+            tiles,
             undefined,
             hiddenEnemyIds,
             dbEnemies,
@@ -591,19 +674,18 @@ export async function takeTurn(
   const textBlock = response.content.find((b): b is Anthropic.TextBlock => b.type === "text");
   const rawText   = textBlock?.text ?? "";
 
-  let parsed: { narrative: string; stateDeltas: Record<string, any>; chips: Chip[]; encounterResult?: "completed" | null; skillName?: string | null };
+  let parsed: { narrative: string; stateDeltas: Record<string, any>; encounterResult?: "completed" | null; skillName?: string | null };
   try {
     const match = rawText.match(/\{[\s\S]*\}/);
-    parsed = JSON.parse(match?.[0] ?? rawText);
+    const candidate = match?.[0] ?? rawText;
+    const repaired = candidate
+      .replace(/,(\s*[}\]])/g, '$1')
+      .replace(/([}\]])\s*\n(\s*[{[])/g, '$1,\n$2');
+    parsed = JSON.parse(repaired);
   } catch {
     parsed = {
       narrative:       salvageNarrative(rawText),
       stateDeltas:     {},
-      chips: [
-        { text: "Search the area",   type: "investigation" },
-        { text: "Listen carefully",  type: "perception" },
-        { text: "Move ahead",        type: "stealth" },
-      ],
       encounterResult: null,
     };
   }
@@ -664,7 +746,7 @@ export async function takeTurn(
               currentCharId,
               diceResult,
               consecutiveMisses,
-              (game.map as any).items ?? [],
+              ((gmData.items ?? []) as { itemId: string; posX: number; posY: number; isPickedUp: boolean; isVisible: boolean }[]).filter(i => !i.isPickedUp && i.isVisible).map(i => ({ id: i.itemId, name: i.itemId, type: "", isEquipped: false, posX: i.posX, posY: i.posY })),
               mapData.tiles as string[][] | undefined,
               mechanicalContext,
               hiddenEnemyIds,
@@ -684,27 +766,47 @@ export async function takeTurn(
 
     try {
       const match2 = rawText2.match(/\{[\s\S]*\}/);
-      finalParsed = JSON.parse(match2?.[0] ?? rawText2);
+      const candidate2 = match2?.[0] ?? rawText2;
+      const repaired2 = candidate2
+        .replace(/,(\s*[}\]])/g, '$1')
+        .replace(/([}\]])\s*\n(\s*[{[])/g, '$1,\n$2');
+      finalParsed = JSON.parse(repaired2);
     } catch {
       finalParsed = {
         narrative:       salvageNarrative(rawText2),
         stateDeltas:     {},
-        chips: [
-          { text: "Search the area",   type: "investigation" },
-          { text: "Listen carefully",  type: "perception" },
-          { text: "Move ahead",        type: "stealth" },
-        ],
         encounterResult: null,
       };
     }
   }
+
+  // ─── Mechanical attack damage (direct path) ───────────────────────────────
+  // When the player's d20 attack hits, compute damage from the weapon's damageDice
+  // instead of relying on AI-emitted <combat_effect> tags.
+  const isDirectAttackHit = diceResult.success && diceResult.dcType === "AC";
+  const weaponDamageDice = (currentCharacter.mainHand as any)?.damageDice as string | null ?? null;
+  const statModForDmg    = abilityModifier(primaryAttackScore(currentCharacter.characterClass, stats));
+  const targetPos        = chipSpatial?.actionTarget;
+  const attackTargetEnemy = (isDirectAttackHit && targetPos && dbEnemies)
+    ? dbEnemies.find(e => e.posX === targetPos.x && e.posY === targetPos.y) ?? null
+    : null;
+  const mechanicalDmg = attackTargetEnemy
+    ? computeAttackDamage(weaponDamageDice, statModForDmg, diceResult.critical)
+    : 0;
+  const mechanicalDmgEffect = (attackTargetEnemy && mechanicalDmg > 0)
+    ? { targetId: attackTargetEnemy.id, delta: -mechanicalDmg, type: "damage" }
+    : null;
 
   // ─── Combat Effects — resolve HP deltas from AI tags ─────────────────────
   // When a skill check ran, the second AI response (rawText2) is the one the DM
   // narrated from and where <combat_effect> tags will appear. Fall back to
   // rawText on non-skill turns.
   const effectsSource = validSkillName !== null ? rawText2 : rawText;
-  const rawEffects = parseCombatEffects(effectsSource);
+  const aiEffectsParsed = parseCombatEffects(effectsSource);
+  // Merge mechanical damage with AI effects; filter AI tags for the same target to prevent double-counting.
+  const rawEffects = mechanicalDmgEffect
+    ? [mechanicalDmgEffect, ...aiEffectsParsed.filter(e => e.targetId !== mechanicalDmgEffect.targetId)]
+    : aiEffectsParsed;
   // resolvedEffects is populated inside the $transaction so the HP read is
   // within the same serialisable snapshot as the HP write, preventing stale
   // newHp values from concurrent skill/combat turns.
@@ -721,7 +823,11 @@ export async function takeTurn(
   const didLevelUp     = newLevel > previousLevel;
 
   // Apply stateDeltas. For party games, route per-character fields into party-scoped maps.
-  const newState: Record<string, any> = { ...gameState, consecutiveMisses };
+  const newState: Record<string, any> = {
+    ...gameState,
+    consecutiveMisses,
+    sceneTurnCount: ((gameState.sceneTurnCount as number | undefined) ?? 0) + 1,
+  };
   const deltas = { ...finalParsed.stateDeltas };
 
   // Discard playerPos if coordinates are not valid integers within map bounds.
@@ -759,6 +865,29 @@ export async function takeTurn(
 
   Object.assign(newState, deltas);
 
+  // Compute enemy hp from DB (dice-authoritative) + rawEffects delta. Never trust AI-authored hp.
+  if (Array.isArray(newState.enemies)) {
+    const prevEnemies    = (gameState.enemies as any[] | undefined) ?? [];
+    const dbEnemyMap     = new Map((dbEnemies ?? []).map(e => [e.id, e]));
+    const effectDeltaMap = new Map(rawEffects.map(e => [e.targetId, e.delta]));
+    newState.enemies = (newState.enemies as any[]).map((e: any) => {
+      const prev   = prevEnemies.find((p: any) => p.id === e.id);
+      const db     = dbEnemyMap.get(e.id);
+      const maxHp  = e.maxHp ?? prev?.maxHp ?? db?.maxHp;
+      const baseHp = db?.currentHp ?? prev?.hp;
+      const hp = baseHp !== undefined
+        ? clampHp(baseHp, effectDeltaMap.get(e.id) ?? 0, maxHp ?? baseHp)
+        : e.hp;
+      return {
+        ...e,
+        hp,
+        maxHp,
+        x: e.x ?? prev?.x ?? db?.posX,
+        y: e.y ?? prev?.y ?? db?.posY,
+      };
+    });
+  }
+
   // Level-up narration injection (one-turn delay: stored now, read by next call to buildDynamicStatePrompt)
   if (didLevelUp) {
     newState.levelUpNote = `${currentCharacter.name} advanced to Level ${newLevel} this turn.`;
@@ -774,24 +903,7 @@ export async function takeTurn(
     delete newState.lastEncounterCompleted;
   }
 
-  // Promote chips to SuggestionChip format for the dedicated column.
-  let suggestionChips: SuggestionChip[] = (finalParsed.chips ?? []).map((c: any) => ({
-    id:             randomUUID(),
-    label:          c.text ?? c.label ?? "",
-    type:           c.type ?? "none",
-    requiresRoll:   c.requiresRoll !== false,
-    advantageState: c.advantageState ?? "NONE",
-    action_type:    c.action_type    ?? "mainAction",
-    movementFeet:   c.movementFeet   ?? 0,
-    spellLevel:     c.spellLevel     ?? 0,
-  }));
-  if (suggestionChips.length === 0) {
-    suggestionChips = [
-      { id: randomUUID(), label: "Search the area",  type: "investigation", requiresRoll: true,  advantageState: "NONE", action_type: "mainAction", movementFeet: 0,  spellLevel: 0 },
-      { id: randomUUID(), label: "Listen carefully", type: "perception",    requiresRoll: true,  advantageState: "NONE", action_type: "mainAction", movementFeet: 0,  spellLevel: 0 },
-      { id: randomUUID(), label: "Move ahead",       type: "athletics",     requiresRoll: false, advantageState: "NONE", action_type: "movement",   movementFeet: 30, spellLevel: 0 },
-    ];
-  }
+  const suggestionChips = candidatesToChips(candidates, weaponRangeFeet, actorCurrentPos);
 
   // Advance to the next party member in turn order.
   let nextCharId = currentCharId;
@@ -813,7 +925,7 @@ export async function takeTurn(
         data: { gameId, role: "PLAYER", content: sanitizedAction },
       });
       await tx.message.create({
-        data: { gameId, role: "DUNGEON_MASTER", content: finalParsed.narrative, chips: finalParsed.chips },
+        data: { gameId, role: "DUNGEON_MASTER", content: finalParsed.narrative, chips: suggestionChips as any },
       });
       if (xpAwarded > 0 || didLevelUp) {
         committedMaxHp = didLevelUp
@@ -837,27 +949,57 @@ export async function takeTurn(
           version:               { increment: 1 },
         },
       });
-      // Resolve combat HP deltas — route to character OR enemy table (gap fix).
+      // Resolve combat HP deltas — route to character OR GameMap.data.enemies for enemies.
       if (rawEffects.length > 0) {
-        const affectedIds     = [...new Set(rawEffects.map((e) => e.targetId))];
-        const affectedChars   = await tx.character.findMany({ where: { id: { in: affectedIds } }, select: { id: true, currentHp: true, maxHp: true } });
-        const affectedEnemies = await tx.enemy.findMany({ where: { id: { in: affectedIds } }, select: { id: true, currentHp: true, maxHp: true } });
-        const charIds   = new Set(affectedChars.map((c) => c.id));
-        const enemyIds  = new Set(affectedEnemies.map((e) => e.id));
-        const charHpMap  = new Map(affectedChars.map((c) => [c.id, c]));
-        const enemyHpMap = new Map(affectedEnemies.map((e) => [e.id, e]));
+        const affectedIds   = [...new Set(rawEffects.map((e) => e.targetId))];
+        const affectedChars = await tx.character.findMany({ where: { id: { in: affectedIds } }, select: { id: true, currentHp: true, maxHp: true } });
+        const charIds       = new Set(affectedChars.map((c) => c.id));
+        const charHpMap     = new Map(affectedChars.map((c) => [c.id, c]));
+
+        const liveGM = activeGameMap
+          ? await tx.gameMap.findUnique({ where: { id: activeGameMap.id }, select: { id: true, data: true } })
+          : null;
+        const liveGMEnemies = ((liveGM?.data as any)?.enemies ?? []) as Array<{ enemyId: string; currentHp: number; maxHp: number; posX: number; posY: number; status?: string; isHiding?: boolean; stealthRoll?: number; hasReaction?: boolean; isSurprised?: boolean; lootItemIds?: string[] }>;
+        const gmHpMap = new Map(liveGMEnemies.map(e => [e.enemyId, e]));
+        // dbEnemies fallback for enemies not yet seeded into the GameMap
+        const dbEnemyHpMap = new Map((dbEnemies ?? []).map(e => [e.id, e]));
+        const enemyIds = new Set(affectedIds.filter(id => !charIds.has(id) && (gmHpMap.has(id) || dbEnemyHpMap.has(id))));
+
         resolvedEffects = rawEffects
           .filter((e) => charIds.has(e.targetId) || enemyIds.has(e.targetId))
           .map((e) => {
-            const actor = charHpMap.get(e.targetId) ?? enemyHpMap.get(e.targetId)!;
-            return { ...e, newHp: clampHp(actor.currentHp, e.delta, actor.maxHp) };
+            if (charIds.has(e.targetId)) {
+              const actor = charHpMap.get(e.targetId)!;
+              return { ...e, newHp: clampHp(actor.currentHp, e.delta, actor.maxHp) };
+            }
+            // Prefer live GameMap HP; fall back to dbEnemies HP
+            const gme = gmHpMap.get(e.targetId);
+            const dbe = dbEnemyHpMap.get(e.targetId);
+            const currentHp = gme?.currentHp ?? dbe?.currentHp ?? 0;
+            const maxHp     = gme?.maxHp     ?? dbe?.maxHp     ?? currentHp;
+            return { ...e, newHp: clampHp(currentHp, e.delta, maxHp) };
           });
-        for (const eff of resolvedEffects) {
-          if (charIds.has(eff.targetId)) {
-            await tx.character.update({ where: { id: eff.targetId }, data: { currentHp: eff.newHp } });
-          } else {
-            await tx.enemy.update({ where: { id: eff.targetId }, data: { currentHp: eff.newHp } });
+
+        // Character HP updates
+        for (const eff of resolvedEffects.filter(e => charIds.has(e.targetId))) {
+          await tx.character.update({ where: { id: eff.targetId }, data: { currentHp: eff.newHp } });
+        }
+        // Enemy HP upsert — update existing or insert if not yet in GameMap
+        const enemyEffects = resolvedEffects.filter(e => enemyIds.has(e.targetId));
+        if (liveGM && enemyEffects.length > 0) {
+          const hpChanges = new Map(enemyEffects.map(e => [e.targetId, e.newHp]));
+          const updatedEnemies = liveGMEnemies.map(e =>
+            hpChanges.has(e.enemyId) ? { ...e, currentHp: hpChanges.get(e.enemyId)! } : e
+          );
+          for (const [enemyId, newHp] of hpChanges) {
+            if (!gmHpMap.has(enemyId)) {
+              const dbe = dbEnemyHpMap.get(enemyId);
+              if (dbe) {
+                updatedEnemies.push({ enemyId, currentHp: newHp, maxHp: dbe.maxHp, posX: dbe.posX, posY: dbe.posY, status: "ACTIVE", isHiding: false, stealthRoll: 0, hasReaction: true, isSurprised: false, lootItemIds: [] });
+              }
+            }
           }
+          await tx.gameMap.update({ where: { id: liveGM.id }, data: { data: { ...(liveGM.data as any), enemies: updatedEnemies } } });
         }
       }
 
@@ -868,8 +1010,12 @@ export async function takeTurn(
           .map((s) => s.actorId);
         if (slotEnemyIds.length > 0) {
           const hpOverrides = new Map(resolvedEffects.map((e) => [e.targetId, e.newHp]));
-          const slotEnemyHps = await tx.enemy.findMany({ where: { id: { in: slotEnemyIds } }, select: { id: true, currentHp: true } });
-          const allDead = slotEnemyHps.every((e) => (hpOverrides.get(e.id) ?? e.currentHp) <= 0);
+          const liveGMForCheck = activeGameMap
+            ? await tx.gameMap.findUnique({ where: { id: activeGameMap.id }, select: { data: true } })
+            : null;
+          const liveGMEnemiesForCheck = ((liveGMForCheck?.data as any)?.enemies ?? []) as Array<{ enemyId: string; currentHp: number }>;
+          const gmCheckMap = new Map(liveGMEnemiesForCheck.map(e => [e.enemyId, e.currentHp]));
+          const allDead = slotEnemyIds.every(id => (hpOverrides.get(id) ?? gmCheckMap.get(id) ?? 0) <= 0);
           if (allDead) {
             await tx.combatSession.delete({ where: { gameId } });
           }
@@ -948,6 +1094,62 @@ export async function takeTurn(
         }
       }
 
+      // POI interact effect — apply mapUpdate tile changes from interactEffect.
+      // Only "D"→"F" (open door) and "?"→"F" (reveal) are accepted.
+      if (activeGameMap && newState.mapUpdate) {
+        const changes = newState.mapUpdate as Array<{ x: number; y: number; tile: string }>;
+        delete newState.mapUpdate;
+        const gmForMap = await tx.gameMap.findUnique({ where: { id: activeGameMap.id }, select: { id: true, data: true } });
+        if (gmForMap) {
+          const tiles2 = (gmForMap.data as any).tiles as Array<Array<{ t: string; [k: string]: any }>>;
+          let changed2 = false;
+          for (const c of changes) {
+            const cell = tiles2[c.y]?.[c.x];
+            if (cell && (cell.t === "D" || cell.t === "?") && c.tile === "F") {
+              tiles2[c.y][c.x] = { ...cell, t: "F" };
+              changed2 = true;
+            }
+          }
+          if (changed2) {
+            await tx.gameMap.update({ where: { id: gmForMap.id }, data: { data: { ...(gmForMap.data as any), tiles: tiles2 } } });
+          }
+        }
+      }
+
+      // Mechanical scene advancement — evaluate trigger conditions against live DB state.
+      if (game.currentScene) {
+        const resolvedPos2 = newPlayerPos ?? actorCurrentPos;
+        const { triggered, nextScene } = await checkSceneTrigger(tx, game.currentScene, {
+          gameId,
+          currentActId:   game.currentActId ?? null,
+          activeCharId:   currentCharId,
+          isPartyGame:    game.partyMembers.length > 1,
+          callerMemberId: callerMember?.id,
+          sceneTurnCount: newState.sceneTurnCount as number,
+          callerPos:      resolvedPos2,
+        });
+        if (triggered && nextScene) {
+          newState.sceneTurnCount = 0;
+          const nextSceneGMEnemySt = (gmData.enemyState ?? {}) as Record<string, { currentHp: number; maxHp: number }>;
+          const nextSceneGMTiles   = (gmData.tiles ?? []) as GameTile[][];
+          const validNextSceneIds2 = nextSceneGMTiles.length > 0 ? Object.keys(nextSceneGMEnemySt) : null;
+          const nextSceneEnemyTemplates = await tx.enemy.findMany({
+            where:  { sceneId: nextScene.id, ...(validNextSceneIds2 ? { id: { in: validNextSceneIds2 } } : {}) },
+            select: { id: true, name: true, maxHp: true },
+          });
+          newState.enemies = nextSceneEnemyTemplates.map((e: { id: string; name: string; maxHp: number }) => {
+            const st  = nextSceneGMEnemySt[e.id];
+            const pos = nextSceneGMTiles.length > 0 ? findActor(nextSceneGMTiles, e.id) : null;
+            return { id: e.id, name: e.name, hp: st?.currentHp ?? e.maxHp, maxHp: st?.maxHp ?? e.maxHp, x: pos?.x ?? 0, y: pos?.y ?? 0 };
+          });
+          console.log(`[scene-advance] game=${gameId} → "${nextScene.title}"`);
+          await tx.game.update({
+            where: { id: gameId },
+            data:  { currentSceneId: nextScene.id, state: newState },
+          });
+        }
+      }
+
     });
   } catch (err: any) {
     if (err.message === "STALE_TURN") {
@@ -959,7 +1161,7 @@ export async function takeTurn(
   return {
     success:   true,
     narrative: finalParsed.narrative,
-    chips:     finalParsed.chips,
+    chips:     suggestionChips,
     newState,
     diceResult,
     leveledUp: didLevelUp,

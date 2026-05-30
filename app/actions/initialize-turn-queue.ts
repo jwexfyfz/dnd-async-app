@@ -6,6 +6,7 @@ import { createSupabaseServerClient } from "../../lib/supabase-server";
 import { computeCharacterStats } from "../../lib/character-stats";
 import { abilityModifier, proficiencyBonus } from "../../lib/dice";
 import { SKILL_MAP } from "../../config/skills";
+import { triggerCombat } from "./trigger-combat";
 import type { SuggestionChip, QueueRoll } from "../../types/suggestion-chip";
 import type { CharacterStats } from "../../lib/character-stats";
 
@@ -15,6 +16,12 @@ const ATTACK_KEYWORDS = [
   "attack", "strike", "hit", "shoot", "stab", "slash", "smash",
   "fire", "charge", "assault", "thrust", "cleave", "bash",
 ];
+
+// Chip types that map to weapon/spell attacks (generate ATTACK+DAMAGE rolls).
+const ATTACK_CHIP_TYPES_SET = new Set<string>([
+  "none", "strength", "dexterity", "constitution",
+  "intelligence", "wisdom", "charisma",
+]);
 
 function isAttackLabel(label: string): boolean {
   const lower = label.toLowerCase();
@@ -47,13 +54,16 @@ function signedMod(n: number): string {
 // ─── Roll builder ─────────────────────────────────────────────────────────────
 
 function buildRolls(
-  chip:       SuggestionChip,
-  charName:   string,
-  charClass:  string,
-  stats:      CharacterStats,
-  profBonus:  number,
-  proficiencies: string[],
-  targetAC:   number,
+  chip:            SuggestionChip,
+  charName:        string,
+  charClass:       string,
+  stats:           CharacterStats,
+  profBonus:       number,
+  proficiencies:   string[],
+  targetAC:        number,
+  weaponDamageDice?: string,
+  weaponAttackBonus?: number,
+  stateEnemies?:   { id: string; x: number; y: number }[],
 ): QueueRoll[] {
   if (!chip.requiresRoll) return [];
 
@@ -61,15 +71,17 @@ function buildRolls(
   // legacy "none" chips are weapon/spell attacks → generate ATTACK + DAMAGE rolls.
   // Named skill types (athletics, perception, etc.) are ability checks → single roll.
   // Keyword matching is a secondary fallback for any mislabelled chips.
-  const ATTACK_CHIP_TYPES = new Set<string>([
-    "none", "strength", "dexterity", "constitution",
-    "intelligence", "wisdom", "charisma",
-  ]);
-  if (ATTACK_CHIP_TYPES.has(chip.type) || isAttackLabel(chip.label)) {
+  if (ATTACK_CHIP_TYPES_SET.has(chip.type) || isAttackLabel(chip.label)) {
     const statKey    = primaryAttackStatKey(charClass);
-    const atkMod     = abilityModifier(stats[statKey].total) + profBonus;
-    const dmgDice    = defaultDamageDice(charClass);
+    const atkMod     = abilityModifier(stats[statKey].total) + profBonus + (weaponAttackBonus ?? 0);
+    const dmgDice    = weaponDamageDice ?? defaultDamageDice(charClass);
     const dmgMod     = abilityModifier(stats[statKey].total);
+
+    // Find the enemy at the chip's actionTarget position so auto-advance can apply damage mechanically.
+    const target = chip.actionTarget;
+    const targetEnemyId = target && stateEnemies
+      ? stateEnemies.find(e => e.x === target.x && e.y === target.y)?.id
+      : undefined;
 
     return [
       {
@@ -85,6 +97,7 @@ function buildRolls(
         totalResult:            null,
         isSuccess:              null,
         skipped:                false,
+        targetEnemyId,
       },
       {
         id:                     randomUUID(),
@@ -151,8 +164,11 @@ export async function initializeTurnQueue(
   const game = await prisma.game.findUnique({
     where:   { id: gameId },
     include: {
-      character:    true,
-      partyMembers: { include: { character: true }, orderBy: { turnOrder: "asc" } },
+      character:    { include: { mainHand: { select: { damageDice: true, attackBonus: true } } } },
+      partyMembers: {
+        include: { character: { include: { mainHand: { select: { damageDice: true, attackBonus: true } } } } },
+        orderBy:  { turnOrder: "asc" },
+      },
     },
   });
   if (!game) return { success: false, error: "Game not found." };
@@ -174,6 +190,51 @@ export async function initializeTurnQueue(
   const stats     = await computeCharacterStats(currentCharId);
   const profBonus = proficiencyBonus(currentChar.level);
 
+  const weapon = (currentChar as any).mainHand as { damageDice: string; attackBonus: number } | null;
+
+  // Build enemy positions from tiles (authoritative) so targetEnemyId is resolved from
+  // the same source as the chip's actionTarget — not from AI-authored gameState.enemies.
+  const activeGM = (game as any).currentActId
+    ? await prisma.gameMap.findUnique({
+        where:  { gameId_actId: { gameId, actId: (game as any).currentActId } },
+        select: { data: true },
+      })
+    : null;
+  const gmTiles   = ((activeGM?.data as any)?.tiles  ?? []) as Array<Array<{ t: string; actor?: { kind: string; id: string } }>>;
+  const gmEnemySt = ((activeGM?.data as any)?.enemyState ?? {}) as Record<string, { status?: string }>;
+  const tileEnemies: { id: string; x: number; y: number }[] = [];
+  for (let ty = 0; ty < gmTiles.length; ty++) {
+    for (let tx = 0; tx < gmTiles[ty].length; tx++) {
+      const actor = gmTiles[ty][tx]?.actor;
+      if (actor?.kind === "enemy" && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(actor.id)) {
+        const st = gmEnemySt[actor.id];
+        if (st?.status !== "DEFEATED" && st?.status !== "FLED") tileEnemies.push({ id: actor.id, x: tx, y: ty });
+      }
+    }
+  }
+  const stateEnemies = tileEnemies.length > 0
+    ? tileEnemies
+    : ((gameState.enemies as any[] | undefined) ?? [])
+        .map((e: any) => ({ id: e.id as string, x: e.x as number, y: e.y as number }));
+
+  // Ensure a CombatSession exists before queuing an attack.
+  // The queue-based path never goes through take-turn, so the combat intercept
+  // there doesn't fire — we must trigger it here instead.
+  const isAttackChip = chip.type === "mainAction" || ATTACK_CHIP_TYPES_SET.has(chip.type) || isAttackLabel(chip.label);
+  if (isAttackChip) {
+    const existingSession = await prisma.combatSession.findUnique({ where: { gameId } });
+    if (!existingSession) {
+      const livingEnemies = stateEnemies.filter(e => {
+        const gmSt = ((activeGM?.data as any)?.enemyState ?? {})[e.id];
+        return !gmSt || (gmSt.status !== "DEFEATED" && gmSt.status !== "FLED");
+      });
+      if (livingEnemies.length > 0) {
+        const result = await triggerCombat(gameId, livingEnemies.map(e => e.id));
+        if (!result.success) return { success: false, error: result.error };
+      }
+    }
+  }
+
   const rolls = buildRolls(
     chip,
     currentChar.name,
@@ -182,6 +243,9 @@ export async function initializeTurnQueue(
     profBonus,
     currentChar.skillProficiencies,
     targetAC,
+    weapon?.damageDice,
+    weapon?.attackBonus,
+    stateEnemies,
   );
 
   const turnId    = randomUUID();

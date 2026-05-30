@@ -2,6 +2,7 @@
 
 import { prisma } from "../../lib/prisma";
 import { createSupabaseServerClient } from "../../lib/supabase-server";
+import { createGameMap } from "../../lib/create-game-map";
 
 interface StartGameResult {
   success: boolean;
@@ -71,7 +72,6 @@ export async function startGame(
         storyId,
         currentActId:   act1.id,
         currentSceneId: act1scene1?.id ?? null,
-        mapId:          act1.map.id,
         state:          initialState,
         status:         "ACTIVE",
         phase:          "LOBBY",
@@ -85,6 +85,8 @@ export async function startGame(
         },
       },
     });
+
+    await createGameMap(game.id, act1.id);
 
     return { success: true, gameId: game.id };
   } catch (error: any) {

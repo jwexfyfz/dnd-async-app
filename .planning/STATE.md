@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: completed
-stopped_at: context exhaustion at 78% (2026-05-28)
-last_updated: "2026-05-28T04:27:36.132Z"
+status: executing
+stopped_at: context exhaustion at 75% (2026-05-30)
+last_updated: "2026-05-30T04:48:32.523Z"
 progress:
   total_phases: 4
   completed_phases: 4
@@ -17,21 +17,28 @@ progress:
 
 ## Status
 
-Phase 4 complete. All 5 plans (04-01 through 04-05) delivered and human-verified. Stats sub-tab proficiency highlights are DB-driven end-to-end. All 4 milestones complete.
+Tilemap overhaul in progress. Executing .planning/TILEMAP_PLAN.md.
+Phases A–C complete + D1 partial. Resuming at D2.
+
+## Active Work
+
+Plan: .planning/TILEMAP_PLAN.md
+Stopped at: context exhaustion at 75% (2026-05-30)
+Next: D2 → D3 → D4 → D5 → D6 → E1-E6 → F1-F6 → G1-G4
 
 ## Project Reference
 
 See: .planning/PROJECT.md (updated 2026-05-22)
 
 **Core value:** A solo or small-group D&D experience that fits into a busy life.
-**Current focus:** Milestone complete
+**Current focus:** Tilemap overhaul (tile-first model, viewport, LoS)
 
 ## Active Phase
 
-Phase: 04
-Name: Skills & Abilities Integration
-Status: Milestone complete
-Plans: 5 (04-01 through 04-05, 2 waves)
+Phase: TILEMAP
+Name: Tilemap Overhaul
+Status: In progress — see .planning/TILEMAP_PLAN.md for task checklist
+Plans: 1
 
 ## Phases
 
@@ -95,6 +102,6 @@ Plans: 5 (04-01 through 04-05, 2 waves)
 
 ## Session Continuity
 
-Last session: 2026-05-28T04:27:36.127Z
-Stopped at: context exhaustion at 78% (2026-05-28)
+Last session: 2026-05-30T04:48:32.500Z
+Stopped at: context exhaustion at 75% (2026-05-30)
 Resume file: None

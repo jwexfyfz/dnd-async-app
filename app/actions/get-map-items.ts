@@ -1,6 +1,7 @@
 "use server";
 
 import { prisma } from "../../lib/prisma";
+import type { GameTile, ItemInstance } from "../../lib/tile-types";
 
 export interface EquippableItemData {
   id:                string;
@@ -15,8 +16,6 @@ export interface EquippableItemData {
   posY:              number | null;
 }
 
-// Accepts a gameId. Returns ground items from GameMap.data plus item templates
-// referenced by the game's characters (equipped/backpack).
 export async function getMapItems(gameId: string): Promise<EquippableItemData[]> {
   const [activeGM, game] = await Promise.all([
     prisma.gameMap.findFirst({
@@ -42,13 +41,25 @@ export async function getMapItems(gameId: string): Promise<EquippableItemData[]>
   ]);
 
   const gmData    = (activeGM?.data ?? {}) as Record<string, any>;
-  const gmItems   = ((gmData.items ?? []) as Array<{
-    itemId: string; posX: number; posY: number; isPickedUp: boolean; isVisible: boolean;
-  }>);
-  const groundItems  = gmItems.filter((i) => !i.isPickedUp && i.isVisible);
-  const gmItemPosMap = new Map(groundItems.map((i) => [i.itemId, { posX: i.posX, posY: i.posY }]));
+  const tiles     = (gmData.tiles ?? []) as GameTile[][];
+  const itemState = (gmData.itemState ?? {}) as Record<string, ItemInstance>;
 
-  // Collect all character item IDs (equipped + backpack)
+  // Scan tiles for ground items — build position map
+  const gmItemPosMap = new Map<string, { posX: number; posY: number }>();
+  for (let y = 0; y < tiles.length; y++) {
+    const row = tiles[y];
+    for (let x = 0; x < row.length; x++) {
+      const itemId = row[x].item;
+      if (itemId) {
+        const state = itemState[itemId];
+        if (state && !state.isPickedUp && state.isVisible) {
+          gmItemPosMap.set(itemId, { posX: x, posY: y });
+        }
+      }
+    }
+  }
+
+  // Collect character-held item IDs
   const chars = game
     ? [game.character, ...game.partyMembers.map((m) => m.character)]
     : [];
@@ -61,7 +72,7 @@ export async function getMapItems(gameId: string): Promise<EquippableItemData[]>
     for (const id of c.backpack ?? []) characterItemIds.add(id);
   }
 
-  const allIds = [...new Set([...groundItems.map((i) => i.itemId), ...characterItemIds])];
+  const allIds = [...new Set([...gmItemPosMap.keys(), ...characterItemIds])];
   if (allIds.length === 0) return [];
 
   const templates = await prisma.item.findMany({

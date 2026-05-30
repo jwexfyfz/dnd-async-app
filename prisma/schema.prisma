@@ -27,32 +27,23 @@ model Item {
   statKey           String?
   statModifierBonus Int     @default(0)
 
-  mapId             String?
-  map               Map?    @relation(fields: [mapId], references: [id], onDelete: Cascade)
   category          String  @default("")
   description       String  @default("")
   weightLbs         Float   @default(0)
   quantity          Int     @default(1)
   isEquipped        Boolean @default(false)
   combatImpactLabel String  @default("")
+  weaponType        String  @default("melee")
+  rangeFeet         Int     @default(5)
+  damageDice        String  @default("1d4")
+  attackBonus       Int     @default(0)
+  blocksMovement    Boolean @default(false)
 
-  posX  Int?
-  posY  Int?
-
-  // Locked until a scene activates (null = visible from act start)
-  activeFromSceneId String?
-  activeFromScene   Scene?  @relation("SceneLockedItems", fields: [activeFromSceneId], references: [id])
-
-  // Enemy loot — appears on the enemy's tile when defeated
-  enemyId String?
-  enemy   Enemy?  @relation("EnemyLoot", fields: [enemyId], references: [id])
-
-  equippedAsMainHand Character[] @relation("CharacterMainHand")
-  equippedAsOffHand  Character[] @relation("CharacterOffHand")
-  equippedAsArmor    Character[] @relation("CharacterArmor")
-  equippedAsRing     Character[] @relation("CharacterRing")
-
-  @@index([mapId])
+  equippedAsMainHand      Character[] @relation("CharacterMainHand")
+  equippedAsOffHand       Character[] @relation("CharacterOffHand")
+  equippedAsArmor         Character[] @relation("CharacterArmor")
+  equippedAsRing          Character[] @relation("CharacterRing")
+  equippedAsEnemyMainHand Enemy[]     @relation("EnemyMainHand")
 }
 
 // ─── Character ────────────────────────────────────────────────────────────────
@@ -125,10 +116,11 @@ model Act {
   summary                 String // Always fed to AI DM — enables foreshadowing
   playerFacingDescription String // Shown to players when act begins
 
-  map     Map?
-  scenes  Scene[]
-  enemies Enemy[]
-  games   Game[]
+  map      Map?
+  scenes   Scene[]
+  enemies  Enemy[]
+  games    Game[]
+  gameMaps GameMap[]
 
   @@unique([storyId, order])
   @@index([storyId])
@@ -156,7 +148,6 @@ model Scene {
   completedAt DateTime?
 
   enemies  Enemy[]
-  items    Item[]    @relation("SceneLockedItems")
   messages Message[]
   games    Game[]
 
@@ -175,7 +166,6 @@ model Enemy {
   description String @default("")
 
   maxHp        Int
-  currentHp    Int
   strength     Int    @default(10)
   dexterity    Int    @default(10)
   constitution Int    @default(10)
@@ -187,16 +177,8 @@ model Enemy {
   attackBonus Int    @default(0)
   damageDice  String // e.g. "1d6+2"
 
-  posX Int
-  posY Int
-
-  isHiding    Boolean @default(false)
-  stealthRoll Int     @default(0)
-  hasReaction Boolean @default(true)
-  isSurprised Boolean @default(false)
-
-  status    EnemyStatus @default(DORMANT)
-  lootItems Item[]      @relation("EnemyLoot")
+  mainHandId String?
+  mainHand   Item?   @relation("EnemyMainHand", fields: [mainHandId], references: [id])
 
   @@index([actId])
   @@index([sceneId])
@@ -210,13 +192,6 @@ enum SceneTriggerType {
   TURN_LIMIT     // AI DM forces transition after triggerTurnLimit turns
 }
 
-enum EnemyStatus {
-  DORMANT   // future scene — hidden from players and AI context
-  ACTIVE    // current scene — visible and targetable
-  DEFEATED
-  FLED
-}
-
 // ─── Map ─────────────────────────────────────────────────────────────────────
 
 model Map {
@@ -228,8 +203,27 @@ model Map {
   actId String? @unique // one map per act
   act   Act?    @relation(fields: [actId], references: [id])
 
-  games Game[]
-  items Item[]
+  gameMaps GameMap[]
+}
+
+// ─── GameMap ──────────────────────────────────────────────────────────────────
+
+model GameMap {
+  id     String @id @default(uuid())
+  gameId String
+  game   Game   @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  actId  String
+  act    Act    @relation(fields: [actId], references: [id])
+  mapId  String
+  map    Map    @relation(fields: [mapId], references: [id])
+  // Full per-game map state: tiles, rooms, pois, items[], enemies[]
+  data   Json
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([gameId, actId])
+  @@index([gameId])
 }
 
 // ─── Active Game ──────────────────────────────────────────────────────────────
@@ -247,9 +241,6 @@ model Game {
 
   currentSceneId String?
   currentScene   Scene?  @relation(fields: [currentSceneId], references: [id])
-
-  mapId String
-  map   Map    @relation(fields: [mapId], references: [id])
 
   status GameStatus @default(ACTIVE)
   phase  GamePhase  @default(ACTIVE)
@@ -269,7 +260,7 @@ model Game {
   partyMembers     PartyMember[]
   pendingRolls     PendingRoll[]
   activeTurnQueues ActiveTurnQueue[]
-  gameInventory    GameInventory[]
+  gameMaps         GameMap[]
   combatSession    CombatSession?
 }
 
@@ -383,18 +374,6 @@ model ActiveTurnQueue {
 enum TurnQueueStatus {
   PENDING_ROLLS
   COMPLETED
-}
-
-// ─── Game Inventory ───────────────────────────────────────────────────────────
-
-model GameInventory {
-  id       String @id @default(uuid())
-  gameId   String
-  game     Game   @relation(fields: [gameId], references: [id], onDelete: Cascade)
-  itemName String
-  quantity Int    @default(1)
-
-  @@index([gameId])
 }
 
 // ─── Combat Session ───────────────────────────────────────────────────────────

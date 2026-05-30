@@ -12,7 +12,7 @@ export async function startAdventure(gameId: string) {
     where:   { id: gameId },
     include: {
       character:    true,
-      map:          true,
+      gameMaps:     { orderBy: { createdAt: "desc" as const }, take: 1, select: { data: true } },
       partyMembers: { include: { character: true } },
     },
   });
@@ -37,7 +37,7 @@ export async function startAdventure(gameId: string) {
     return a.character.name.localeCompare(b.character.name);
   });
 
-  const mapData = game.map.data as { playerStart: { x: number; y: number } };
+  const mapData = ((game as any).gameMaps?.[0]?.data ?? {}) as { playerStart?: { x: number; y: number } };
 
   // Build party-scoped position and HP maps, initialising everyone at the
   // map's start tile with HP derived from their CON modifier.
@@ -47,7 +47,7 @@ export async function startAdventure(gameId: string) {
 
   const turnUpdates = sorted.map((member, i) => {
     const hp = member.character.maxHp;   // canonical, stored at character creation (D-03)
-    partyPositions[member.characterId] = mapData.playerStart;
+    partyPositions[member.characterId] = mapData.playerStart ?? { x: 0, y: 0 };
     partyHp[member.characterId]        = hp;
     partyMaxHp[member.characterId]     = hp;
     return prisma.partyMember.update({

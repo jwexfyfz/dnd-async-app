@@ -29,119 +29,54 @@ interface ItemTemplate {
   quantity:          number;
   isEquipped:        boolean;
   combatImpactLabel: string;
+  weaponType:        string;
+  rangeFeet:         number;
+  damageDice:        string;
+  attackBonus:       number;
+  blocksMovement?:   boolean;
 }
 
 const ITEM_TEMPLATES: Record<string, ItemTemplate[]> = {
   "Cellar": [
-    {
-      name:              "Rusty Dagger",
-      category:          "Weapon",
-      weightLbs:         1.0,
-      quantity:          1,
-      isEquipped:        false,
-      combatImpactLabel: "+3 Damage",
-    },
-    {
-      name:              "Tattered Cloak",
-      category:          "Armor",
-      weightLbs:         2.5,
-      quantity:          1,
-      isEquipped:        false,
-      combatImpactLabel: "+1 AC",
-    },
-    {
-      name:              "Healing Potion",
-      category:          "Consumable",
-      weightLbs:         0.5,
-      quantity:          2,
-      isEquipped:        false,
-      combatImpactLabel: "Heal 8 HP",
-    },
+    { name: "Rusty Dagger",   category: "Weapon",     weaponType: "melee", rangeFeet: 5, weightLbs: 1.0, quantity: 1, isEquipped: false, combatImpactLabel: "+3 Damage",  damageDice: "1d4", attackBonus: 0 },
+    { name: "Tattered Cloak", category: "Armor",      weaponType: "melee", rangeFeet: 5, weightLbs: 2.5, quantity: 1, isEquipped: false, combatImpactLabel: "+1 AC",       damageDice: "1d4", attackBonus: 0 },
+    { name: "Healing Potion", category: "Consumable", weaponType: "melee", rangeFeet: 5, weightLbs: 0.5, quantity: 2, isEquipped: false, combatImpactLabel: "Heal 8 HP",   damageDice: "1d4", attackBonus: 0 },
   ],
 
   "Mine": [
-    {
-      name:              "Reinforced Mining Pick",
-      category:          "Weapon",
-      weightLbs:         6.0,
-      quantity:          1,
-      isEquipped:        false,
-      combatImpactLabel: "+5 Damage",
-    },
-    {
-      name:              "Leather Work Gloves",
-      category:          "Armor",
-      weightLbs:         0.5,
-      quantity:          1,
-      isEquipped:        false,
-      combatImpactLabel: "+1 AC, +2 Grapple",
-    },
-    {
-      name:              "Flask of Lamp Oil",
-      category:          "Consumable",
-      weightLbs:         1.0,
-      quantity:          3,
-      isEquipped:        false,
-      combatImpactLabel: "+6 Fire Damage (thrown)",
-    },
+    { name: "Reinforced Mining Pick", category: "Weapon",     weaponType: "melee",  rangeFeet: 5,  weightLbs: 6.0, quantity: 1, isEquipped: false, combatImpactLabel: "+5 Damage",             damageDice: "1d6+2", attackBonus: 0 },
+    { name: "Leather Work Gloves",    category: "Armor",      weaponType: "melee",  rangeFeet: 5,  weightLbs: 0.5, quantity: 1, isEquipped: false, combatImpactLabel: "+1 AC, +2 Grapple",     damageDice: "1d4",   attackBonus: 0 },
+    { name: "Flask of Lamp Oil",      category: "Consumable", weaponType: "thrown", rangeFeet: 20, weightLbs: 1.0, quantity: 3, isEquipped: false, combatImpactLabel: "+6 Fire Damage (thrown)", damageDice: "1d6",   attackBonus: 0 },
   ],
 
   "Arena": [
-    {
-      name:              "Gladiator's Shortsword",
-      category:          "Weapon",
-      weightLbs:         2.0,
-      quantity:          1,
-      isEquipped:        true,
-      combatImpactLabel: "+6 Damage, +2 to Hit",
-    },
-    {
-      name:              "Iron Shield",
-      category:          "Armor",
-      weightLbs:         6.0,
-      quantity:          1,
-      isEquipped:        true,
-      combatImpactLabel: "+2 AC",
-    },
+    { name: "Gladiator's Shortsword", category: "Weapon", weaponType: "melee", rangeFeet: 5, weightLbs: 2.0, quantity: 1, isEquipped: true, combatImpactLabel: "+6 Damage, +2 to Hit", damageDice: "1d6", attackBonus: 2 },
+    { name: "Iron Shield",            category: "Armor",  weaponType: "melee", rangeFeet: 5, weightLbs: 6.0, quantity: 1, isEquipped: true, combatImpactLabel: "+2 AC",                damageDice: "1d4", attackBonus: 0 },
   ],
 };
 
 // ─── Fallback items for unrecognised maps ──────────────────────────────────────
 
 const FALLBACK_ITEMS: ItemTemplate[] = [
-  {
-    name:              "Short Sword",
-    category:          "Weapon",
-    weightLbs:         2.0,
-    quantity:          1,
-    isEquipped:        false,
-    combatImpactLabel: "+4 Damage",
-  },
-  {
-    name:              "Leather Armour",
-    category:          "Armor",
-    weightLbs:         10.0,
-    quantity:          1,
-    isEquipped:        false,
-    combatImpactLabel: "+1 AC",
-  },
+  { name: "Short Sword",    category: "Weapon", weaponType: "melee", rangeFeet: 5, weightLbs: 2.0,  quantity: 1, isEquipped: false, combatImpactLabel: "+4 Damage", damageDice: "1d6", attackBonus: 0 },
+  { name: "Leather Armour", category: "Armor",  weaponType: "melee", rangeFeet: 5, weightLbs: 10.0, quantity: 1, isEquipped: false, combatImpactLabel: "+1 AC",     damageDice: "1d4", attackBonus: 0 },
 ];
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main() {
-  const maps = await prisma.map.findMany({
-    include: { items: { select: { id: true }, where: { mapId: { not: null } } } },
-  });
+  const maps = await prisma.map.findMany({ select: { id: true, name: true } });
 
   console.log(`Found ${maps.length} map(s).`);
 
-  for (const map of maps) {
-    if (map.items.length > 0) {
-      console.log(`  [skip] "${map.name}" — already has ${map.items.length} item(s).`);
-      continue;
-    }
+  const existingCount = await prisma.item.count();
+  if (existingCount > 0) {
+    console.log(`  [skip] ${existingCount} item(s) already exist in item table.`);
+    console.log("Done.");
+    return;
+  }
 
+  for (const map of maps) {
     // Match on a keyword in the map name; fall back to defaults.
     const matchKey = Object.keys(ITEM_TEMPLATES).find((k) => map.name.includes(k));
     const templates = matchKey ? ITEM_TEMPLATES[matchKey] : FALLBACK_ITEMS;
@@ -149,7 +84,7 @@ async function main() {
     const created = await prisma.$transaction(
       templates.map((t) =>
         prisma.item.create({
-          data: { ...t, mapId: map.id, type: t.category.toUpperCase() },
+          data: { ...t, type: t.category.toUpperCase(), blocksMovement: t.blocksMovement ?? false },
         }),
       ),
     );

@@ -145,6 +145,8 @@ function legacyChipToSuggestion(chip: Chip): SuggestionChip {
     action_type:    "mainAction" as ActionType,
     movementFeet:   0,
     spellLevel:     0,
+    endPosition:    { x: 0, y: 0 },
+    actionTarget:   { x: 0, y: 0 },
   };
 }
 
@@ -213,10 +215,11 @@ export default function GamePage() {
   const [localHpOverrides, setLocalHpOverrides] = useState<Record<string, number>>({});
   const [hpFlashing,       setHpFlashing]       = useState(false);
   const [mapItems,             setMapItems]             = useState<EquippableItemData[]>([]);
-  const [activeTurnQueue,      setActiveTurnQueue]      = useState<{ turnId: string; rolls: QueueRoll[]; chipLabel: string } | null>(null);
+  const [activeTurnQueue,      setActiveTurnQueue]      = useState<{ turnId: string; rolls: QueueRoll[]; chipLabel: string; endPosition?: { x: number; y: number }; itemId?: string } | null>(null);
   const [localSuggestionChips,   setLocalSuggestionChips]   = useState<SuggestionChip[] | null>(null);
   const [localNarrativeHistory,  setLocalNarrativeHistory]  = useState<string[]>([]);
   const [localCombatSession,     setLocalCombatSession]     = useState<CombatSessionData | null>(null);
+  const [actionResetKey,         setActionResetKey]         = useState(0);
 
   const initCalledRef  = useRef(false);
   // Stored so it can be cancelled on unmount, preventing a state update on an
@@ -284,7 +287,7 @@ export default function GamePage() {
 
   // ── Load map items for potion chip injection ──
   useEffect(() => {
-    if (gameData?.map?.id) getMapItems(gameData.map.id).then(setMapItems);
+    if (gameData?.id) getMapItems(gameData.id).then(setMapItems);
   }, [gameData?.map?.id]);
 
   // ── Auto-generate opening scene if no messages yet ──
@@ -326,6 +329,7 @@ export default function GamePage() {
   const healingPotions = mapItems.filter(
     (i) => i.category === "Consumable" && i.quantity > 0 && i.name.toLowerCase().includes("potion"),
   );
+  const selfPos = localState?.playerPos ?? { x: 0, y: 0 };
   const potionChip: SuggestionChip[] = myMaxHp > 0 && myHp / myMaxHp < 0.5 && healingPotions.length > 0
     ? [{
         id:             `potion-${healingPotions[0].id}`,
@@ -336,12 +340,47 @@ export default function GamePage() {
         action_type:    "free",
         movementFeet:   0,
         spellLevel:     0,
+        endPosition:    { ...selfPos },
+        actionTarget:   { ...selfPos },
       }]
     : [];
   const currentChips = [
     ...potionChip,
     ...stateChips.filter((c) => !potionChip.some((p) => p.label === c.label)),
   ];
+
+  // ── Debug logging ────────────────────────────────────────────────────────────
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (currentChips.length === 0) return;
+    console.group("[chips] displayed chips");
+    currentChips.forEach((c) => console.log(JSON.stringify(c)));
+    console.groupEnd();
+  }, [currentChips.map((c) => c.id).join(",")]);
+
+  useEffect(() => {
+    const VP = 10; // matches VP_RADIUS in lib/visibility.ts
+    const pPos = localState?.playerPos ?? { x: 0, y: 0 };
+    const allEnemies = localState?.enemies ?? [];
+    const visibleAlive = allEnemies.filter((e: any) =>
+      e.hp > 0 &&
+      Math.abs(e.x - pPos.x) <= VP &&
+      Math.abs(e.y - pPos.y) <= VP,
+    );
+    console.group("[scene]");
+    console.log("objective:", localState?.activeObjective ?? "none");
+    console.log(
+      "enemies (viewport/alive):",
+      visibleAlive.map((e: any) => `${e.name}[id:${e.id},hp:${e.hp}/${e.maxHp},pos:(${e.x},${e.y})]`).join(" | ") || "none",
+    );
+    const hiddenOrDead = allEnemies.filter((e: any) => !visibleAlive.includes(e));
+    if (hiddenOrDead.length > 0) {
+      console.log("  hidden/dead:", hiddenOrDead.map((e: any) => `${e.name}[hp:${e.hp},pos:(${e.x},${e.y})]`).join(" | "));
+    }
+    console.log("items:", mapItems.filter((i) => i.posX !== null).map((i) => `${i.name}@(${i.posX},${i.posY})`).join(", ") || "none");
+    console.groupEnd();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [localState?.enemies, mapItems]);
 
   // ── Chip handler — initializes the turn queue and opens the roll sheet ──
   async function handleChipClick(chip: SuggestionChip) {
@@ -378,7 +417,7 @@ export default function GamePage() {
       if (result.success && result.turnId) {
         if ((result.rolls ?? []).length === 0) {
           // No rolls needed (free action / movement) — skip the roll sheet entirely.
-          const advResult = await autoAdvance(gameId, result.turnId, chip.label);
+          const advResult = await autoAdvance(gameId, result.turnId, chip.label, chip.endPosition, chip.itemId);
           if (advResult.success) {
             handleAdvanceComplete(advResult);
           } else {
@@ -386,7 +425,7 @@ export default function GamePage() {
             setTurnError(advResult.error ?? "The Dungeon Master is temporarily unavailable. Please try again.");
           }
         } else {
-          setActiveTurnQueue({ turnId: result.turnId, rolls: result.rolls ?? [], chipLabel: chip.label });
+          setActiveTurnQueue({ turnId: result.turnId, rolls: result.rolls ?? [], chipLabel: chip.label, endPosition: chip.endPosition, itemId: chip.itemId });
         }
       } else {
         setLocalMessages((prev) => prev.slice(0, -1));
@@ -432,6 +471,7 @@ export default function GamePage() {
     if (result.newState) setLocalState(result.newState as unknown as GameState);
     if (result.narrative) setLocalNarrativeHistory((prev) => [...prev, result.narrative!]);
     setLevelUpResult(result.levelUpResult ?? null);
+    if (result.actionsReset) setActionResetKey((k) => k + 1);
 
     const applyHpEffects = (effects: { targetId: string; newHp: number }[] | undefined) => {
       if (!effects || effects.length === 0) return false;
@@ -481,6 +521,8 @@ export default function GamePage() {
       action_type:    "free",
       movementFeet:   0,
       spellLevel:     0,
+      endPosition:    { ...selfPos },
+      actionTarget:   { ...selfPos },
     });
   }
 
@@ -509,10 +551,21 @@ export default function GamePage() {
   const isPartyGame  = partyMembers.length > 1;
   const myCharId     = myMember?.characterId ?? character.id;
 
+  console.log("[page] chipsEnabled gate", {
+    isPartyGame,
+    isMyTurn,
+    activeTurnQueue: !!activeTurnQueue,
+    chipsEnabled: (!isPartyGame || isMyTurn) && !activeTurnQueue,
+    currentTurnCharacterId: gameData?.currentTurnCharacterId ?? null,
+    myCharacterId: myMember?.characterId ?? null,
+  });
+
   // Derive map overlay markers from live state
-  const enemyMarkers: EnemyMarker[] = (localState?.enemies ?? []).map((e) => ({
-    id: e.id, name: e.name, pos: { x: e.x, y: e.y }, hp: e.hp, maxHp: e.maxHp,
-  }));
+  const enemyMarkers: EnemyMarker[] = (localState?.enemies ?? [])
+    .filter((e) => e.hp > 0)
+    .map((e) => ({
+      id: e.id, name: e.name, pos: { x: e.x, y: e.y }, hp: e.hp, maxHp: e.maxHp,
+    }));
   const itemMarkers: ItemMarker[] = mapItems
     .filter((i) => !i.isEquipped && i.posX !== null && i.posY !== null)
     .map((i) => ({ id: i.id, name: i.name, pos: { x: i.posX!, y: i.posY! } }));
@@ -637,6 +690,7 @@ export default function GamePage() {
             isInitializing={isInitializing}
             isTakingTurn={isTakingTurn}
             chipsEnabled={(!isPartyGame || isMyTurn) && !activeTurnQueue}
+            actionResetKey={actionResetKey}
             diceResult={diceResult}
             levelUpResult={levelUpResult}
             skillCheckResult={skillCheckResult}
@@ -650,7 +704,6 @@ export default function GamePage() {
             currentTurnCharacterId={gameData.currentTurnCharacterId}
             currentUserId={currentUserId}
             hpOverrides={localHpOverrides}
-            mapId={gameData.map.id}
             gameId={gameData.id}
           />
         )}
@@ -664,6 +717,8 @@ export default function GamePage() {
           turnId={activeTurnQueue.turnId}
           initialRolls={activeTurnQueue.rolls}
           chipLabel={activeTurnQueue.chipLabel}
+          endPosition={activeTurnQueue.endPosition}
+          itemId={activeTurnQueue.itemId}
           onAdvanceComplete={handleAdvanceComplete}
           onDone={handleQueueDone}
         />
@@ -677,7 +732,7 @@ export default function GamePage() {
 function FieldTab({
   state, narrativeHistory, map, story, messages, chips, character, partyMembers,
   partyMarkers, enemyMarkers, itemMarkers, hpOverrides, combatSession,
-  onChipClick, onEndTurn, isInitializing, isTakingTurn, chipsEnabled,
+  onChipClick, onEndTurn, isInitializing, isTakingTurn, chipsEnabled, actionResetKey,
   diceResult, levelUpResult, skillCheckResult, turnError,
 }: {
   state:             GameState;
@@ -698,6 +753,7 @@ function FieldTab({
   isInitializing:    boolean;
   isTakingTurn:      boolean;
   chipsEnabled:      boolean;
+  actionResetKey:    number;
   diceResult?:          D20Result | null;
   levelUpResult?:       LevelUpResult | null;
   skillCheckResult?:    SkillCheckResult | null;
@@ -713,12 +769,12 @@ function FieldTab({
   const isLoading     = isInitializing || isTakingTurn;
 
 
-  // console.log("[FieldTab] character from DB:", {
-  //   id:                    character.id,
-  //   remainingActions:      character.remainingActions,
-  //   remainingBonusActions: character.remainingBonusActions,
-  //   remainingMovementFeet: character.remainingMovementFeet,
-  // });
+  console.log("[FieldTab] character from DB:", {
+    id:                    character.id,
+    remainingActions:      character.remainingActions,
+    remainingBonusActions: character.remainingBonusActions,
+    remainingMovementFeet: character.remainingMovementFeet,
+  });
 
   const { mainAction, bonusAction, movementFeet, evaluateActionCost, consumeResource, resetTurnActions } =
     useTurnActions(character.characterClass, character.level, character.id, {
@@ -726,6 +782,12 @@ function FieldTab({
       remainingBonusActions: character.remainingBonusActions,
       remainingMovementFeet: character.remainingMovementFeet,
     });
+
+  // Restore full action economy when the server signals a new round started.
+  useEffect(() => {
+    if (actionResetKey > 0) resetTurnActions();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [actionResetKey]);
 
   // Remove choices the player cannot currently afford. 'free' always renders.
   const affordableChips = chips.filter((chip) => {
@@ -750,6 +812,17 @@ function FieldTab({
 
   // During combat, hide all chips when all resources are spent.
   const displayChips = (inCombat && allExhausted) ? [] : affordableChips;
+
+  console.log("[FieldTab] action gate", {
+    inCombat,
+    allExhausted,
+    mainAction:   mainAction.current,
+    bonusAction:  bonusAction.current,
+    movementFeet: movementFeet.current,
+    chipsEnabled,
+    affordableCount: affordableChips.length,
+    displayCount:    displayChips.length,
+  });
 
   function costLabel(type: string, value: number): string {
     if (type === "mainAction")                     return "⚡ 1 Action";
@@ -1094,14 +1167,13 @@ type PartySubTab = "stats" | "inventory" | "abilities";
 
 
 function PartyTab({
-  partyMembers, state, currentTurnCharacterId, currentUserId, hpOverrides, mapId, gameId,
+  partyMembers, state, currentTurnCharacterId, currentUserId, hpOverrides, gameId,
 }: {
   partyMembers:           PartyMemberData[];
   state:                  GameState;
   currentTurnCharacterId: string | null;
   currentUserId:          string | null;
   hpOverrides:            Record<string, number>;
-  mapId:                  string;
   gameId:                 string;
 }) {
   const [subTab, setSubTab] = useState<PartySubTab>("stats");
@@ -1187,11 +1259,11 @@ function PartyTab({
               </div>
 
               {/* Sub-tab content */}
-              {subTab === "stats"     && <MemberStatsPane char={m.character} mapId={mapId} />}
+              {subTab === "stats"     && <MemberStatsPane char={m.character} gameId={gameId} />}
               {subTab === "inventory" && (
                 <MemberInventoryPane
                   isMe={isMe}
-                  mapId={mapId}
+                  gameId={gameId}
                   strength={m.character.baseStrength}
                   characterId={m.character.id}
                 />
@@ -1290,18 +1362,18 @@ function computeAcBreakdown(
 }
 
 function TotalACCard({
-  char, equipStats, mapId,
+  char, equipStats, gameId,
 }: {
   char:       CharacterData;
   equipStats: CharacterStats | null;
-  mapId:      string;
+  gameId:     string;
 }) {
   const [mapItems,   setMapItems]   = useState<EquippableItemData[]>([]);
   const [isExpanded, setIsExpanded] = useState(false);
 
   useEffect(() => {
-    getMapItems(mapId).then(setMapItems);
-  }, [mapId]);
+    getMapItems(gameId).then(setMapItems);
+  }, [gameId]);
 
   const parseAc = (label: string) => {
     const m = label.match(/\+(\d+)\s*AC/i);
@@ -1534,7 +1606,7 @@ function SkillRowCard({
   );
 }
 
-function MemberStatsPane({ char, mapId }: { char: CharacterData; mapId: string }) {
+function MemberStatsPane({ char, gameId }: { char: CharacterData; gameId: string }) {
   const [equipStats, setEquipStats] = useState<CharacterStats | null>(null);
 
   useEffect(() => {
@@ -1573,7 +1645,7 @@ function MemberStatsPane({ char, mapId }: { char: CharacterData; mapId: string }
       </div>
 
       {/* Total AC */}
-      <TotalACCard char={char} equipStats={equipStats} mapId={mapId} />
+      <TotalACCard char={char} equipStats={equipStats} gameId={gameId} />
 
       {/* Attribute cards — single-column stack */}
       <div className="space-y-2">
@@ -1638,10 +1710,10 @@ const CATEGORY_STYLE: Record<string, string> = {
 };
 
 function MemberInventoryPane({
-  isMe, mapId, strength, characterId,
+  isMe, gameId, strength, characterId,
 }: {
   isMe:          boolean;
-  mapId:         string;
+  gameId:        string;
   strength:      number;
   characterId:   string;
 }) {
@@ -1651,8 +1723,8 @@ function MemberInventoryPane({
   const [expandedItemId, setExpandedItemId] = useState<string | null>(null);
 
   useEffect(() => {
-    getMapItems(mapId).then((data) => { setItems(data); setLoading(false); });
-  }, [mapId]);
+    getMapItems(gameId).then((data) => { setItems(data); setLoading(false); });
+  }, [gameId]);
 
   const maxCapacity = strength * 15;
   const totalWeight = items.reduce((sum, it) => sum + it.weightLbs * it.quantity, 0);

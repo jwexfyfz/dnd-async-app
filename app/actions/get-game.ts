@@ -14,8 +14,12 @@ export async function getGame(gameId: string) {
       story:         true,
       currentAct:    true,
       currentScene:  true,
-      map:           true,
       combatSession: true,
+      gameMaps: {
+        orderBy: { createdAt: "desc" as const },
+        take:    1,
+        include: { map: { select: { id: true, name: true } } },
+      },
       messages:      { orderBy: { createdAt: "asc" } },
       partyMembers:  {
         include: {
@@ -48,5 +52,11 @@ export async function getGame(gameId: string) {
     return { success: false, error: "Access denied." };
   }
 
-  return { success: true, data: game };
+  // Build a synthetic `map` from the active GameMap so page.tsx stays compatible.
+  const activeGM = (game as any).gameMaps?.[0];
+  const syntheticMap = activeGM
+    ? { id: activeGM.mapId, name: activeGM.map?.name ?? "Unknown", data: activeGM.data }
+    : null;
+
+  return { success: true, data: { ...game, map: syntheticMap } };
 }

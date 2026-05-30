@@ -3,8 +3,8 @@
 export const DM_MODEL = "claude-haiku-4-5" as const;
 
 // Max tokens per DM response.
-// 2-4 sentences of narrative + stateDeltas + 5 chips fits in ~512 tokens.
-export const DM_MAX_TOKENS = 600;
+// Verbose narratives + enemies array + 5 chips need ~900 tokens.
+export const DM_MAX_TOKENS = 1200;
 
 // How many past messages to include in the AI context window.
 // Older messages are still stored for the Chronicle display but are not

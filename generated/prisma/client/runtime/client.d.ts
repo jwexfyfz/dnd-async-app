@@ -2034,7 +2034,7 @@ export declare type PrismaClientOptions = PrismaClientMutuallyExclusiveOptions &
     /**
      * The default values for Transaction options
      * maxWait ?= 2000
-     * timeout ?= 5000
+     * timeout ?= 10000
      */
     transactionOptions?: Transaction_2.Options;
     /**
