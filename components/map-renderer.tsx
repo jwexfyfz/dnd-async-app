@@ -11,7 +11,7 @@ export interface MapData {
   tiles:  GameTile[][];
   playerStart: { x: number; y: number };
   rooms:  { name: string; description: string }[];
-  pois:   { id: string; name: string; x: number; y: number; symbol: string }[];
+  pois:   { id: string; name: string; x: number; y: number; symbol: string; itemId?: string }[];
   // Optional new-format fields — present on GameMapData, absent on template MapData
   itemState?: Record<string, { isPickedUp: boolean; isVisible: boolean }>;
 }
@@ -49,10 +49,15 @@ interface Props {
 const VP = VP_RADIUS;
 
 const TILE_RENDER: Record<string, { char: string; cls: string }> = {
-  W:   { char: "#", cls: "text-slate-400" },
-  F:   { char: "·", cls: "text-slate-300" },
-  D:   { char: "+", cls: "text-amber-500" },
-  "?": { char: "░", cls: "text-slate-600" },
+  W:   { char: "#",  cls: "text-slate-400" },
+  F:   { char: "·",  cls: "text-slate-300" },
+  D:   { char: "+",  cls: "text-amber-500" },
+  "?": { char: "░",  cls: "text-slate-600" },
+  LF:  { char: "▣",  cls: "text-amber-700" },
+  NB:  { char: "♣",  cls: "text-green-700" },
+  FB:  { char: "~",  cls: "text-indigo-400" },
+  WN:  { char: "□",  cls: "text-sky-300" },
+  WH:  { char: "○",  cls: "text-slate-500" },
 };
 
 export default function MapRenderer({ mapData, playerPos, partyMarkers, enemyMarkers, itemMarkers }: Props) {
@@ -93,7 +98,14 @@ export default function MapRenderer({ mapData, playerPos, partyMarkers, enemyMar
 
   const cells: React.ReactNode[] = [];
 
+  // Column label header row
+  cells.push(<div key="coord-corner" className="text-[10px] text-slate-400" />);
+  for (let x = vpMinX; x <= vpMaxX; x++) {
+    cells.push(<div key={`coord-col-${x}`} className="text-center text-[10px] text-slate-400">{x}</div>);
+  }
+
   for (let y = vpMinY; y <= vpMaxY; y++) {
+    cells.push(<div key={`coord-row-${y}`} className="text-right text-[10px] text-slate-400 pr-0.5">{y}</div>);
     for (let x = vpMinX; x <= vpMaxX; x++) {
       const key     = `${x},${y}`;
       const tile    = tiles[y]?.[x];
@@ -175,7 +187,7 @@ export default function MapRenderer({ mapData, playerPos, partyMarkers, enemyMar
         className="w-full bg-slate-100 rounded-xl overflow-hidden p-2 select-none font-mono"
         style={{
           display:             "grid",
-          gridTemplateColumns: `repeat(${vpWidth}, 1fr)`,
+          gridTemplateColumns: `auto repeat(${vpWidth}, 1fr)`,
           fontSize:            "clamp(13px, 4vw, 22px)",
           lineHeight:          1.5,
         }}
@@ -199,10 +211,10 @@ export default function MapRenderer({ mapData, playerPos, partyMarkers, enemyMar
         {pois.length > 0 && <span><span className="text-emerald-600">■</span> POI</span>}
       </div>
 
-      {/* POI list */}
-      {pois.length > 0 && (
+      {/* POI list — only show POIs the player can currently see */}
+      {pois.some(p => visibleSet.has(`${p.x},${p.y}`)) && (
         <div className="text-xs text-slate-400 space-y-0.5">
-          {pois.map((poi) => (
+          {pois.filter(p => visibleSet.has(`${p.x},${p.y}`)).map((poi) => (
             <div key={poi.id}>
               <span className="text-emerald-600 font-mono">{poi.symbol}</span>
               {" — "}{poi.name}

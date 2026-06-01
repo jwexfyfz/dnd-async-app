@@ -1,8 +1,16 @@
 import type { GameTile, EnemyInstance, ItemInstance } from "./tile-types";
+import { tileBlocksLoS, tileBlocksMovement } from "./tile-types";
 
-/** Flatten GameTile[][] to string[][] (tile char only) for grid.ts lineOfSight. */
+/**
+ * Flatten GameTile[][] to string[][] for the string-based LoS path in grid.ts.
+ * Open doors are emitted as "F" so the string-path ray-marcher treats them as
+ * transparent — closed doors and all other tile types keep their own char.
+ */
 export function tilesToStringGrid(tiles: GameTile[][]): string[][] {
-  return tiles.map(row => row.map(cell => cell.t));
+  return tiles.map(row => row.map(cell => {
+    if (cell.t === "D" && cell.doorOpen) return "F";
+    return cell.t;
+  }));
 }
 
 export function findActor(
@@ -37,8 +45,7 @@ export function isTilePassable(
   itemState: Record<string, ItemInstance>,
   moverId: string,
 ): boolean {
-  if (tile.t === "W") return false;
-  if (tile.t === "D") return false;
+  if (tileBlocksMovement(tile)) return false;
   if (tile.actor && tile.actor.id !== moverId) {
     if (tile.actor.kind === "party") return false;
     const es = enemyState[tile.actor.id];
@@ -105,24 +112,25 @@ export function removeItem(tiles: GameTile[][], x: number, y: number): GameTile[
   );
 }
 
-// Bresenham line check — returns true if the straight line from (x0,y0) to
-// (x1,y1) crosses no opaque tile before reaching the destination.
-function hasLineOfSight(tiles: GameTile[][], x0: number, y0: number, x1: number, y1: number): boolean {
-  let x = x0, y = y0;
-  const dx = Math.abs(x1 - x0), dy = Math.abs(y1 - y0);
-  const sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
-  let err = dx - dy;
-
-  while (true) {
-    if (x === x1 && y === y1) return true;
-    const tile = tiles[y]?.[x];
-    if (!tile) return false;
-    // Opaque: walls and closed doors block sight (but origin tile is passable)
-    if ((x !== x0 || y !== y0) && (tile.t === "W" || tile.t === "D")) return false;
-    const e2 = 2 * err;
-    if (e2 > -dy) { err -= dy; x += sx; }
-    if (e2 < dx)  { err += dx; y += sy; }
+// Ray-cast line-of-sight — samples 4 points per tile distance along the continuous
+// ray from tile-center to tile-center. Matches the approach in lib/grid.ts so that
+// visual LoS and combat LoS are geometrically consistent.
+export function hasLineOfSight(tiles: GameTile[][], x0: number, y0: number, x1: number, y1: number): boolean {
+  const fx = x0 + 0.5, fy = y0 + 0.5;
+  const tx = x1 + 0.5, ty = y1 + 0.5;
+  const dx = tx - fx, dy = ty - fy;
+  const steps = Math.ceil(Math.sqrt(dx * dx + dy * dy) * 4);
+  if (steps === 0) return true;
+  for (let i = 1; i < steps; i++) {
+    const t  = i / steps;
+    const cx = Math.floor(fx + t * dx);
+    const cy = Math.floor(fy + t * dy);
+    // Skip samples that land on the destination or origin tile — both are always reachable.
+    if ((cx === x1 && cy === y1) || (cx === x0 && cy === y0)) continue;
+    const tile = tiles[cy]?.[cx];
+    if (!tile || tileBlocksLoS(tile)) return false;
   }
+  return true;
 }
 
 export function getVisibleTiles(

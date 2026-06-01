@@ -441,8 +441,11 @@ export async function autoAdvance(
     const fallbackIds    = Object.keys(gmesFallback);
     if (fallbackIds.length > 0) {
       const gmTilesFallback = (gmData.tiles ?? []) as GameTile[][];
+      const currentSceneId = (game.currentScene as { id: string } | null)?.id;
       const fallbackTemplates = await prisma.enemy.findMany({
-        where:  { id: { in: fallbackIds } },
+        where: currentSceneId
+          ? { id: { in: fallbackIds }, sceneId: currentSceneId }
+          : { id: { in: fallbackIds } },
         select: { id: true, name: true, maxHp: true },
       });
       dbEnemies = fallbackTemplates.map(e => {
@@ -450,7 +453,7 @@ export async function autoAdvance(
         const pos = gmTilesFallback.length > 0 ? findActor(gmTilesFallback, e.id) : null;
         return { id: e.id, name: e.name, currentHp: st?.currentHp ?? e.maxHp, maxHp: st?.maxHp ?? e.maxHp, posX: pos?.x ?? 0, posY: pos?.y ?? 0 };
       });
-      console.log("[autoAdvance] dbEnemies fallback from gmEnemyState:", dbEnemies.map(e => `${e.id}:${e.currentHp}`));
+      console.log(`[autoAdvance] dbEnemies fallback: ${fallbackTemplates.length} scoped / ${fallbackIds.length} total — ids:`, dbEnemies.map(e => `${e.id}:${e.currentHp}`));
     }
   }
 
@@ -508,6 +511,12 @@ export async function autoAdvance(
   const gmEnemyStateCand = (gmData.enemyState ?? {}) as Record<string, EnemyInstance>;
   const gsEnemyNameMap   = new Map(((gameState.enemies as any[] | undefined) ?? []).map((e: any) => [e.id as string, e.name as string]));
 
+  // When in combat use the session's enemy slots; otherwise use current-scene enemies
+  // from gameState to prevent tile actors from other scenes leaking in.
+  const knownEnemyIds: Set<string> = combatEnemyIdSet.size > 0
+    ? combatEnemyIdSet
+    : new Set(((gameState.enemies as any[] | undefined) ?? []).map((e: any) => e.id as string));
+
   let candidateEnemies: { id: string; name: string; hp: number; maxHp: number; x: number; y: number }[];
   if (gmTilesCand.length > 0) {
     candidateEnemies = [];
@@ -515,7 +524,7 @@ export async function autoAdvance(
       for (let tx = 0; tx < gmTilesCand[ty].length; tx++) {
         const actor = gmTilesCand[ty][tx]?.actor;
         if (actor?.kind !== "enemy") continue;
-        if (combatEnemyIdSet.size > 0 && !combatEnemyIdSet.has(actor.id)) continue;
+        if (knownEnemyIds.size > 0 && !knownEnemyIds.has(actor.id)) continue;
         const st = gmEnemyStateCand[actor.id];
         const rawHp     = st?.currentHp ?? 0;
         const currentHp = (mechanicalEffect?.targetId === actor.id && mechanicalEffect.delta < 0)
@@ -545,8 +554,14 @@ export async function autoAdvance(
       : ((gameState.enemies as any[] | undefined) ?? []).map((e: any) => ({ id: e.id, name: e.name, hp: e.hp ?? 0, maxHp: e.maxHp ?? 0, x: e.x ?? 0, y: e.y ?? 0 }));
   }
   const candidatePlayerPos = (() => {
-    const m = game.partyMembers.find((m: any) => m.characterId === currentCharId);
-    if (m) return { x: m.posX, y: m.posY };
+    // Use the chip's destination as the post-move position for chip generation.
+    if (endPosition) return endPosition;
+    // True multi-player: each member has an independent PartyMember.posX/posY.
+    if (game.partyMembers.length > 1) {
+      const m = game.partyMembers.find((m: any) => m.characterId === currentCharId);
+      if (m) return { x: m.posX, y: m.posY };
+    }
+    // Solo or single-party: game.state.playerPos is the source of truth (same as the map).
     return (gameState.playerPos as { x: number; y: number } | undefined) ?? { x: 0, y: 0 };
   })();
 
@@ -577,8 +592,8 @@ export async function autoAdvance(
 
   // Filter POIs to those visible. For each out-of-LoS POI, walk the Bresenham
   // path and collect the first blocking door as a substitute candidate.
-  const allPois = (mapData.pois ?? []) as { name: string; x: number; y: number }[];
-  let candidatePois: { name: string; x: number; y: number }[];
+  const allPois = (mapData.pois ?? []) as { name: string; x: number; y: number; itemId?: string }[];
+  let candidatePois: { name: string; x: number; y: number; itemId?: string }[];
   if (gmTilesCand.length > 0) {
     candidatePois = allPois.filter(p => visibleForChips.has(`${p.x},${p.y}`));
     const doorCandidates = new Map<string, { name: string; x: number; y: number }>();
@@ -622,7 +637,7 @@ export async function autoAdvance(
     enemies:               candidateEnemies,
     weaponRangeFeet:       (currentChar.mainHand as any)?.rangeFeet ?? 5,
     remainingMovementFeet: currentChar.remainingMovementFeet ?? 30,
-    mapTiles:              gmStringTilesCand,
+    gameTiles:             gmTilesCand.length > 0 ? gmTilesCand : undefined,
     pois:                  candidatePois,
   };
   console.log("[autoAdvance] buildChipCandidates input", {
@@ -631,7 +646,7 @@ export async function autoAdvance(
     enemies:               chipBuildInput.enemies.map(e => ({ id: e.id, name: e.name, hp: e.hp, x: e.x, y: e.y })),
     weaponRangeFeet:       chipBuildInput.weaponRangeFeet,
     remainingMovementFeet: chipBuildInput.remainingMovementFeet,
-    hasTileMap:            !!chipBuildInput.mapTiles,
+    hasTileMap:            !!chipBuildInput.gameTiles,
   });
   const candidates = buildChipCandidates(chipBuildInput);
   console.log("[autoAdvance] buildChipCandidates output", candidates.map(c => ({ action_type: c.action_type, targetName: c.targetName, requiresMovement: c.requiresMovement, movementFeet: c.movementFeet })));
@@ -715,6 +730,7 @@ export async function autoAdvance(
   }
 
   const actorCurrentPos: { x: number; y: number } = (() => {
+    if (endPosition) return endPosition;
     const m = game.partyMembers.find((m: any) => m.characterId === currentCharId);
     if (m) return { x: m.posX, y: m.posY };
     return (gameState.playerPos as { x: number; y: number } | undefined) ?? { x: 0, y: 0 };
@@ -1096,25 +1112,39 @@ export async function autoAdvance(
     const resolvedPos = newPlayerPos ?? actorCurrentPos;
     const { triggered, nextScene } = await checkSceneTrigger(prisma, game.currentScene, {
       gameId,
-      currentActId:   (game as any).currentActId ?? null,
-      activeCharId:   currentCharId,
-      isPartyGame:    game.partyMembers.length > 1,
-      callerMemberId: callerRecord?.id,
-      sceneTurnCount: newState.sceneTurnCount as number,
-      callerPos:      resolvedPos,
+      currentActId:        (game as any).currentActId ?? null,
+      activeCharId:        currentCharId,
+      isPartyGame:         game.partyMembers.length > 1,
+      callerMemberId:      callerRecord?.id,
+      sceneTurnCount:      newState.sceneTurnCount as number,
+      callerPos:           resolvedPos,
+      sceneEntrySnapshot:  gameState.sceneEntrySnapshot as any,
     });
     if (triggered && nextScene) {
       newState.sceneTurnCount = 0;
-      const nextGMEnemyState = (gmData.enemyState ?? {}) as Record<string, EnemyInstance>;
-      const nextGMTiles      = (gmData.tiles ?? []) as GameTile[][];
-      const validNextSceneIds = nextGMTiles.length > 0 ? Object.keys(nextGMEnemyState) : null;
-      const nextSceneEnemyTemplates = await prisma.enemy.findMany({
-        where:  { sceneId: nextScene.id, ...(validNextSceneIds ? { id: { in: validNextSceneIds } } : {}) },
-        select: { id: true, name: true, maxHp: true },
-      });
-      newState.enemies = nextSceneEnemyTemplates.map((e: { id: string; name: string; maxHp: number }) => {
-        const st  = nextGMEnemyState[e.id];
-        const pos = nextGMTiles.length > 0 ? findActor(nextGMTiles, e.id) : null;
+      // Re-read the live GameMap after the transaction so HP deltas are reflected.
+      const liveGMForAdvance = activeGameMap
+        ? await prisma.gameMap.findUnique({ where: { id: activeGameMap.id }, select: { data: true } })
+        : null;
+      const liveEnemyStateForAdvance = ((liveGMForAdvance?.data as any)?.enemyState ?? {}) as Record<string, EnemyInstance>;
+      const liveTilesForAdvance      = ((liveGMForAdvance?.data as any)?.tiles ?? []) as GameTile[][];
+      const liveItemStateForAdvance  = ((liveGMForAdvance?.data as any)?.itemState ?? {}) as Record<string, { isPickedUp: boolean }>;
+      // Snapshot post-attack map state so new scene's triggers aren't immediately re-satisfied.
+      newState.sceneEntrySnapshot = {
+        enemyHps:    Object.fromEntries(Object.entries(liveEnemyStateForAdvance).map(([k, v]) => [k, v.currentHp])),
+        itemPickups: Object.fromEntries(Object.entries(liveItemStateForAdvance).map(([k, v]) => [k, v.isPickedUp])),
+        entryPos:    resolvedPos,
+      };
+      // Include ALL enemies still alive in the map (surviving enemies from current scene carry over).
+      const liveEnemyIds = Object.entries(liveEnemyStateForAdvance)
+        .filter(([, st]) => st.currentHp > 0)
+        .map(([id]) => id);
+      const allLiveEnemyTemplates = liveEnemyIds.length > 0
+        ? await prisma.enemy.findMany({ where: { id: { in: liveEnemyIds } }, select: { id: true, name: true, maxHp: true } })
+        : [];
+      newState.enemies = allLiveEnemyTemplates.map((e: { id: string; name: string; maxHp: number }) => {
+        const st  = liveEnemyStateForAdvance[e.id];
+        const pos = liveTilesForAdvance.length > 0 ? findActor(liveTilesForAdvance, e.id) : null;
         return { id: e.id, name: e.name, hp: st?.currentHp ?? e.maxHp, maxHp: st?.maxHp ?? e.maxHp, x: pos?.x ?? 0, y: pos?.y ?? 0 };
       });
       console.log(`[scene-advance] game=${gameId} → "${nextScene.title}"`);
@@ -1125,12 +1155,17 @@ export async function autoAdvance(
     }
   }
 
-  // Act transition via stairs — fires when the player steps onto a "^" POI
-  // and no further scenes remain in the current act (i.e. this is the last scene).
-  if (newPlayerPos && game.currentAct && game.currentScene) {
+  // Act transition — fires when the final scene of an act is cleared.
+  // Trigger 1: player steps onto a "^" POI (no more scenes remain).
+  // Trigger 2: encounter completes (all enemies dead) on the final scene.
+  if (game.currentAct && game.currentScene) {
+    const stillHasLivingEnemiesForAct = ((newState.enemies ?? []) as any[]).some((e: any) => (e.hp ?? 0) > 0);
     const pois = (mapData.pois as Array<{ symbol: string; x: number; y: number }> | undefined) ?? [];
-    const onStairs = pois.some(p => p.symbol === "^" && p.x === newPlayerPos.x && p.y === newPlayerPos.y);
-    if (onStairs) {
+    const onStairs = newPlayerPos
+      ? pois.some(p => p.symbol === "^" && p.x === newPlayerPos.x && p.y === newPlayerPos.y)
+      : false;
+    const encounterDone = newState.lastEncounterCompleted === true && !stillHasLivingEnemiesForAct;
+    if (onStairs || encounterDone) {
       const nextSceneInAct = await prisma.scene.findFirst({
         where:  { actId: (game.currentScene as any).actId, order: (game.currentScene as any).order + 1 },
         select: { id: true },

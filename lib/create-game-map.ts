@@ -84,13 +84,21 @@ export async function createGameMap(
     }),
   );
 
+  const itemPosMap = new Map<string, string>();
+  for (let iy = 0; iy < gameTiles.length; iy++) {
+    for (let ix = 0; ix < gameTiles[iy].length; ix++) {
+      const tid = gameTiles[iy][ix]?.item;
+      if (tid) itemPosMap.set(`${ix},${iy}`, tid);
+    }
+  }
+
   const gameMapData: GameMapData = {
     width:       tmpl.width  ?? 0,
     height:      tmpl.height ?? 0,
     tiles:       gameTiles,
     playerStart: tmpl.playerStart ?? { x: 0, y: 0 },
     rooms:       tmpl.rooms  ?? [],
-    pois:        tmpl.pois   ?? [],
+    pois:        (tmpl.pois ?? []).map((p: any) => ({ ...p, itemId: itemPosMap.get(`${p.x},${p.y}`) })),
     enemyState,
     itemState,
   };

@@ -11,7 +11,12 @@ function floor(overrides?: Partial<GameTile>): GameTile {
   return { t: "F", ...overrides };
 }
 function wall(): GameTile { return { t: "W" }; }
-function door(): GameTile { return { t: "D" }; }
+function door(open = false): GameTile { return open ? { t: "D", doorOpen: true } : { t: "D" }; }
+function largeFurniture(): GameTile { return { t: "LF" }; }
+function natureBarrier(): GameTile { return { t: "NB" }; }
+function fabricObstacle(): GameTile { return { t: "FB" }; }
+function window_(): GameTile { return { t: "WN" }; }
+function wallHole(): GameTile { return { t: "WH" }; }
 
 function mkEnemy(status: EnemyInstance["status"] = "ACTIVE"): EnemyInstance {
   return { currentHp: 10, maxHp: 10, status, isHiding: false, stealthRoll: 0, hasReaction: true, isSurprised: false, lootItemIds: [] };
@@ -85,6 +90,30 @@ describe("isTilePassable", () => {
 
   it("closed door → false", () => {
     expect(isTilePassable(door(), noEnemies, noItems, "p-1")).toBe(false);
+  });
+
+  it("open door → true", () => {
+    expect(isTilePassable(door(true), noEnemies, noItems, "p-1")).toBe(true);
+  });
+
+  it("large furniture → false", () => {
+    expect(isTilePassable(largeFurniture(), noEnemies, noItems, "p-1")).toBe(false);
+  });
+
+  it("nature barrier → false", () => {
+    expect(isTilePassable(natureBarrier(), noEnemies, noItems, "p-1")).toBe(false);
+  });
+
+  it("fabric obstacle → true (can walk through)", () => {
+    expect(isTilePassable(fabricObstacle(), noEnemies, noItems, "p-1")).toBe(true);
+  });
+
+  it("window → false", () => {
+    expect(isTilePassable(window_(), noEnemies, noItems, "p-1")).toBe(false);
+  });
+
+  it("wall hole → false", () => {
+    expect(isTilePassable(wallHole(), noEnemies, noItems, "p-1")).toBe(false);
   });
 
   it("empty floor → true", () => {
@@ -267,9 +296,49 @@ describe("getVisibleTiles", () => {
       row.map((tile, x) => (x === 2 && y === 2 ? door() : tile)),
     );
     const vis = getVisibleTiles(withDoor, 0, 2, 4);
-    // The door tile itself at x=2 is not transparent, so x=3,4 behind it are hidden
     expect(vis.has("3,2")).toBe(false);
     expect(vis.has("4,2")).toBe(false);
+  });
+
+  it("tiles behind an open door are visible", () => {
+    const withOpenDoor: GameTile[][] = open5.map((row, y) =>
+      row.map((tile, x) => (x === 2 && y === 2 ? door(true) : tile)),
+    );
+    const vis = getVisibleTiles(withOpenDoor, 0, 2, 4);
+    expect(vis.has("3,2")).toBe(true);
+    expect(vis.has("4,2")).toBe(true);
+  });
+
+  it("large furniture blocks LoS", () => {
+    const grid: GameTile[][] = open5.map((row, y) =>
+      row.map((tile, x) => (x === 2 && y !== 0 ? largeFurniture() : tile)),
+    );
+    const vis = getVisibleTiles(grid, 0, 2, 4);
+    expect(vis.has("4,2")).toBe(false);
+  });
+
+  it("fabric obstacle blocks LoS", () => {
+    const grid: GameTile[][] = open5.map((row, y) =>
+      row.map((tile, x) => (x === 2 && y !== 0 ? fabricObstacle() : tile)),
+    );
+    const vis = getVisibleTiles(grid, 0, 2, 4);
+    expect(vis.has("4,2")).toBe(false);
+  });
+
+  it("window does not block LoS", () => {
+    const grid: GameTile[][] = open5.map((row, y) =>
+      row.map((tile, x) => (x === 2 && y !== 0 ? window_() : tile)),
+    );
+    const vis = getVisibleTiles(grid, 0, 2, 4);
+    expect(vis.has("4,2")).toBe(true);
+  });
+
+  it("wall hole does not block LoS", () => {
+    const grid: GameTile[][] = open5.map((row, y) =>
+      row.map((tile, x) => (x === 2 && y !== 0 ? wallHole() : tile)),
+    );
+    const vis = getVisibleTiles(grid, 0, 2, 4);
+    expect(vis.has("4,2")).toBe(true);
   });
 
   it("tiles through open floor are visible up to radius", () => {

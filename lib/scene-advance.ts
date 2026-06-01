@@ -25,6 +25,12 @@ export interface SceneTriggerFields {
   triggerTurnLimit: number | null;
 }
 
+export interface SceneEntrySnapshot {
+  enemyHps?:    Record<string, number>;   // enemyId → hp when scene was entered
+  itemPickups?: Record<string, boolean>;  // itemId → isPickedUp when scene was entered
+  entryPos?:    { x: number; y: number }; // player position when scene was entered
+}
+
 export interface SceneCheckOpts {
   activeCharId:   string;
   isPartyGame:    boolean;
@@ -34,6 +40,9 @@ export interface SceneCheckOpts {
   currentActId:   string | null;
   // Resolved player position after this turn's movement (avoids stale character.posX/posY in DB).
   callerPos?:     { x: number; y: number };
+  // Snapshot of map state when the current scene was entered — prevents already-satisfied
+  // trigger conditions from re-firing on the first turn of a new scene.
+  sceneEntrySnapshot?: SceneEntrySnapshot;
 }
 
 export async function checkSceneTrigger(
@@ -80,7 +89,11 @@ export async function checkSceneTrigger(
         posX = opts.callerPos.x; posY = opts.callerPos.y;
       }
       if (posX !== undefined && posY !== undefined) {
-        triggered = posX === nextScene.triggerAreaX && posY === nextScene.triggerAreaY;
+        const atTarget = posX === nextScene.triggerAreaX && posY === nextScene.triggerAreaY;
+        // Only fire if player was NOT already at the target when this scene started.
+        const alreadyThere = opts.sceneEntrySnapshot?.entryPos?.x === nextScene.triggerAreaX
+          && opts.sceneEntrySnapshot?.entryPos?.y === nextScene.triggerAreaY;
+        triggered = atTarget && !alreadyThere;
       }
       console.log(`[scene-trigger] AREA_REACHED: target=(${nextScene.triggerAreaX},${nextScene.triggerAreaY}) actual=(${posX ?? "?"}, ${posY ?? "?"}) | triggered=${triggered}`);
       break;
@@ -96,9 +109,13 @@ export async function checkSceneTrigger(
       const gmData   = gm.data as any;
       const enemyState = (gmData.enemyState ?? {}) as Record<string, { currentHp: number }>;
       const enemy = enemyState[nextScene.triggerEnemyId];
-      triggered = !!enemy && enemy.currentHp <= 0;
+      const isDeadNow = !!enemy && enemy.currentHp <= 0;
+      // Only fire if the enemy was alive when this scene started (wasn't already dead on entry).
+      const wasAlreadyDead = opts.sceneEntrySnapshot?.enemyHps !== undefined
+        && (opts.sceneEntrySnapshot.enemyHps[nextScene.triggerEnemyId] ?? Infinity) <= 0;
+      triggered = isDeadNow && !wasAlreadyDead;
       if (enemy) {
-        console.log(`[scene-trigger] ENEMY_DEFEATED: triggerEnemyId=${nextScene.triggerEnemyId} currentHp=${enemy.currentHp} | triggered=${triggered}`);
+        console.log(`[scene-trigger] ENEMY_DEFEATED: triggerEnemyId=${nextScene.triggerEnemyId} currentHp=${enemy.currentHp} wasAlreadyDead=${wasAlreadyDead} | triggered=${triggered}`);
       } else {
         console.log(`[scene-trigger] ENEMY_DEFEATED: triggerEnemyId=${nextScene.triggerEnemyId} NOT FOUND in GameMap.data.enemies | triggered=false`);
       }
@@ -122,8 +139,11 @@ export async function checkSceneTrigger(
       const gmData2   = gm.data as any;
       const itemState = (gmData2.itemState ?? {}) as Record<string, { isPickedUp: boolean }>;
       const item = itemState[nextScene.triggerItemId];
-      triggered = !!item && item.isPickedUp === true;
-      console.log(`[scene-trigger] ITEM_FOUND: triggerItemId=${nextScene.triggerItemId} isPickedUp=${item?.isPickedUp ?? "NOT FOUND"} | triggered=${triggered}`);
+      const isPickedUpNow = !!item && item.isPickedUp === true;
+      // Only fire if the item was NOT already picked up when this scene started.
+      const wasAlreadyPickedUp = opts.sceneEntrySnapshot?.itemPickups?.[nextScene.triggerItemId] === true;
+      triggered = isPickedUpNow && !wasAlreadyPickedUp;
+      console.log(`[scene-trigger] ITEM_FOUND: triggerItemId=${nextScene.triggerItemId} isPickedUp=${item?.isPickedUp ?? "NOT FOUND"} wasAlreadyPickedUp=${wasAlreadyPickedUp} | triggered=${triggered}`);
       break;
     }
   }

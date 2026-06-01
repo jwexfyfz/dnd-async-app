@@ -509,6 +509,7 @@ export default function GamePage() {
         setLocalHpOverrides((prev) => ({ ...prev, ...freshHp }));
       }
     });
+    getMapItems(gameId).then(setMapItems);
   }
 
   function handleEndTurn() {

@@ -1,5 +1,8 @@
 import { randomUUID } from "crypto";
-import { diagonalDistance, lineOfSight } from "./grid";
+import { diagonalDistance } from "./grid";
+import { hasLineOfSight } from "./game-map-utils";
+import type { GameTile } from "./tile-types";
+import { tileBlocksMovement } from "./tile-types";
 import type { ActionType, SuggestionChip } from "../types/suggestion-chip";
 import type { ChipType } from "../types/chips";
 
@@ -13,6 +16,7 @@ export interface ChipCandidate {
   movementFeet:     number;
   endPosition:      Pos;
   requiresMovement: boolean;
+  itemId?:          string;
 }
 
 interface Enemy {
@@ -25,9 +29,10 @@ interface Enemy {
 }
 
 interface Poi {
-  name: string;
-  x:    number;
-  y:    number;
+  name:    string;
+  x:       number;
+  y:       number;
+  itemId?: string;
 }
 
 export interface BuildCandidatesInput {
@@ -35,7 +40,7 @@ export interface BuildCandidatesInput {
   enemies:               Enemy[];
   weaponRangeFeet:       number;
   remainingMovementFeet: number;
-  mapTiles?:             string[][];
+  gameTiles?:            GameTile[][];
   pois?:                 Poi[];
 }
 
@@ -45,19 +50,19 @@ const DIRS_8: Pos[] = [
   { x: -1, y:  1 }, { x: 0, y:  1 }, { x: 1, y:  1 },
 ];
 
-function passable(pos: Pos, tiles?: string[][]): boolean {
+function passable(pos: Pos, tiles?: GameTile[][]): boolean {
   if (!tiles) return true;
-  const cell = tiles[pos.y]?.[pos.x];
-  return cell !== undefined && cell !== "W";
+  const tile = tiles[pos.y]?.[pos.x];
+  return tile !== undefined && !tileBlocksMovement(tile);
 }
 
-function los(from: Pos, to: Pos, tiles?: string[][]): boolean {
+function los(from: Pos, to: Pos, tiles?: GameTile[][]): boolean {
   if (!tiles) return true;
-  return lineOfSight(from, to, tiles);
+  return hasLineOfSight(tiles, from.x, from.y, to.x, to.y);
 }
 
 export function buildChipCandidates(input: BuildCandidatesInput): ChipCandidate[] {
-  const { playerPos, enemies, weaponRangeFeet, remainingMovementFeet, mapTiles, pois } = input;
+  const { playerPos, enemies, weaponRangeFeet, remainingMovementFeet, gameTiles: mapTiles, pois } = input;
   const candidates: ChipCandidate[] = [];
   const living = enemies.filter(e => e.hp > 0);
 
@@ -115,6 +120,7 @@ export function buildChipCandidates(input: BuildCandidatesInput): ChipCandidate[
       movementFeet:     cost,
       endPosition:      dest,
       requiresMovement: true,
+      itemId:           poi.itemId,
     });
   }
 
@@ -152,7 +158,7 @@ export function candidatesToChips(
     let requiresRoll: boolean;
 
     if (cand.action_type === "movement") {
-      label        = `Move to ${cand.targetName}`;
+      label        = `Move to ${cand.targetName} (${cand.actionTarget.x},${cand.actionTarget.y})`;
       type         = "athletics";
       requiresRoll = false;
     } else if (cand.targetName === "self") {
@@ -160,11 +166,11 @@ export function candidatesToChips(
       type         = "investigation";
       requiresRoll = true;
     } else if (cand.requiresMovement) {
-      label        = `Advance on the ${cand.targetName}`;
+      label        = `Advance on the ${cand.targetName} (${cand.actionTarget.x},${cand.actionTarget.y})`;
       type         = isRanged ? "dexterity" : "strength";
       requiresRoll = true;
     } else {
-      label        = isRanged ? `Shoot the ${cand.targetName}` : `Attack the ${cand.targetName}`;
+      label        = isRanged ? `Shoot the ${cand.targetName} (${cand.actionTarget.x},${cand.actionTarget.y})` : `Attack the ${cand.targetName} (${cand.actionTarget.x},${cand.actionTarget.y})`;
       type         = isRanged ? "dexterity" : "strength";
       requiresRoll = true;
     }
@@ -180,6 +186,7 @@ export function candidatesToChips(
       spellLevel:     0,
       endPosition:    cand.endPosition,
       actionTarget:   cand.actionTarget,
+      itemId:         cand.itemId,
     };
   });
 

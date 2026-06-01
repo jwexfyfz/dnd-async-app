@@ -28,8 +28,9 @@ import { diagonalDistance, lineOfSight, checkAttackOfOpportunity } from "../../l
 import { isCovered, rollStealthCheck, breaksStealth } from "../../lib/stealth";
 import { buildChipCandidates, candidatesToChips } from "../../lib/chip-candidates";
 import type { ChipCandidate } from "../../lib/chip-candidates";
-import type { GameTile } from "../../lib/tile-types";
-import { findActor } from "../../lib/game-map-utils";
+import type { GameTile, GameMapData, EnemyInstance } from "../../lib/tile-types";
+import { findActor, tilesToStringGrid } from "../../lib/game-map-utils";
+import { createGameMap } from "../../lib/create-game-map";
 import { getActorVisibleTiles, debugLogVisibilityGrid } from "../../lib/visibility";
 
 // ─── Damage expression roller ────────────────────────────────────────────────
@@ -464,21 +465,21 @@ export async function takeTurn(
   const modifier       = abilityModifier(relevantScore);
 
   // ─── Spatial setup (needed for both first-call pre-checks and full execution) ─
-  // Convert GameTile[][] → string[][] for lineOfSight / isCovered / buildChipCandidates.
-  const rawGameTiles = (gmData.tiles ?? []) as Array<Array<{ t: string }>>;
+  const rawGameTiles = (gmData.tiles ?? []) as GameTile[][];
+  // String grid encodes door state (open door → "F") for isCovered / lineOfSight validation.
   const tiles: string[][] | undefined = rawGameTiles.length > 0
-    ? rawGameTiles.map(row => row.map(t => t.t))
+    ? tilesToStringGrid(rawGameTiles)
     : undefined;
   const actorCurrentPos: { x: number; y: number } = callerMember
     ? { x: callerMember.posX, y: callerMember.posY }
     : { x: currentCharacter.posX, y: currentCharacter.posY };
 
   if (rawGameTiles.length > 0) {
-    const playerVisSet = getActorVisibleTiles(rawGameTiles as unknown as GameTile[][], actorCurrentPos.x, actorCurrentPos.y);
+    const playerVisSet = getActorVisibleTiles(rawGameTiles, actorCurrentPos.x, actorCurrentPos.y);
     const enemyMarkers = ((gameState.enemies as { id: string; hp: number; x: number; y: number }[] | undefined) ?? [])
       .filter((e) => e.hp > 0)
       .map((e) => ({ x: e.x, y: e.y, char: "E" }));
-    debugLogVisibilityGrid(rawGameTiles as unknown as GameTile[][], playerVisSet, actorCurrentPos.x, actorCurrentPos.y, `Player ${currentCharacter.name}`, enemyMarkers);
+    debugLogVisibilityGrid(rawGameTiles, playerVisSet, actorCurrentPos.x, actorCurrentPos.y, `Player ${currentCharacter.name}`, enemyMarkers);
   }
 
   // Server-Seeded Roll: when the caller provides a chipType, do not complete the
@@ -585,12 +586,13 @@ export async function takeTurn(
     ? dbEnemies.map(e => ({ id: e.id, name: e.name, hp: e.currentHp, maxHp: e.maxHp, x: e.posX, y: e.posY }))
     : ((gameState.enemies as { id: string; name: string; hp: number; maxHp: number; x: number; y: number }[] | undefined) ?? []);
   const weaponRangeFeet = (currentCharacter.mainHand as any)?.rangeFeet ?? 5;
+
   const candidates = buildChipCandidates({
     playerPos:             actorCurrentPos,
     enemies:               candidateEnemies,
     weaponRangeFeet,
     remainingMovementFeet: currentCharacter.remainingMovementFeet,
-    mapTiles:              tiles,
+    gameTiles:             rawGameTiles.length > 0 ? rawGameTiles : undefined,
     pois:                  ((mapData.pois ?? []) as { name: string; x: number; y: number }[]),
   });
 
@@ -1117,20 +1119,31 @@ export async function takeTurn(
       }
 
       // Mechanical scene advancement — evaluate trigger conditions against live DB state.
+      let sceneAdvanced = false;
       if (game.currentScene) {
         const resolvedPos2 = newPlayerPos ?? actorCurrentPos;
         const { triggered, nextScene } = await checkSceneTrigger(tx, game.currentScene, {
           gameId,
-          currentActId:   game.currentActId ?? null,
-          activeCharId:   currentCharId,
-          isPartyGame:    game.partyMembers.length > 1,
-          callerMemberId: callerMember?.id,
-          sceneTurnCount: newState.sceneTurnCount as number,
-          callerPos:      resolvedPos2,
+          currentActId:        (game as any).currentActId ?? null,
+          activeCharId:        currentCharId,
+          isPartyGame:         game.partyMembers.length > 1,
+          callerMemberId:      callerMember?.id,
+          sceneTurnCount:      newState.sceneTurnCount as number,
+          callerPos:           resolvedPos2,
+          sceneEntrySnapshot:  gameState.sceneEntrySnapshot as any,
         });
         if (triggered && nextScene) {
+          sceneAdvanced = true;
           newState.sceneTurnCount = 0;
-          const nextSceneGMEnemySt = (gmData.enemyState ?? {}) as Record<string, { currentHp: number; maxHp: number }>;
+          // Snapshot current map state so the new scene's triggers aren't immediately re-satisfied.
+          const snapEnemySt2 = (gmData.enemyState ?? {}) as Record<string, { currentHp: number }>;
+          const snapItemSt2  = (gmData.itemState  ?? {}) as Record<string, { isPickedUp: boolean }>;
+          newState.sceneEntrySnapshot = {
+            enemyHps:    Object.fromEntries(Object.entries(snapEnemySt2).map(([k, v]) => [k, v.currentHp])),
+            itemPickups: Object.fromEntries(Object.entries(snapItemSt2).map(([k, v]) => [k, v.isPickedUp])),
+            entryPos:    resolvedPos2,
+          };
+          const nextSceneGMEnemySt = snapEnemySt2 as Record<string, { currentHp: number; maxHp: number }>;
           const nextSceneGMTiles   = (gmData.tiles ?? []) as GameTile[][];
           const validNextSceneIds2 = nextSceneGMTiles.length > 0 ? Object.keys(nextSceneGMEnemySt) : null;
           const nextSceneEnemyTemplates = await tx.enemy.findMany({
@@ -1147,6 +1160,60 @@ export async function takeTurn(
             where: { id: gameId },
             data:  { currentSceneId: nextScene.id, state: newState },
           });
+        }
+      }
+
+      // Act advance — fires when the final scene of an act is cleared via combat.
+      const txAny = tx as any;
+      if (!sceneAdvanced && game.currentScene && game.currentAct && encounterCompleted && !stillHasLivingEnemies) {
+        const noNextScene = !(await txAny.scene.findFirst({
+          where:  { actId: (game.currentScene as any).actId, order: (game.currentScene as any).order + 1 },
+          select: { id: true },
+        }));
+        if (noNextScene) {
+          const nextAct = await txAny.act.findFirst({
+            where:  { storyId: (game.currentAct as any).storyId, order: (game.currentAct as any).order + 1 },
+            select: { id: true, title: true },
+          });
+          if (nextAct) {
+            const firstScene = await txAny.scene.findFirst({ where: { actId: nextAct.id, order: 1 } });
+            if (firstScene) {
+              const nextGM = await createGameMap(gameId, nextAct.id, tx);
+              const nextActGMData  = (nextGM.data as any) as GameMapData;
+              const nextActEnemySt = (nextActGMData.enemyState ?? {}) as Record<string, EnemyInstance>;
+              const nextActTiles   = (nextActGMData.tiles ?? []) as GameTile[][];
+              const validActIds    = nextActTiles.length > 0 ? Object.keys(nextActEnemySt) : null;
+              const nextEnemyTmpl  = await txAny.enemy.findMany({
+                where:  { sceneId: firstScene.id, ...(validActIds ? { id: { in: validActIds } } : {}) },
+                select: { id: true, name: true, maxHp: true },
+              });
+              newState.playerPos      = nextActGMData.playerStart ?? { x: 0, y: 0 };
+              newState.sceneTurnCount = 0;
+              newState.enemies = nextEnemyTmpl.map((e: { id: string; name: string; maxHp: number }) => {
+                const st  = nextActEnemySt[e.id];
+                const pos = nextActTiles.length > 0 ? findActor(nextActTiles, e.id) : null;
+                return { id: e.id, name: e.name, hp: st?.currentHp ?? e.maxHp, maxHp: st?.maxHp ?? e.maxHp, x: pos?.x ?? 0, y: pos?.y ?? 0 };
+              });
+              await txAny.game.update({
+                where: { id: gameId },
+                data:  { currentActId: nextAct.id, currentSceneId: firstScene.id, state: newState },
+              });
+              await txAny.character.update({
+                where: { id: currentCharId },
+                data:  { posX: newState.playerPos.x, posY: newState.playerPos.y },
+              });
+              if (game.partyMembers.length > 1) {
+                const m = game.partyMembers.find((m: any) => m.characterId === currentCharId);
+                if (m) {
+                  await txAny.partyMember.update({
+                    where: { id: m.id },
+                    data:  { posX: newState.playerPos.x, posY: newState.playerPos.y },
+                  });
+                }
+              }
+              console.log(`[act-advance] game=${gameId} → act "${nextAct.title}"`);
+            }
+          }
         }
       }
 

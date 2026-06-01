@@ -15,10 +15,15 @@ export function diagonalDistance(a: Pos, b: Pos): number {
   return straight * 5 + diagCost;
 }
 
+// Tile chars that block LoS in the string-grid path.
+// Open doors are encoded as "F" by tilesToStringGrid, so "D" here means closed door.
+const LOS_BLOCKING = new Set(["W", "LF", "NB", "FB", "D"]);
+
 /**
- * Ray-march line of sight from tile center to tile center.
+ * Ray-march line of sight from tile center to tile center (string-grid path).
  * Returns true if the path is unobstructed.
- * Only "W" tiles block LoS; doors ("D") are transparent.
+ * Solid terrain, large furniture, nature barriers, fabric obstacles, and closed
+ * doors block LoS. Windows ("WN") and wall holes ("WH") do not.
  */
 export function lineOfSight(from: Pos, to: Pos, tiles: string[][]): boolean {
   const fx = from.x + 0.5;
@@ -34,7 +39,11 @@ export function lineOfSight(from: Pos, to: Pos, tiles: string[][]): boolean {
     const t  = i / steps;
     const cx = Math.floor(fx + t * dx);
     const cy = Math.floor(fy + t * dy);
-    if (tiles[cy]?.[cx] === "W") return false;
+    // Skip samples that land on the destination tile — the destination is always
+    // "reachable" regardless of its own tile type (you can see a wall next to you).
+    if (cx === to.x && cy === to.y) continue;
+    const char = tiles[cy]?.[cx];
+    if (char !== undefined && LOS_BLOCKING.has(char)) return false;
   }
   return true;
 }
