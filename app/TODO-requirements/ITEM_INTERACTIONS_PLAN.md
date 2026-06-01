@@ -202,8 +202,8 @@ All changes in `lib/chip-candidates.ts`.
 - [ ] **D5** Add **container item pickup candidates**:
   - For each POI where `isContainer && isOpen && !isDestroyed`:
     - Chebyshev distance ≤ 1
-    - Find `searchedBy` entry for `currentCharId`; if present, `roll = entry.roll + investigationMod`
-    - For each slot in `containerInventory` where `roll > slot.investigationAc` (or `searchedBy` empty → treat as roll 0, only expose slots with `investigationAc === 0`):
+    - Find `searchedBy` entry for `currentCharId`; if present, `roll = entry.roll` (already includes investigationModifier — baked into diceFormula in E2)
+    - For each slot in `containerInventory` where `roll > slot.investigationAc` (or `searchedBy` empty → treat roll as 0, only expose slots with `investigationAc === 0`):
       - Push candidate: `action_type: "container_pickup"`, `targetName: slot.itemName`, `poiId: poi.id`, `containerItemId: slot.itemId`, `movementFeet: 0`
 
 - [ ] **D6** Add **key use candidates**:
@@ -247,30 +247,24 @@ All changes in `app/actions/take-turn.ts`. Read the file fully before editing �
 
 - [ ] **E2** For `action_type === "container_open"`:
   - Skip the Claude roll-detection call
-  - Compute `investigationModifier` from character Intelligence + proficiency (if Investigation is in `character.skillProficiencies`)
-  - Queue one roll: `{ type: "ABILITY_CHECK", label: "Investigation", diceFormula: "1d20", dc: null, advantageState: "NONE" }` with `actorName: character.name`
+  - Compute `investigationModifier` from character Intelligence modifier + proficiency bonus (if `"Investigation"` is in `character.skillProficiencies`)
+  - Queue one roll: `{ type: "ABILITY_CHECK", label: "Investigation", diceFormula: "1d20+<investigationModifier>", dc: null, advantageState: "NONE" }` — modifier baked into formula so `totalResult` already includes it; F3 stores `totalResult` directly in `searchedBy.roll` with no further adjustment
   - Create ATQ with this roll, status `PENDING_ROLLS`
   - Return normally
 
-- [ ] **E3** For `action_type === "terrain_bash"`:
-  - Skip the Claude roll-detection call
-  - Load the POI from `GameMap.data.pois` using `chip.poiId` to get `armorClass`
-  - Queue one roll: `{ type: "ABILITY_CHECK", label: "Strength Check", diceFormula: "1d20+<strengthMod>", dc: poi.armorClass }` 
-  - Create ATQ, return normally
-
-- [ ] **E4** For `action_type === "terrain_demolish"`:
+- [ ] **E3** For `action_type === "terrain_demolish"`:
   - Skip the Claude roll-detection call
   - Load the POI from `GameMap.data.pois` using `chip.poiId` to get `armorClass`
   - Load tool item using `chip.toolItemId` to get `damageDice`
   - Queue two rolls:
     1. `{ type: "ATTACK", label: "Tool Attack", diceFormula: "1d20+<attackBonus>", dc: poi.armorClass }`
-    2. `{ type: "DAMAGE", label: "Tool Damage", diceFormula: tool.damageDice, dc: null, skipped: false }` (will be auto-skipped client-side if ATTACK fails — same as weapon damage)
+    2. `{ type: "DAMAGE", label: "Tool Damage", diceFormula: tool.damageDice, dc: null, skipped: false }` (auto-skipped client-side if ATTACK fails — same as weapon damage)
   - Create ATQ, return normally
 
-- [ ] **E5** For `action_type === "terrain_bash"`:
+- [ ] **E4** For `action_type === "terrain_bash"`:
   - Skip the Claude roll-detection call
   - Load the POI from `GameMap.data.pois` using `chip.poiId` to get `armorClass`
-  - Load character's equipped weapon to get `damageDice` (fallback: `"1d4"` unarmed)
+  - Load character's equipped `mainHand` item to get `damageDice` (fallback: `"1d4"` unarmed)
   - Queue two rolls:
     1. `{ type: "ABILITY_CHECK", label: "Strength Check", diceFormula: "1d20+<strengthMod>", dc: poi.armorClass }`
     2. `{ type: "DAMAGE", label: "Bash Damage", diceFormula: weapon.damageDice, dc: null, skipped: false }` (auto-skipped client-side if ABILITY_CHECK fails)
@@ -342,7 +336,7 @@ All changes in `app/actions/auto-advance.ts`.
     }
   }
   ```
-  No action economy cost (free action).
+  Key is **not consumed** — it stays in the character's inventory after unlocking. No action economy cost (free action).
 
 - [ ] **F6** Add **terrain demolition handler** inside the transaction:
   ```
@@ -382,6 +376,100 @@ All changes in `app/actions/auto-advance.ts`.
 
 - [ ] **F8** Find the location where `character.remainingActions` is reset to 1 at turn start/round boundary. Add a parallel reset of `remainingObjectInteractions` to 1 in the same `tx.character.update` call.
 
+- [ ] **F9** Pass destructible terrain state into the per-turn Claude prompt so narration reflects the **post-action** HP, not the pre-action HP. The pattern mirrors the existing `mechanicalAttack` / `mechanicalEffect` flow used for enemy weapon damage.
+
+  **Step 1 — Pre-compute terrain effect (before the Claude call)**
+
+  After resolving `mechanicalAttack` (around line 497), add a parallel block for terrain actions:
+  ```typescript
+  interface TerrainAttackResult {
+    poiName:   string;
+    poiId:     string;
+    damage:    number;   // effective damage after threshold (0 if below threshold or miss)
+    hpBefore:  number;
+    hpAfter:   number;
+    destroyed: boolean;
+  }
+  let terrainAttackResult: TerrainAttackResult | undefined;
+
+  if (poiId && (chipActionType === "terrain_bash" || chipActionType === "terrain_demolish")) {
+    const terrainPoi = ((mapData.pois ?? []) as any[]).find(p => p.id === poiId);
+    if (terrainPoi) {
+      const checkRoll  = rolls.find(r => r.type === "ATTACK" || r.type === "ABILITY_CHECK");
+      const damageRoll = rolls.find(r => r.type === "DAMAGE" && !r.skipped);
+      if (checkRoll?.isSuccess && damageRoll?.totalResult != null) {
+        const raw     = damageRoll.totalResult;
+        const eff     = raw >= (terrainPoi.damageThreshold ?? 0) ? raw : 0;
+        const hpBefore = terrainPoi.currentHp ?? terrainPoi.maxHp ?? 1;
+        const hpAfter  = Math.max(0, hpBefore - eff);
+        terrainAttackResult = {
+          poiName:   terrainPoi.name,
+          poiId,
+          damage:    eff,
+          hpBefore,
+          hpAfter,
+          destroyed: hpAfter <= 0,
+        };
+      }
+    }
+    console.log("[auto-advance] terrain pre-compute", {
+      poiId,
+      chipActionType,
+      terrainAttackResult: terrainAttackResult ?? "miss or no damage",
+    });
+  }
+  ```
+
+  **Step 2 — Pass to `buildDynamicContext`**
+
+  Add `terrainPois` and `terrainAttackResult` as parameters. Build the terrain string inside the function:
+  ```typescript
+  const allTerrainPois = ((mapData.pois ?? []) as any[]).filter(
+    p => p.maxHp !== undefined && !p.isDestroyed
+  );
+
+  const terrainStr = allTerrainPois.length > 0
+    ? allTerrainPois.map(p => {
+        const hp = terrainAttackResult?.poiId === p.id
+          ? terrainAttackResult.hpAfter    // post-action value
+          : (p.currentHp ?? p.maxHp);     // pre-action value (no bash this turn)
+        const destroyed = terrainAttackResult?.poiId === p.id && terrainAttackResult.destroyed;
+        if (destroyed) return `${p.name}(${p.x},${p.y})[DESTROYED]`;
+        return `${p.name}(${p.x},${p.y})[HP:${hp}/${p.maxHp}${p.isLocked ? ',locked' : ''}]`;
+      }).join(' ')
+    : null;
+  ```
+
+  Append to the `CURRENT STATE` block alongside enemies and items:
+  ```
+  Terrain: Iron-Banded Door(5,3)[HP:6/10,locked] Rotting Barrel(3,2)[HP:3/3]
+  ```
+  Or on a destroying blow:
+  ```
+  Terrain: Iron-Banded Door(5,3)[DESTROYED]
+  ```
+
+  **Step 3 — Add a MECHANICAL RESULT line for terrain** (mirrors the enemy attack line):
+  ```typescript
+  const terrainResultLine = terrainAttackResult
+    ? terrainAttackResult.damage === 0
+      ? `\nMECHANICAL RESULT: ${terrainAttackResult.poiName} resisted the blow — damage below structural threshold, no damage dealt.`
+      : terrainAttackResult.destroyed
+        ? `\nMECHANICAL RESULT: ${terrainAttackResult.poiName} took ${terrainAttackResult.damage} damage and is DESTROYED. HP applied by engine; do not invent a different outcome.`
+        : `\nMECHANICAL RESULT: ${terrainAttackResult.poiName} took ${terrainAttackResult.damage} damage (HP ${terrainAttackResult.hpBefore} → ${terrainAttackResult.hpAfter}). HP applied by engine; do not invent a different outcome.`
+    : "";
+  ```
+
+  Append `terrainResultLine` to the turn section, after any `attackLine`, so Claude sees both enemy and terrain mechanical outcomes in the same block.
+
+  **Note:** The transaction in F6/F7 still writes the same `hpAfter` value to the DB — the pre-computation here is only for the prompt. The two calculations must use identical logic or they will diverge. Extract the `effectiveDamage` computation into a shared helper:
+  ```typescript
+  function calcEffectiveDamage(raw: number, threshold: number): number {
+    return raw >= threshold ? raw : 0;
+  }
+  ```
+  Call it in both F9 (pre-compute) and F6/F7 (transaction). Never inline the threshold logic in two places.
+
 ---
 
 ## Phase G — Verification
@@ -400,6 +488,312 @@ All changes in `app/actions/auto-advance.ts`.
 5. **Key used on already-unlocked POI** — `poi.isLocked === false` check guards against double-unlock. No-op, no crash.
 6. **Container item picked up then the same container opened again** — slot was removed from `containerInventory`; chip generation reflects the reduced inventory. Correct.
 7. **Old `GameMap` rows (pre-migration)** — POI entries lack all new fields. All new fields are optional; handlers guard with null-checks. No crash, features silently inactive for legacy maps.
+
+---
+
+## Phase H — Console log specifications
+
+Add these logs to help trace interactions during manual testing. Follow the existing `[auto-advance]` prefix pattern.
+
+### F2 — Loot enemy
+```typescript
+console.log("[auto-advance] loot enemy", {
+  lootEnemyId,
+  lootItemIds:  enemySt?.lootItemIds ?? [],
+  transferred:  enemySt?.lootItemIds?.length ?? 0,
+  characterId:  currentCharId,
+});
+// Per item transferred:
+console.log("[auto-advance] loot item", { itemId, slot: slotField ?? "backpack" });
+// If enemy not found or already looted:
+console.warn("[auto-advance] loot enemy skipped", { lootEnemyId, reason: enemySt ? "already empty" : "no enemyState entry" });
+```
+
+### F3 — Container open
+```typescript
+console.log("[auto-advance] container open", {
+  poiId,
+  poiName:      poi?.name,
+  investigationRoll: totalRoll,
+  alreadySearched:  poi?.searchedBy?.some(s => s.characterId === currentCharId) ?? false,
+  visibleSlots: poi?.containerInventory?.filter(s => totalRoll > s.investigationAc).length ?? 0,
+  totalSlots:   poi?.containerInventory?.length ?? 0,
+});
+// If poi not found:
+console.warn("[auto-advance] container open — poi not found", { poiId, availablePoiIds: pois.map(p => p.id) });
+```
+
+### F4 — Container item pickup
+```typescript
+console.log("[auto-advance] container pickup", {
+  poiId,
+  containerItemId,
+  slotFound:   slotIndex !== -1,
+  slot:        poi?.containerInventory?.[slotIndex],
+  equippedTo:  slotField ?? "backpack",
+  characterId: currentCharId,
+});
+// If slot not found:
+console.warn("[auto-advance] container pickup — slot not found", { containerItemId, remainingSlots: poi?.containerInventory?.map(s => s.itemId) });
+```
+
+### F5 — Key use
+```typescript
+console.log("[auto-advance] key use", {
+  poiId,
+  poiName:    poi?.name,
+  lockId:     poi?.lockId,
+  toolItemId,
+  wasLocked:  poi?.isLocked ?? false,
+  keyRetained: true,   // key stays in inventory
+});
+// If poi already unlocked:
+console.warn("[auto-advance] key use — poi already unlocked", { poiId });
+```
+
+### F6 — Terrain demolition
+```typescript
+console.log("[auto-advance] terrain demolish", {
+  poiId,
+  poiName:         poi?.name,
+  attackSuccess:   attackRoll?.isSuccess,
+  rawDamage:       damageRoll?.totalResult ?? 0,
+  damageThreshold: poi?.damageThreshold ?? 0,
+  effectiveDamage,
+  hpBefore:        poi?.currentHp ?? poi?.maxHp,
+  hpAfter:         poi?.currentHp,   // after mutation
+  destroyed:       poi?.isDestroyed ?? false,
+  tileConvertedToFloor: doorTile?.t === "D" && (poi?.currentHp ?? 1) <= 0,
+});
+```
+
+### F7 — Terrain bash
+```typescript
+console.log("[auto-advance] terrain bash", {
+  poiId,
+  poiName:         poi?.name,
+  checkSuccess:    checkRoll?.isSuccess,
+  checkResult:     checkRoll?.totalResult,
+  poiArmorClass:   poi?.armorClass,
+  rawDamage:       damageRoll?.totalResult ?? 0,
+  damageThreshold: poi?.damageThreshold ?? 0,
+  effectiveDamage,
+  hpBefore:        hpBefore,
+  hpAfter:         poi?.currentHp,
+  destroyed:       poi?.isDestroyed ?? false,
+});
+```
+
+### C2 — Map creation loot population (in createGameMap)
+```typescript
+console.log("[create-game-map] enemyState lootItemIds", Object.fromEntries(
+  Object.entries(enemyState).map(([id, st]) => [id, st.lootItemIds])
+));
+```
+
+### D-level chip generation (in buildChipCandidates)
+```typescript
+console.log("[chip-candidates] loot candidates", defeatedEnemies?.map(e => ({ id: e.id, name: e.name, lootCount: e.lootItemIds.length })) ?? []);
+console.log("[chip-candidates] container candidates", { open: openContainerCount, pickup: pickupCandidateCount, keyUse: keyUseCandidateCount });
+console.log("[chip-candidates] terrain candidates", { demolish: demolishCount, bash: bashCount });
+```
+
+---
+
+## Phase I — Test cases
+
+New test file: `lib/item-interactions.test.ts`
+
+### Group 1: createGameMap — loot population
+
+```
+test: enemy with mainHandId → lootItemIds = [mainHandId]
+  setup:  Enemy DB row with mainHandId = "uuid-sword"
+  assert: enemyState["uuid-enemy"].lootItemIds deepEquals ["uuid-sword"]
+
+test: enemy with null mainHandId → lootItemIds = []
+  setup:  Enemy DB row with mainHandId = null
+  assert: enemyState["uuid-enemy"].lootItemIds deepEquals []
+```
+
+### Group 2: createGameMap — container POI enrichment
+
+```
+test: container POI initialised with isOpen=false, searchedBy=[], isLocked=false (no lockId)
+  setup:  Map.data.pois includes { id: "p1", isContainer: true, containerInventory: [...], lockId: null }
+  assert: GameMap.data.pois[0].isOpen === false
+  assert: GameMap.data.pois[0].searchedBy deepEquals []
+  assert: GameMap.data.pois[0].isLocked === false
+
+test: locked container POI initialised with isLocked=true
+  setup:  POI with lockId: "chest_lock_01"
+  assert: GameMap.data.pois[0].isLocked === true
+
+test: container item names resolved from DB
+  setup:  containerInventory slot has itemId "uuid-sword", Item row name = "Short Sword"
+  assert: GameMap.data.pois[0].containerInventory[0].itemName === "Short Sword"
+```
+
+### Group 3: createGameMap — terrain POI enrichment
+
+```
+test: terrain POI initialised with currentHp = maxHp, isLocked from lockId
+  setup:  POI with maxHp: 10, lockId: "cellar_key_01"
+  assert: GameMap.data.pois[0].currentHp === 10
+  assert: GameMap.data.pois[0].isLocked === true
+  assert: GameMap.data.pois[0].isDestroyed === false
+
+test: terrain POI with no lockId → isLocked = false
+  setup:  POI with maxHp: 10, lockId: null
+  assert: GameMap.data.pois[0].isLocked === false
+```
+
+### Group 4: buildChipCandidates — loot chips
+
+```
+test: defeated adjacent enemy with lootItemIds → loot chip generated
+  input:  defeatedEnemies = [{ id: "e1", name: "Rat", x: 1, y: 1, lootItemIds: ["uuid-claw"] }]
+          playerPos = { x: 1, y: 0 }   // adjacent (Chebyshev = 1)
+  assert: candidates includes { action_type: "loot", lootEnemyId: "e1" }
+
+test: defeated enemy 3 tiles away → no loot chip
+  input:  playerPos = { x: 0, y: 0 }, defeatedEnemy at { x: 3, y: 3 }
+  assert: candidates has no loot entry
+
+test: defeated enemy with empty lootItemIds → no loot chip
+  input:  defeatedEnemies = [{ id: "e1", lootItemIds: [] }]
+  assert: candidates has no loot entry
+```
+
+### Group 5: buildChipCandidates — container chips
+
+```
+test: adjacent closed container → container_open chip generated
+  input:  pois = [{ id: "p1", name: "Chest", x: 2, y: 1, isContainer: true, isOpen: false }]
+          playerPos = { x: 2, y: 0 }
+  assert: candidates includes { action_type: "container_open", poiId: "p1" }
+
+test: container 2 tiles away → no container_open chip
+  input:  playerPos = { x: 0, y: 0 }, container at { x: 2, y: 0 }
+  assert: candidates has no container_open entry
+
+test: adjacent open container + searchedBy roll 16 + investigationAc 8 → container_pickup chip
+  input:  poi with isOpen: true, searchedBy: [{ characterId: "char-1", roll: 16 }]
+          containerInventory: [{ itemId: "uuid-potion", itemName: "Potion", investigationAc: 8 }]
+          currentCharId: "char-1"
+  assert: candidates includes { action_type: "container_pickup", containerItemId: "uuid-potion" }
+
+test: roll 7 < investigationAc 8 → no pickup chip for that slot
+  input:  same as above but searchedBy roll = 7
+  assert: candidates has no container_pickup for "uuid-potion"
+
+test: no searchedBy entry for current character → only investigationAc=0 slots visible
+  input:  searchedBy = [], containerInventory has slots with ac [0, 8, 14]
+  assert: exactly 1 container_pickup candidate (the ac=0 slot)
+```
+
+### Group 6: buildChipCandidates — key use chips
+
+```
+test: adjacent locked POI + player has matching key → key_use chip
+  input:  poi with lockId: "key_01", isLocked: true, at (3,3)
+          playerInventory = [{ itemId: "uuid-key", keyId: "key_01" }]
+          playerPos = { x: 3, y: 2 }
+  assert: candidates includes { action_type: "key_use", poiId: poi.id, toolItemId: "uuid-key" }
+
+test: locked POI but player has no matching key → no key_use chip
+  input:  playerInventory = [{ itemId: "uuid-hammer", keyId: null }]
+  assert: candidates has no key_use entry
+
+test: unlocked POI (isLocked: false) → no key_use chip
+  input:  poi.isLocked = false
+  assert: candidates has no key_use entry
+
+test: movement chip suppressed for locked POI
+  input:  poi with isLocked: true (a door POI at (5,3))
+  assert: candidates has no movement chip targeting (5,3)
+  note:   add isLocked guard to the movement candidate loop in D3/existing POI handling
+```
+
+### Group 7: buildChipCandidates — terrain chips
+
+```
+test: adjacent POI with tool_demolition + player has matching tool → terrain_demolish chip
+  input:  poi.eligibleInteractions = ["tool_demolition"], poi.effectiveTools = ["blunt"]
+          playerInventory = [{ itemId: "uuid-hammer", interactionTags: ["blunt", "heavy_demolition"] }]
+  assert: candidates includes { action_type: "terrain_demolish", poiId: poi.id, toolItemId: "uuid-hammer" }
+
+test: player tool tags don't intersect effectiveTools → no demolish chip
+  input:  poi.effectiveTools = ["blunt"], playerInventory = [{ interactionTags: ["piercing"] }]
+  assert: candidates has no terrain_demolish entry
+
+test: adjacent POI with strength_bash → terrain_bash chip
+  input:  poi.eligibleInteractions = ["strength_bash"]
+  assert: candidates includes { action_type: "terrain_bash", poiId: poi.id }
+
+test: destroyed POI → no terrain chips generated
+  input:  poi.isDestroyed = true
+  assert: candidates has no terrain_demolish or terrain_bash entries for this poi
+```
+
+### Group 8: autoAdvance — container open handler
+
+```
+test: investigation roll 16 stored in searchedBy, isOpen set to true
+  mock:   rolls = [{ type: "ABILITY_CHECK", label: "Investigation", totalResult: 16 }]
+          GameMap has chest POI with isOpen: false, searchedBy: []
+  assert: poi.isOpen === true after handler
+  assert: poi.searchedBy = [{ characterId: currentCharId, roll: 16 }]
+  assert: character.remainingObjectInteractions decremented by 1
+
+test: same character opens same container twice — roll NOT overwritten
+  mock:   searchedBy already = [{ characterId: currentCharId, roll: 16 }]
+          new roll totalResult = 4
+  assert: searchedBy still = [{ characterId: currentCharId, roll: 16 }]  (no duplicate entry)
+```
+
+### Group 9: autoAdvance — key use handler
+
+```
+test: key use sets isLocked to false
+  mock:   poi with isLocked: true, lockId: "chest_lock_01"
+          chip = { action_type: "key_use", poiId: poi.id, toolItemId: "uuid-key" }
+  assert: poi.isLocked === false after handler
+
+test: key stays in character inventory after use
+  mock:   character backpack = ["uuid-key", "uuid-torch"]
+  assert: character.backpack still contains "uuid-key" after handler
+
+test: key_use on already-unlocked poi → no-op, no crash
+  mock:   poi.isLocked = false
+  assert: handler completes without error, poi.isLocked still false
+```
+
+### Group 10: autoAdvance — terrain handlers
+
+```
+test: demolish — attack hit + damage ≥ threshold → hp reduced
+  mock:   poi with currentHp: 10, damageThreshold: 3, armorClass: 13
+          rolls = [ATTACK isSuccess:true, DAMAGE totalResult:5]
+  assert: poi.currentHp === 5
+
+test: demolish — attack hit + damage < threshold → hp unchanged
+  mock:   rolls = [ATTACK isSuccess:true, DAMAGE totalResult:2]  (threshold: 3)
+  assert: poi.currentHp === 10  (effectiveDamage = 0)
+
+test: demolish — attack miss → no damage
+  mock:   rolls = [ATTACK isSuccess:false, DAMAGE skipped:true]
+  assert: poi.currentHp === 10
+
+test: demolish — currentHp reaches 0 → isDestroyed=true + door tile becomes "F"
+  mock:   poi with currentHp: 3, damageThreshold: 0, tile at (x,y) has t:"D"
+          rolls = [ATTACK isSuccess:true, DAMAGE totalResult:5]
+  assert: poi.isDestroyed === true
+  assert: GameMap.data.tiles[y][x].t === "F"
+
+test: bash — strength check success + damage ≥ threshold → hp reduced (mirrors demolish)
+test: bash — strength check fail → no damage
+```
 
 ---
 

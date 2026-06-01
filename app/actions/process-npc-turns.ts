@@ -130,7 +130,7 @@ export async function processNpcTurns(gameId: string): Promise<NpcBatchResult> {
     : null;
   const gmData = (activeGM?.data ?? {}) as Record<string, any>;
   const mapData = gmData;
-  const gmEnemyState = (gmData.enemyState ?? {}) as Record<string, { currentHp: number; maxHp: number }>;
+  const gmEnemyState = (gmData.enemyState ?? {}) as Record<string, { currentHp: number; maxHp: number; status?: string }>;
   const gmTilesNpc      = (gmData.tiles ?? []) as GameTile[][];
   const gmStringTilesNpc = gmTilesNpc.length > 0 ? tilesToStringGrid(gmTilesNpc) : null;
   // Build a position map by scanning tiles

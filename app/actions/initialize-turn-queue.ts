@@ -220,7 +220,7 @@ export async function initializeTurnQueue(
   // Ensure a CombatSession exists before queuing an attack.
   // The queue-based path never goes through take-turn, so the combat intercept
   // there doesn't fire — we must trigger it here instead.
-  const isAttackChip = chip.type === "mainAction" || ATTACK_CHIP_TYPES_SET.has(chip.type) || isAttackLabel(chip.label);
+  const isAttackChip = ATTACK_CHIP_TYPES_SET.has(chip.type) || isAttackLabel(chip.label);
   if (isAttackChip) {
     const existingSession = await prisma.combatSession.findUnique({ where: { gameId } });
     if (!existingSession) {
