@@ -42,6 +42,7 @@ export interface ItemDefinition {
   on_depleted?: 'destroy' | 'inert';
   use_effect?: string;
   story_flag?: string;
+  passive_effect?: string;
   improvised?: boolean;
   obvious?: boolean;
   hidden?: boolean;

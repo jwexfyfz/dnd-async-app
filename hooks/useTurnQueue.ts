@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { resolveRoll } from "@/app/actions/resolve-roll";
-import { autoAdvance, type AutoAdvanceResult } from "@/app/actions/auto-advance";
+import { resolveRoll } from "@/app/v1/actions/resolve-roll";
+import { autoAdvance, type AutoAdvanceResult } from "@/app/v1/actions/auto-advance";
 import type { QueueRoll } from "@/types/suggestion-chip";
 
 // Possible phases the sheet can be in during a turn.

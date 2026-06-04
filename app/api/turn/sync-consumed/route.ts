@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { syncConsumedResource } from "@/app/actions/sync-consumed-resource";
+import { syncConsumedResource } from "@/app/v1/actions/sync-consumed-resource";
 import type { TurnCostType } from "@/types/turn-actions";
 
 export async function POST(req: NextRequest) {

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { classEmoji } from "../lib/class-emoji";
-import { deleteCharacter } from "../app/actions/delete-character";
+import { deleteCharacter } from "../app/v1/actions/delete-character";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 

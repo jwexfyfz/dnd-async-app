@@ -1,7 +1,7 @@
 "use client";
 
 import { useTurnQueue, type TurnQueuePhase } from "@/hooks/useTurnQueue";
-import type { AutoAdvanceResult } from "@/app/actions/auto-advance";
+import type { AutoAdvanceResult } from "@/app/v1/actions/auto-advance";
 import type { QueueRoll } from "@/types/suggestion-chip";
 
 interface TurnQueueSheetProps {

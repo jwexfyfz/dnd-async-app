@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { supabaseBrowser } from "../lib/supabase-client";
-import { getCharacters } from "./actions/get-characters";
+import { getCharacters } from "./v1/actions/get-characters";
 import CharacterList from "../components/character-list";
 import LoginScreen from "../components/login-screen";
 

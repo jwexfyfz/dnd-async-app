@@ -422,14 +422,40 @@ async function main() {
       defaultProperties: {
         poi_type:   "interactive",
         visibility: "always",
-        examine_text: "A broad stone basin, dry for years. Faint angular runes ring the interior lip, worn smooth by many hands.",
+        examine_text: "A broad stone basin, long unused. A shallow pool of stagnant water has collected at the bottom from ceiling seepage. Faint angular runes ring the interior lip, worn smooth by many hands.",
         examine_details: [
           { skill: "religion", dc: 12, text: "The runes are a supplication to Bane, god of tyranny — a prayer for dominion over the weak." },
           { skill: "investigation", dc: 15, text: "Fresh candle wax is pooled at the basin's base. Someone performed a ritual here recently." },
+          { skill: "investigation", dc: 12, text: "The basin drains through a narrow pipe set into the west wall near the base. The pipe is wide enough for a careful arm. It connects to a stone shelf above the waterline in the flooded passage." },
         ],
         perception_details: [
           { dc: 10, text: "Wax residue coats the basin lip — candles were burned here recently." },
           { dc: 14, text: "A single dark hair is caught in a rune groove. Someone knelt over this basin within the last few days." },
+        ],
+        interact_options: [
+          {
+            label: "Drink from the collected water",
+            random_outcome: {
+              dice: "1d6",
+              check_first: { skill: "nature", dc: 12, reveal: "The water has a faint sulphurous tint. Drinking it unexamined would be unwise." },
+              outcomes: [
+                { range: [1, 3], narrative: "The water is brackish and foul. Something in it disagrees with you immediately.", effect: "curse_next_death_save_disadvantage" },
+                { range: [4, 5], narrative: "It tastes of old stone and nothing else. Nothing happens.", effect: null },
+                { range: [6, 6], narrative: "Cold and unexpectedly clean — almost supernaturally so. A faint warmth spreads through your chest.", effect: "heal_1d4" },
+              ],
+            },
+          },
+          {
+            label: "Reach into the drain pipe",
+            check: { skill: "athletics", dc: 10, note: "Small characters succeed automatically" },
+            success: "Your arm reaches along a stone shelf above the waterline and closes around a waterproof satchel — stashed here deliberately, well above any flood level.",
+            success_items: [
+              { id: "pipe_gold", name: "15 Gold Pieces", throwable: true, value_gp: 15, obvious: true },
+              { id: "pipe_dagger", name: "Explorer's Dagger", equip_slot: "main_hand", throwable: true, attack_bonus: 1, damage_dice: "1d4", obvious: true },
+              { id: "grocery_list", name: "Mundane Grocery List", throwable: false, obvious: true },
+            ],
+            failure: "The pipe is too tight for your arm. A smaller character might manage it.",
+          },
         ],
         climb:       { resulting_stance: "elevated_ground" },
         hide_behind: { resulting_stance: "crouching" },
@@ -660,12 +686,20 @@ async function main() {
         visibility: "always",
         examine_text: "A broad stone pillar snapped at the base, leaning against the eastern wall. Algae coats every surface; old carved script runs along the shaft.",
         examine_details: [
-          { skill: "history", dc: 13, text: "The script is Old Imperial — a dedication to a garrison commander named Arev the Steadfast. This was once a fortified military outpost." },
+          { skill: "history", dc: 13, text: "The script is Old Imperial — a dedication to a garrison commander named Arev the Steadfast. This was once a fortified military outpost. A secondary inscription below, in a different hand, appears to be a ritual notation of some kind." },
+          { skill: "arcana", dc: 14, text: "Below the dedication, a second inscription: a pre-Imperial ward phrase — 'Varath vel anath korum' — used to anchor a binding and protect the binder from compulsion corruption. Knowing this phrase provides a foundation for completing the vault's binding seal.", story_flag: "ward_phrase_known" },
           { skill: "perception", dc: 11, text: "A thin crack runs along the pillar's underside. Something is wedged into the gap." },
         ],
         perception_details: [
           { dc: 10, text: "The algae on the eastern face is smeared in a long streak — something brushed against it recently." },
           { dc: 14, text: "Beneath the algae, faint chisel marks form a row of numbers: a supply inventory count, partially legible." },
+        ],
+        interact_options: [
+          {
+            label: "Read the inscription backwards",
+            easter_egg: true,
+            narrative: "You reverse the syllables aloud. The algae on the pillar vibrates faintly. A single bubble rises from the water below your feet. Nothing else happens — but you feel briefly certain that something heard you.",
+          },
         ],
         take_cover: { resulting_stance: "behind_cover" },
         climb:      { resulting_stance: "elevated_ground" },
@@ -705,6 +739,7 @@ async function main() {
         examine_details: [
           { skill: "perception", dc: 10, text: "The glow comes from a small object resting in the silt, partially buried." },
           { skill: "nature", dc: 13, text: "The bioluminescence matches cave moss that only grows near underground springs. This pool connects to a deeper water source." },
+          { skill: "investigation", dc: 12, text: "The journal's author was an occultist who worked in this cellar decades ago. The final readable entry describes a failed attempt to bind an entity named Varath, and a key insight: 'It cannot manipulate one who genuinely wants nothing. Greed, fear, and ambition are its handholds. A mind at rest gives it nothing to grip.' Knowing this grants advantage on resisting Varath's compulsions in the vault.", story_flag: "occultist_notes" },
         ],
         perception_details: [
           { dc: 10, text: "The phosphorescence pulses in a slow, even rhythm — almost like breathing." },
@@ -714,10 +749,10 @@ async function main() {
         wade_into:     { resulting_stance: "exposed" },
         items: [
           {
-            id: "waterlogged_journal",
-            name: "Waterlogged Journal",
+            id: "occultist_journal",
+            name: "Occultist's Journal",
             throwable: true,
-            story_flag: "merchant_notes",
+            story_flag: "occultist_notes",
             obvious: true,
           },
           {
@@ -726,6 +761,7 @@ async function main() {
             equip_slot: "amulet",
             throwable: true,
             value_gp: 12,
+            passive_effect: "disadvantage_varath_will",
             hidden: true,
             reveal_check: { skill: "perception", dc: 14 },
           },
@@ -777,6 +813,15 @@ async function main() {
         perception_details: [
           { dc: 10, text: "The waterline on the walls shows this passage floods knee-deep during heavy rains." },
           { dc: 14, text: "Two sets of boot prints press into the silt, both heading north — neither set returning south." },
+        ],
+        interact_options: [
+          {
+            label: "Speak to the rats (requires Speak with Animals)",
+            requires_ability: "speak_with_animals",
+            easter_egg: true,
+            narrative: "A cluster of rats on a dry ledge above the waterline stops moving and looks at you with an unsettling degree of collective attention. Their designated speaker — a grey rat with a notched ear — approaches. They have watched everything. They know Mira is in the hanging cage in the north chamber, that Harwick paces the ritual circle every three minutes, and that the woman in the vault has been speaking to herself in a language none of them recognize. They know where Harwick keeps his personal coin purse (tucked under the stone altar's left leg). They want cheese. A full ration counts as adequate. Half a ration is accepted with visible contempt, and they share only two of three pieces of information.",
+            payment: { item: "ration", reward_tier: [{ quantity: 1, info_count: 3 }, { quantity: 0.5, info_count: 2 }] },
+          },
         ],
         items: [],
       },
@@ -864,6 +909,15 @@ async function main() {
           { dc: 14, text: "A cut length of leather binding cord lies on the floor below the rack — sliced cleanly, not untied." },
         ],
         take_cover: { resulting_stance: "behind_cover" },
+        interact_options: [
+          {
+            label: "Try on the old Vorne plate armor",
+            check: null,
+            narrative: "The armor is old but well-kept — someone oiled it recently. It fits as though it was made for you. The Vorne crest on the chest catches the light. For the rest of this dungeon, those who recognize the Vorne name react differently: Beren is more deferential; Harwick is briefly rattled. In combat, the crest gives +1 AC and -1 Charisma (the Vorne name carries weight, and not all of it good).",
+            story_flag: "vorne_armor_worn",
+            equip_item: { id: "vorne_plate", name: "Vorne Family Plate", equip_slot: "chest", passive_effect: "vorne_presence", obvious: true },
+          },
+        ],
         items: [
           {
             id: "hand_axe",
@@ -879,6 +933,15 @@ async function main() {
             throwable: false,
             hidden: true,
             reveal_check: { skill: "perception", dc: 9 },
+          },
+          {
+            id: "vorne_plate",
+            name: "Vorne Family Plate",
+            equip_slot: "chest",
+            throwable: false,
+            passive_effect: "vorne_presence",
+            hidden: true,
+            reveal_check: { skill: "perception", dc: 11 },
           },
         ],
       },
@@ -905,6 +968,17 @@ async function main() {
           { dc: 14, text: "Behind a pair of mounted antlers, a small iron hook is screwed into the stone. Something hung here until not long ago." },
         ],
         examine_closely: { resulting_stance: "standing" },
+        interact_options: [
+          {
+            label: "Pry the crest off the wall",
+            check: { skill: "athletics", dc: 12 },
+            success: "The crest comes away with a crack of old mortar. Behind it: a shallow hollow in the stone. Inside is a small brass locket on a chain. You open it — two portraits, carefully painted on ivory. A woman and a young child. Not Harwick's wife; the clothing is wrong by a generation. On the locket's inner face, engraved in small letters: 'For H, when you find your way back.'",
+            success_items: [
+              { id: "vorne_locket", name: "Vorne Family Locket", throwable: false, story_flag: "locket_found", obvious: true },
+            ],
+            failure: "The crest is fixed firmly. You'd need more leverage or a better grip.",
+          },
+        ],
         items: [
           {
             id: "signet_ring",
@@ -1057,6 +1131,53 @@ async function main() {
         items: [],
       },
     },
+    {
+      id: "ff000000-0000-0000-0000-000000000007",
+      name: "Loose Stone Behind Rack",
+      keywordIdentifier: "loose_stone_cache",
+      grid_slot: "NW",
+      visibility_level: 1,
+      exit_direction: null,
+      exit_wall_section: "C",
+      exit_arch_width: 1,
+      defaultProperties: {
+        poi_type:   "interactive",
+        visibility: "flag_gated",
+        reveal_flag: "mira_freed",
+        reveal_dc_fallback: 18,
+        examine_text: "Behind the weapon rack, a section of the stone wall sounds hollow when knuckled. One stone is slightly proud of the rest, its mortar cracked around the edges.",
+        examine_details: [
+          { skill: "investigation", dc: 10, text: "The stone is a deliberate cache — the mortar was mixed thin so it could be broken and re-set repeatedly. Someone has used this hiding spot many times." },
+        ],
+        perception_details: [
+          { dc: 10, text: "The stone is dustier on the right side than the left — it's been pulled from the left repeatedly." },
+        ],
+        interact_options: [
+          {
+            label: "Pull out the loose stone",
+            check: null,
+            success: "The stone slides free. Behind it: a small oilskin pouch and a folded note. Mira's stash — exactly where she said it would be.",
+            success_items: [
+              {
+                id: "oil_of_silence",
+                name: "Oil of Silence",
+                consumable: true,
+                throwable: true,
+                use_effect: "silence_area_10ft",
+                obvious: true,
+              },
+              {
+                id: "conspiracy_note",
+                name: "Planted Evidence Note",
+                throwable: false,
+                story_flag: "conspiracy_known",
+                obvious: true,
+              },
+            ],
+          },
+        ],
+      },
+    },
   ];
 
   for (const poi of armoryPois) {
@@ -1153,7 +1274,23 @@ async function main() {
             label: "Rouse him (Medicine DC 12)",
             check: { skill: "medicine", dc: 12 },
             success: "Beren stirs, blinks, and grabs your wrist — then lets go as his eyes focus. 'Who — ' He swallows. 'He drugged me. The lord drugged me.' He reaches for his belt. 'The key. Iron door north. Take it — whatever he's doing down there has to stop.'",
+            success_flag: "beren_roused",
             failure: "You shake him and slap his face but he doesn't rouse. He'll need time — or something stronger than your efforts.",
+          },
+          {
+            label: "Tickle him",
+            easter_egg: true,
+            check: { skill: "perception", dc: 20, note: "Only a natural 20 catches what follows" },
+            success: "Beren snort-laughs in his sleep and rolls over, mumbling something. You catch it clearly: 'Lena... the merchant said...' He's dreaming about someone who knew Maren Ashwick. He knows more than he let on.",
+            failure: "He doesn't react. He's too deeply under.",
+          },
+          {
+            label: "Tell him Harwick drugged him deliberately",
+            requires_flag: "beren_roused",
+            check: { skill: "persuasion", dc: 12 },
+            success: "Beren's jaw tightens. He's quiet for a long moment. 'He didn't want a witness.' He stands, steadier than he looks. 'I won't fight him — he's still my lord. But I'll make sure he can't run. If he tries to flee through here, I'll hold the passage.' He also tells you: the merchant woman is in the vault, east of the ritual chamber. He heard her voice through the wall two days ago.",
+            success_flag: "beren_loyal",
+            failure: "He shakes his head. 'He has his reasons. He always has his reasons.' He doesn't believe you.",
           },
         ],
         items: [
@@ -1297,6 +1434,30 @@ async function main() {
           story_flag: "ritual_disrupted",
           narrative: "You drag your blade through three connecting glyphs in rapid succession. The silver light flares white, then sputters out. The air pressure releases. In the sudden dark and silence, you hear Harwick's voice break off mid-syllable.",
         },
+        interact_options: [
+          {
+            label: "Pour a liquid into the circle",
+            context_resolved: true,
+            outcomes_by_liquid: {
+              water: { narrative: "The water hisses as it hits the glowing grooves. The silver light sputters and dims noticeably — the circle is weakened.", effect: "harwick_ritual_penalty_2", story_flag: "circle_water_doused" },
+              oil:   { narrative: "The oil spreads across the carved grooves. The circle is now flammable — a torch would end this ritual permanently and start a fire.", story_flag: "circle_oiled", note: "Torching now counts as ritual_disrupted but starts a fire hazard" },
+              blood: { narrative: "The blood hits the seal and the light surges brilliant white. Harwick wheels around, eyes wide. 'Yes — yes, that's it.' You've accidentally advanced the ritual.", story_flag: "blood_in_circle", effect: "ritual_advanced" },
+              other: { narrative: "It sizzles and evaporates before reaching the glyph floor. No meaningful effect.", effect: null },
+            },
+          },
+          {
+            label: "Try to fix the ritual circle",
+            check: { skill: "arcana", dc: 16 },
+            success: "You identify three cardinal glyphs that Harwick has carved inverted and carefully re-cut them with the tip of your blade. The light shifts from cold silver to a warmer gold — more stable. Whatever binding happens in the vault will be somewhat easier.",
+            success_flag: "circle_partially_corrected",
+            failure: "You attempt to correct the anchor glyphs but you're not certain which errors are Harwick's and which are Varath's guidance. You stop before making things worse.",
+          },
+          {
+            label: "Sing or hum near the circle",
+            easter_egg: true,
+            narrative: "You hum a few bars of something simple. The silver light in the nearest glyph groove brightens fractionally, then dims — as if something noticed and caught itself. Harwick, from across the room, says nothing. But his muttering stops for three full seconds.",
+          },
+        ],
       },
     },
     {
@@ -1352,6 +1513,20 @@ async function main() {
         perception_details: [
           { dc: 10, text: "The grimoire's most recent pages are written in a different hand than the early sections — shakier, more rushed." },
           { dc: 14, text: "Beneath the grimoire, a folded letter addressed to 'H. Vorne, care of the cellar road.' Unsigned." },
+        ],
+        interact_options: [
+          {
+            label: "Read the grimoire aloud",
+            easter_egg: true,
+            check: { skill: "arcana", dc: 10, note: "Failure just means you mispronounce things; the imp arrives either way" },
+            narrative: "You read three lines aloud. A small crack appears in the air above the altar — no wider than a hand span — and something falls through it onto the stone surface. It's about the size of a large cat and very angry. It rights itself, smooths what might be hair, and fixes you with a glare of profound offence. 'That,' it says, in a voice like a nail dragged across slate, 'was my nap. I am Glet. I was resting inside the binding diffusion until someone began shouting.' It wants nothing to do with Varath, Harwick, or this ritual. It will answer one honest question about the vault before blinking away. It does not fight. It hates Harwick specifically.",
+            success_flag: "glet_summoned",
+            glet_knowledge: [
+              "The Binding Seal is correctly constructed — the fault is in the ritual circle above, not the vault.",
+              "Varath's partial binding has lasted because of the original pre-Imperial architecture, not Harwick's work.",
+              "The merchant woman in the vault knows the correct completion procedure.",
+            ],
+          },
         ],
         items: [
           {
@@ -1531,13 +1706,29 @@ async function main() {
           {
             label: "Complete the binding (with Maren's guidance)",
             requires_flag: "maren_rescued",
-            check: { skill: "arcana", dc: 12 },
+            check: {
+              skill: "arcana",
+              dc: 12,
+              dc_modifiers: [
+                { requires_flag: "ward_phrase_known", amount: -3, note: "You speak the ward phrase at the anchor points as Maren directs" },
+                { requires_flag: "circle_partially_corrected", amount: -2 },
+              ],
+            },
             success_flag: "binding_seal_used",
             narrative: "Maren stands beside you, reading the incantation from memory in precise Old Imperial. You apply the anchor reagents at the cardinal points as she directs. The script flares white. The cold air rushes inward like a held breath releasing. The script locks — every glyph freezes in place. Silence. Then, distantly, something that might be a scream, cut short. The seal is complete. Varath is contained.",
           },
           {
             label: "Attempt binding without guidance",
-            check: { skill: "arcana", dc: 18 },
+            check: {
+              skill: "arcana",
+              dc: 18,
+              dc_modifiers: [
+                { requires_flag: "ward_phrase_known", amount: -4, note: "The ward phrase anchors you against compulsion during the incantation" },
+                { requires_flag: "circle_partially_corrected", amount: -4 },
+                { requires_flag: "occultist_notes", amount: -2, note: "You apply the occultist's insight: you want nothing from this" },
+                { requires_equipped: "bronze_amulet", amount: -2 },
+              ],
+            },
             success_flag: "binding_seal_used",
             failure_flag: "binding_seal_destroyed",
             narrative_success: "With no guide but the script itself, you work through the incantation syllable by syllable. The seal activates — correctly. Varath's presence contracts and disappears. The chamber warms.",
@@ -1547,6 +1738,11 @@ async function main() {
             label: "Destroy the seal",
             story_flag: "binding_seal_destroyed",
             narrative: "You bring your weapon down on the disc. The script screams — actually screams, a sound that comes from everywhere at once. The disc shatters. The cold releases. The chamber is just a room. But something that was held here is no longer held.",
+          },
+          {
+            label: "Sing or hum near the seal",
+            easter_egg: true,
+            narrative: "You hum something simple. The script on the disc shifts — individual glyphs realigning fractionally, as if listening. For just a moment the whispers from the seal harmonize with the melody before catching themselves. Varath, whatever it is, has been alone and contained for a very long time. It craves attention of any kind. This is a foothold, if you choose to use it.",
           },
         ],
       },

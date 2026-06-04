@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { createCharacter } from "@/app/actions/create-character";
+import { createCharacter } from "@/app/v1/actions/create-character";
 import { CLASS_SKILL_POOL, SKILL_PICK_COUNT } from "../lib/skills";
 
 // The four classes available in this campaign. Add more here to extend the picker.
