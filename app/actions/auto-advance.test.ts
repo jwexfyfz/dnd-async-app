@@ -132,6 +132,15 @@ vi.mock("../../lib/prisma", () => {
       enemy: {
         findMany: vi.fn().mockResolvedValue([]),
       },
+      character: {
+        findUnique: vi.fn().mockResolvedValue({
+          mainHandId: null, offHandId: null, armorId: null, ringId: null, backpack: [],
+          remainingObjectInteractions: 1, baseIntelligence: 10, level: 1, skillProficiencies: [],
+        }),
+      },
+      item: {
+        findMany: vi.fn().mockResolvedValue([]),
+      },
       message: {
         create: vi.fn().mockResolvedValue({}),
       },

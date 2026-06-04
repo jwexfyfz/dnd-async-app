@@ -11,7 +11,22 @@ export interface MapData {
   tiles:  GameTile[][];
   playerStart: { x: number; y: number };
   rooms:  { name: string; description: string }[];
-  pois:   { id: string; name: string; x: number; y: number; symbol: string; itemId?: string }[];
+  pois:   {
+    id: string; name: string; x: number; y: number; symbol: string; itemId?: string;
+    isContainer?: boolean;
+    containerInventory?: { itemId: string; itemName: string; investigationAc: number }[];
+    isOpen?: boolean;
+    searchedBy?: { characterId: string; roll: number }[];
+    eligibleInteractions?: string[];
+    effectiveTools?: string[];
+    armorClass?: number;
+    maxHp?: number;
+    damageThreshold?: number;
+    lockId?: string;
+    currentHp?: number;
+    isLocked?: boolean;
+    isDestroyed?: boolean;
+  }[];
   // Optional new-format fields — present on GameMapData, absent on template MapData
   itemState?: Record<string, { isPickedUp: boolean; isVisible: boolean }>;
 }

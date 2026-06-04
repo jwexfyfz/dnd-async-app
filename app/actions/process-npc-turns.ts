@@ -418,7 +418,7 @@ export async function processNpcTurns(gameId: string): Promise<NpcBatchResult> {
           const { maxAction, maxBonusAction, maxMovementFeet } = computeCaps(char.characterClass, char.level);
           await tx.character.update({
             where: { id: char.id },
-            data:  { remainingActions: maxAction, remainingBonusActions: maxBonusAction, remainingMovementFeet: maxMovementFeet },
+            data:  { remainingActions: maxAction, remainingBonusActions: maxBonusAction, remainingMovementFeet: maxMovementFeet, remainingObjectInteractions: 1 },
           });
         }
         console.log(`[npc-turn] new round ${newRoundNumber} — reset actions/movement for: ${characters.map(c => c.name).join(", ")}`);

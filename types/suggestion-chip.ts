@@ -2,7 +2,9 @@ import type { ChipType } from "./chips";
 
 export type AdvantageState = "NONE" | "ADVANTAGE" | "DISADVANTAGE";
 export type RollType       = "ATTACK" | "DAMAGE" | "SAVING_THROW" | "ABILITY_CHECK";
-export type ActionType     = "mainAction" | "bonusAction" | "movement" | "free";
+export type ActionType     = "mainAction" | "bonusAction" | "movement" | "free"
+                           | "loot" | "container_open" | "container_pickup" | "key_use"
+                           | "terrain_demolish" | "terrain_bash";
 
 // One entry in the activeTurnQueue.rolls array.
 export interface QueueRoll {
@@ -35,5 +37,9 @@ export interface SuggestionChip {
   spellLevel:     number;          // 0 for cantrips/martial; >0 for leveled spells
   endPosition:    { x: number; y: number };   // destination tile (playerPos for non-movement)
   actionTarget:   { x: number; y: number };   // target tile (playerPos for self-targeting)
-  itemId?:        string;                     // map item ID to pick up when chip is executed
+  itemId?:          string;  // map item ID to pick up when chip is executed
+  lootEnemyId?:     string;  // dead enemy to loot
+  poiId?:           string;  // POI being interacted with
+  containerItemId?: string;  // specific item slot inside an open container
+  toolItemId?:      string;  // Item.id of the tool being used for demolition
 }

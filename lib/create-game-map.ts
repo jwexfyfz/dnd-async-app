@@ -33,6 +33,19 @@ export async function createGameMap(
     : [];
   const enemyMaxHp = new Map<string, number>(enemyRows.map((e: { id: string; maxHp: number }) => [e.id, e.maxHp]));
 
+  // C1: Fetch mainHandId for each enemy to populate loot
+  const enemyLootRows = enemyIds.length > 0
+    ? await db.enemy.findMany({
+        where:  { id: { in: enemyIds } },
+        select: { id: true, mainHandId: true },
+      })
+    : [];
+  const enemyLootMap = new Map<string, string>(
+    enemyLootRows
+      .filter((e: { id: string; mainHandId: string | null }) => e.mainHandId !== null)
+      .map((e: { id: string; mainHandId: string }) => [e.id, e.mainHandId])
+  );
+
   // Fetch blocksMovement for each item
   const itemRows = itemIds.length > 0
     ? await db.item.findMany({
@@ -41,6 +54,19 @@ export async function createGameMap(
       })
     : [];
   const itemBlocks = new Map<string, boolean>(itemRows.map((i: { id: string; blocksMovement: boolean }) => [i.id, i.blocksMovement]));
+
+  // C3: Fetch container item names from Map.data.pois containerInventory slots
+  const containerItemIds = (tmpl.pois ?? [])
+    .flatMap((p: any) => (p.containerInventory ?? []).map((s: any) => s.itemId as string))
+    .filter(Boolean) as string[];
+  let containerItemNameMap: Map<string, string> | undefined;
+  if (containerItemIds.length > 0) {
+    const containerItemRows = await db.item.findMany({
+      where:  { id: { in: containerItemIds } },
+      select: { id: true, name: true },
+    });
+    containerItemNameMap = new Map(containerItemRows.map((i: { id: string; name: string }) => [i.id, i.name]));
+  }
 
   // Build GameTile grid and registries
   const enemyState: Record<string, EnemyInstance> = {};
@@ -54,6 +80,7 @@ export async function createGameMap(
         const maxHp = enemyMaxHp.get(tile.enemy) ?? 0;
         gt.actor = { kind: "enemy", id: tile.enemy };
         if (!enemyState[tile.enemy]) {
+          // C2: Populate lootItemIds from enemy mainHandId
           enemyState[tile.enemy] = {
             currentHp:   maxHp,
             maxHp,
@@ -62,7 +89,7 @@ export async function createGameMap(
             stealthRoll: 0,
             hasReaction: true,
             isSurprised: false,
-            lootItemIds: [],
+            lootItemIds: enemyLootMap.has(tile.enemy) ? [enemyLootMap.get(tile.enemy)!] : [],
           };
         }
       }
@@ -98,10 +125,31 @@ export async function createGameMap(
     tiles:       gameTiles,
     playerStart: tmpl.playerStart ?? { x: 0, y: 0 },
     rooms:       tmpl.rooms  ?? [],
-    pois:        (tmpl.pois ?? []).map((p: any) => ({ ...p, itemId: itemPosMap.get(`${p.x},${p.y}`) })),
+    // C4: Enrich POI initialization with container and terrain live state
+    pois: (tmpl.pois ?? []).map((p: any) => ({
+      ...p,
+      itemId: itemPosMap.get(`${p.x},${p.y}`),
+      ...(p.isContainer ? {
+        isOpen:     false,
+        searchedBy: [],
+        containerInventory: (p.containerInventory ?? []).map((slot: any) => ({
+          ...slot,
+          itemName: containerItemNameMap?.get(slot.itemId) ?? slot.itemId,
+        })),
+      } : {}),
+      ...(p.maxHp !== undefined ? {
+        currentHp:   p.maxHp,
+        isLocked:    !!p.lockId,
+        isDestroyed: false,
+      } : {}),
+    })),
     enemyState,
     itemState,
   };
+
+  console.log("[create-game-map] enemyState lootItemIds", Object.fromEntries(
+    Object.entries(enemyState).map(([id, st]) => [id, st.lootItemIds])
+  ));
 
   const gameMap = await db.gameMap.create({
     data: { gameId, actId, mapId: mapTemplate.id, data: gameMapData as any },

@@ -66,6 +66,32 @@ export interface ItemInstance {
   activeFromSceneOrder: number | null;
   droppedByEnemyId:     string | null;
   blocksMovement:       boolean;
+  discoveryDC?:         number; // Passive Perception DC to notice while hidden (default 15)
+}
+
+export interface PoiInstance {
+  id:      string;
+  name:    string;
+  x:       number;
+  y:       number;
+  symbol:  string;
+  itemId?: string;
+  // Container (static from Map.data + live state in GameMap.data)
+  isContainer?:        boolean;
+  containerInventory?: { itemId: string; itemName: string; investigationAc: number }[];
+  isOpen?:             boolean;
+  searchedBy?:         { characterId: string; roll: number }[];
+  // Terrain interaction (static from Map.data)
+  eligibleInteractions?: string[];
+  effectiveTools?:       string[];
+  armorClass?:           number;
+  maxHp?:                number;
+  damageThreshold?:      number;
+  lockId?:               string;
+  // Live terrain state (GameMap.data)
+  currentHp?:  number;
+  isLocked?:   boolean;
+  isDestroyed?: boolean;
 }
 
 export interface GameMapData {
@@ -74,7 +100,7 @@ export interface GameMapData {
   tiles:       GameTile[][];
   playerStart: { x: number; y: number };
   rooms:       { name: string; description: string }[];
-  pois:        { id: string; name: string; x: number; y: number; symbol: string; itemId?: string }[];
+  pois:        PoiInstance[];
   enemyState:  Record<string, EnemyInstance>;
   itemState:   Record<string, ItemInstance>;
 }

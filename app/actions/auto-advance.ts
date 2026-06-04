@@ -109,6 +109,16 @@ interface MechanicalAttackResult {
   isCrit:      boolean;
 }
 
+interface TerrainAttackResult {
+  poiName:         string;
+  rawDamage:       number;
+  effectiveDamage: number;
+  hpBefore:        number;
+  hpAfter:         number;
+  destroyed:       boolean;
+  interactionType: "demolish" | "bash";
+}
+
 function buildDynamicContext(
   worldState:    Record<string, any> | null,
   gameState:     Record<string, any>,
@@ -125,6 +135,7 @@ function buildDynamicContext(
   dbEnemies?:    { id: string; name: string; currentHp: number; maxHp: number; posX: number; posY: number }[],
   endPosition?:  { x: number; y: number },
   mechanicalAttack?: MechanicalAttackResult,
+  terrainAttackResult?: TerrainAttackResult,
 ): string {
   // worldState columns → fall back to game.state JSON
   const ws  = worldState ?? {};
@@ -185,8 +196,12 @@ function buildDynamicContext(
     ? `\nMECHANICAL RESULT: Hit ${mechanicalAttack.enemyName} for ${mechanicalAttack.damage} damage${mechanicalAttack.isCrit ? " (CRITICAL HIT)" : ""}. ${mechanicalAttack.enemyName} now has ${mechanicalAttack.enemyHpAfter} HP${mechanicalAttack.enemyHpAfter <= 0 ? " — DEFEATED" : ""}. HP applied by engine; DO NOT emit combat_effect for this attack.`
     : "";
 
+  const terrainResultLine = terrainAttackResult
+    ? `\nTERRAIN RESULT: ${terrainAttackResult.poiName} took ${terrainAttackResult.effectiveDamage} damage (${terrainAttackResult.hpBefore} → ${terrainAttackResult.hpAfter} HP)${terrainAttackResult.destroyed ? " — DESTROYED, now passable floor." : "."} HP applied by engine; DO NOT alter tile state.`
+    : "";
+
   const turnSection = rolls.length > 0
-    ? `TURN RESOLUTION — narrate around these exact results:\n${buildRollSummary(rolls)}${attackLine}`
+    ? `TURN RESOLUTION — narrate around these exact results:\n${buildRollSummary(rolls)}${attackLine}${terrainResultLine}`
     : `TURN RESOLUTION — free action, no dice roll required.\nPlayer action: ${chipLabel}`;
 
   const hasLivingEnemies = dbEnemies
@@ -227,6 +242,9 @@ Format: <combat_effect target_id="ENTITY_ID" delta="N" type="TYPE" />
 Emit one tag per affected entity. Omit entirely if no HP changed this turn.`;
 }
 
+function calcEffectiveDamage(raw: number, threshold: number): number {
+  return raw >= threshold ? raw : 0;
+}
 
 // ─── Action ───────────────────────────────────────────────────────────────────
 
@@ -244,11 +262,15 @@ export interface AutoAdvanceResult {
 }
 
 export async function autoAdvance(
-  gameId:       string,
-  turnId:       string,
-  chipLabel:    string,
-  endPosition?: { x: number; y: number },
-  itemId?:      string,
+  gameId:           string,
+  turnId:           string,
+  chipLabel:        string,
+  endPosition?:     { x: number; y: number },
+  itemId?:          string,
+  lootEnemyId?:     string,
+  poiId?:           string,
+  containerItemId?: string,
+  toolItemId?:      string,
 ): Promise<AutoAdvanceResult> {
   // ── Auth ──────────────────────────────────────────────────────────────────
   const supabase = await createSupabaseServerClient();
@@ -592,8 +614,8 @@ export async function autoAdvance(
 
   // Filter POIs to those visible. For each out-of-LoS POI, walk the Bresenham
   // path and collect the first blocking door as a substitute candidate.
-  const allPois = (mapData.pois ?? []) as { name: string; x: number; y: number; itemId?: string }[];
-  let candidatePois: { name: string; x: number; y: number; itemId?: string }[];
+  const allPois = (mapData.pois ?? []) as any[];
+  let candidatePois: any[];
   if (gmTilesCand.length > 0) {
     candidatePois = allPois.filter(p => visibleForChips.has(`${p.x},${p.y}`));
     const doorCandidates = new Map<string, { name: string; x: number; y: number }>();
@@ -632,6 +654,63 @@ export async function autoAdvance(
     candidatePois = allPois;
   }
 
+  // D10: Extract defeatedEnemies with tile positions for loot chip generation
+  const gmEnemyStateForChips = (gmData.enemyState ?? {}) as Record<string, EnemyInstance>;
+  const defeatedEnemiesForChips = Object.entries(gmEnemyStateForChips)
+    .filter(([, st]) => st.status === "DEFEATED" && (st.lootItemIds?.length ?? 0) > 0)
+    .flatMap(([id, st]) => {
+      const pos = gmTilesCand.length > 0 ? (() => {
+        for (let ty = 0; ty < gmTilesCand.length; ty++) {
+          for (let tx = 0; tx < gmTilesCand[ty].length; tx++) {
+            const actor = gmTilesCand[ty][tx]?.actor;
+            if (actor?.id === id) return { x: tx, y: ty };
+          }
+        }
+        return null;
+      })() : null;
+      const gsEnemy = ((gameState.enemies as any[] | undefined) ?? []).find((e: any) => e.id === id);
+      const x = pos?.x ?? gsEnemy?.x ?? 0;
+      const y = pos?.y ?? gsEnemy?.y ?? 0;
+      const name = gsEnemy?.name ?? id;
+      return [{ id, name, x, y, lootItemIds: st.lootItemIds ?? [] }];
+    });
+
+  // D10: Extract player inventory (equipped + backpack) with interactionTags and keyId
+  const currentCharFull = await prisma.character.findUnique({
+    where:  { id: currentCharId },
+    select: { mainHandId: true, offHandId: true, armorId: true, ringId: true, backpack: true, remainingObjectInteractions: true },
+  });
+  const equippedIds = [
+    currentCharFull?.mainHandId,
+    currentCharFull?.offHandId,
+    currentCharFull?.armorId,
+    currentCharFull?.ringId,
+  ].filter(Boolean) as string[];
+  const backpackIds = currentCharFull?.backpack ?? [];
+  const allInventoryIds = [...new Set([...equippedIds, ...backpackIds])];
+  let playerInventoryForChips: { itemId: string; interactionTags: string[]; keyId?: string }[] = [];
+  if (allInventoryIds.length > 0) {
+    const invItems = await prisma.item.findMany({
+      where:  { id: { in: allInventoryIds } },
+      select: { id: true, interactionTags: true, keyId: true },
+    });
+    playerInventoryForChips = invItems.map(i => ({
+      itemId:          i.id,
+      interactionTags: i.interactionTags,
+      keyId:           i.keyId ?? undefined,
+    }));
+  }
+
+  // D10: Compute investigation modifier for container open
+  const currentCharStats = await prisma.character.findUnique({
+    where:  { id: currentCharId },
+    select: { baseIntelligence: true, level: true, skillProficiencies: true },
+  });
+  const { abilityModifier: abilMod, proficiencyBonus: profBonus } = await import("../../lib/dice");
+  const intMod = abilMod(currentCharStats?.baseIntelligence ?? 10);
+  const profBonusVal = profBonus(currentCharStats?.level ?? 1);
+  const investigationMod = intMod + ((currentCharStats?.skillProficiencies ?? []).includes("Investigation") ? profBonusVal : 0);
+
   const chipBuildInput = {
     playerPos:             candidatePlayerPos,
     enemies:               candidateEnemies,
@@ -639,6 +718,10 @@ export async function autoAdvance(
     remainingMovementFeet: currentChar.remainingMovementFeet ?? 30,
     gameTiles:             gmTilesCand.length > 0 ? gmTilesCand : undefined,
     pois:                  candidatePois,
+    defeatedEnemies:       defeatedEnemiesForChips,
+    playerInventory:       playerInventoryForChips,
+    currentCharId,
+    investigationMod,
   };
   console.log("[autoAdvance] buildChipCandidates input", {
     playerPos:             chipBuildInput.playerPos,
@@ -650,6 +733,36 @@ export async function autoAdvance(
   });
   const candidates = buildChipCandidates(chipBuildInput);
   console.log("[autoAdvance] buildChipCandidates output", candidates.map(c => ({ action_type: c.action_type, targetName: c.targetName, requiresMovement: c.requiresMovement, movementFeet: c.movementFeet })));
+
+  // ── F9: Pre-compute terrain result for Claude prompt ─────────────────────────
+  let terrainAttackResult: TerrainAttackResult | undefined;
+  {
+    const isDemolish = !!(poiId && toolItemId && rolls.some(r => r.type === "ATTACK"));
+    const isBash     = !!(poiId && !toolItemId && rolls.some(r => r.type === "ABILITY_CHECK" && r.label === "Strength Check"));
+    if (isDemolish || isBash) {
+      const poiF9 = allPois.find((p: any) => p.id === poiId);
+      if (poiF9) {
+        const attackRollF9 = rolls.find(r => isDemolish ? r.type === "ATTACK" : r.type === "ABILITY_CHECK");
+        const damageRollF9 = rolls.find(r => r.type === "DAMAGE" && !r.skipped);
+        if (attackRollF9?.isSuccess && damageRollF9?.totalResult) {
+          const rawDmgF9       = damageRollF9.totalResult;
+          const hpBeforeF9     = poiF9.currentHp ?? poiF9.maxHp ?? 1;
+          const effectiveDmgF9 = calcEffectiveDamage(rawDmgF9, poiF9.damageThreshold ?? 0);
+          const hpAfterF9      = Math.max(0, hpBeforeF9 - effectiveDmgF9);
+          terrainAttackResult  = {
+            poiName:         poiF9.name,
+            rawDamage:       rawDmgF9,
+            effectiveDamage: effectiveDmgF9,
+            hpBefore:        hpBeforeF9,
+            hpAfter:         hpAfterF9,
+            destroyed:       hpAfterF9 <= 0,
+            interactionType: isDemolish ? "demolish" : "bash",
+          };
+          console.log("[auto-advance] F9 terrain pre-compute:", terrainAttackResult);
+        }
+      }
+    }
+  }
 
   const staticCtx  = buildStaticContext(currentChar, game.partyMembers, game.story, game.currentAct, game.currentScene, mapData, combatInfo);
   const dynamicCtx = buildDynamicContext(
@@ -670,6 +783,7 @@ export async function autoAdvance(
     dbEnemies,
     endPosition,
     mechanicalAttack,
+    terrainAttackResult,
   );
   console.log("[autoAdvance] prompt lengths — static:", staticCtx.length, "dynamic:", dynamicCtx.length);
   const responseInstr = buildResponseInstruction();
@@ -1085,6 +1199,274 @@ export async function autoAdvance(
               await tx.character.update({
                 where: { id: currentCharId },
                 data:  { backpack: { push: itemId } },
+              });
+            }
+          }
+        }
+      }
+
+      // ── F2: Loot enemy handler ────────────────────────────────────────────────
+      if (lootEnemyId && activeGameMap) {
+        const gmForLoot = await tx.gameMap.findUnique({ where: { id: activeGameMap.id }, select: { id: true, data: true } });
+        if (gmForLoot) {
+          const lootEnemyState = ((gmForLoot.data as any).enemyState ?? {}) as Record<string, EnemyInstance>;
+          const enemySt = lootEnemyState[lootEnemyId];
+          if (!enemySt || !enemySt.lootItemIds || enemySt.lootItemIds.length === 0) {
+            console.warn("[auto-advance] loot enemy skipped", { lootEnemyId, reason: enemySt ? "already empty" : "no enemyState entry" });
+          } else {
+            console.log("[auto-advance] loot enemy", {
+              lootEnemyId,
+              lootItemIds:  enemySt.lootItemIds,
+              transferred:  enemySt.lootItemIds.length,
+              characterId:  currentCharId,
+            });
+            const EQUIPPABLE_LOOT: Record<string, "mainHandId" | "offHandId" | "armorId" | "ringId"> = {
+              WEAPON: "mainHandId", SHIELD: "offHandId", ARMOR: "armorId", RING: "ringId", FOCUS: "offHandId",
+            };
+            const charForLoot = await tx.character.findUnique({
+              where: { id: currentCharId },
+              select: { mainHandId: true, offHandId: true, armorId: true, ringId: true, backpack: true },
+            });
+            if (charForLoot) {
+              for (const lootItemId of enemySt.lootItemIds) {
+                const lootItem = await tx.item.findUnique({ where: { id: lootItemId }, select: { id: true, type: true } });
+                if (!lootItem) continue;
+                const slotField = EQUIPPABLE_LOOT[lootItem.type ?? ""];
+                if (slotField && !charForLoot[slotField]) {
+                  await tx.character.update({ where: { id: currentCharId }, data: { [slotField]: lootItemId } });
+                  (charForLoot as any)[slotField] = lootItemId;
+                  console.log("[auto-advance] loot item", { itemId: lootItemId, slot: slotField });
+                } else {
+                  await tx.character.update({ where: { id: currentCharId }, data: { backpack: { push: lootItemId } } });
+                  console.log("[auto-advance] loot item", { itemId: lootItemId, slot: "backpack" });
+                }
+              }
+            }
+            // Clear lootItemIds on the enemy
+            const updatedLootEnemyState = {
+              ...lootEnemyState,
+              [lootEnemyId]: { ...enemySt, lootItemIds: [] },
+            };
+            await tx.gameMap.update({
+              where: { id: gmForLoot.id },
+              data:  { data: { ...(gmForLoot.data as any), enemyState: updatedLootEnemyState } },
+            });
+          }
+        }
+      }
+
+      // ── F3: Container open handler ────────────────────────────────────────────
+      if (poiId && !containerItemId && !toolItemId && rolls.some(r => r.label === "Investigation") && activeGameMap) {
+        const roll = rolls.find(r => r.label === "Investigation" && r.totalResult !== null);
+        const totalRoll = roll?.totalResult ?? 0;
+        const gmForContainer = await tx.gameMap.findUnique({ where: { id: activeGameMap.id }, select: { id: true, data: true } });
+        if (gmForContainer) {
+          const containerPois = [...((gmForContainer.data as any).pois ?? [])] as any[];
+          const poiIndex = containerPois.findIndex((p: any) => p.id === poiId);
+          if (poiIndex === -1) {
+            console.warn("[auto-advance] container open — poi not found", { poiId, availablePoiIds: containerPois.map((p: any) => p.id) });
+          } else {
+            const poi = { ...containerPois[poiIndex] };
+            const alreadySearched = (poi.searchedBy ?? []).some((s: any) => s.characterId === currentCharId);
+            console.log("[auto-advance] container open", {
+              poiId,
+              poiName:          poi.name,
+              investigationRoll: totalRoll,
+              alreadySearched,
+              visibleSlots: (poi.containerInventory ?? []).filter((s: any) => totalRoll > s.investigationAc).length,
+              totalSlots:   (poi.containerInventory ?? []).length,
+            });
+            if (!alreadySearched) {
+              poi.searchedBy = [...(poi.searchedBy ?? []), { characterId: currentCharId, roll: totalRoll }];
+            }
+            poi.isOpen = true;
+            containerPois[poiIndex] = poi;
+            await tx.gameMap.update({
+              where: { id: gmForContainer.id },
+              data:  { data: { ...(gmForContainer.data as any), pois: containerPois } },
+            });
+            await tx.character.update({
+              where: { id: currentCharId },
+              data:  { remainingObjectInteractions: { decrement: 1 } },
+            });
+          }
+        }
+      }
+
+      // ── F4: Container item pickup handler ─────────────────────────────────────
+      if (poiId && containerItemId && activeGameMap) {
+        const gmForPickup2 = await tx.gameMap.findUnique({ where: { id: activeGameMap.id }, select: { id: true, data: true } });
+        if (gmForPickup2) {
+          const pickupPois = [...((gmForPickup2.data as any).pois ?? [])] as any[];
+          const pickupPoiIdx = pickupPois.findIndex((p: any) => p.id === poiId);
+          if (pickupPoiIdx !== -1) {
+            const pickupPoi = { ...pickupPois[pickupPoiIdx] };
+            const inv = [...(pickupPoi.containerInventory ?? [])];
+            const slotIndex = inv.findIndex((s: any) => s.itemId === containerItemId);
+            console.log("[auto-advance] container pickup", {
+              poiId,
+              containerItemId,
+              slotFound:   slotIndex !== -1,
+              slot:        inv[slotIndex],
+              characterId: currentCharId,
+            });
+            if (slotIndex !== -1) {
+              inv.splice(slotIndex, 1);
+              pickupPoi.containerInventory = inv;
+              pickupPois[pickupPoiIdx] = pickupPoi;
+              await tx.gameMap.update({
+                where: { id: gmForPickup2.id },
+                data:  { data: { ...(gmForPickup2.data as any), pois: pickupPois } },
+              });
+              // Equip or backpack
+              const EQUIPPABLE_PICKUP: Record<string, "mainHandId" | "offHandId" | "armorId" | "ringId"> = {
+                WEAPON: "mainHandId", SHIELD: "offHandId", ARMOR: "armorId", RING: "ringId", FOCUS: "offHandId",
+              };
+              const pickupItem = await tx.item.findUnique({ where: { id: containerItemId }, select: { id: true, type: true } });
+              const charForPickup = await tx.character.findUnique({
+                where: { id: currentCharId },
+                select: { mainHandId: true, offHandId: true, armorId: true, ringId: true, backpack: true, remainingObjectInteractions: true },
+              });
+              if (pickupItem && charForPickup) {
+                const slotField2 = EQUIPPABLE_PICKUP[pickupItem.type ?? ""];
+                if (slotField2 && !charForPickup[slotField2]) {
+                  await tx.character.update({ where: { id: currentCharId }, data: { [slotField2]: containerItemId, remainingObjectInteractions: { decrement: 1 } } });
+                  console.log("[auto-advance] container pickup", { equippedTo: slotField2 });
+                } else {
+                  await tx.character.update({ where: { id: currentCharId }, data: { backpack: { push: containerItemId }, remainingObjectInteractions: { decrement: 1 } } });
+                  console.log("[auto-advance] container pickup", { equippedTo: "backpack" });
+                }
+              }
+            } else {
+              console.warn("[auto-advance] container pickup — slot not found", { containerItemId, remainingSlots: inv.map((s: any) => s.itemId) });
+            }
+          }
+        }
+      }
+
+      // ── F5: Key use handler ───────────────────────────────────────────────────
+      if (poiId && toolItemId && rolls.length === 0 && activeGameMap) {
+        const gmForKey = await tx.gameMap.findUnique({ where: { id: activeGameMap.id }, select: { id: true, data: true } });
+        if (gmForKey) {
+          const keyPois = [...((gmForKey.data as any).pois ?? [])] as any[];
+          const keyPoiIdx = keyPois.findIndex((p: any) => p.id === poiId);
+          if (keyPoiIdx !== -1) {
+            const keyPoi = { ...keyPois[keyPoiIdx] };
+            if (!keyPoi.isLocked) {
+              console.warn("[auto-advance] key use — poi already unlocked", { poiId });
+            } else {
+              console.log("[auto-advance] key use", {
+                poiId,
+                poiName:     keyPoi.name,
+                lockId:      keyPoi.lockId,
+                toolItemId,
+                wasLocked:   keyPoi.isLocked,
+                keyRetained: true,
+              });
+              keyPoi.isLocked = false;
+              keyPois[keyPoiIdx] = keyPoi;
+              await tx.gameMap.update({
+                where: { id: gmForKey.id },
+                data:  { data: { ...(gmForKey.data as any), pois: keyPois } },
+              });
+            }
+          }
+        }
+      }
+
+      // ── F6: Terrain demolition handler ────────────────────────────────────────
+      if (poiId && toolItemId && rolls.some(r => r.type === "ATTACK") && activeGameMap) {
+        const attackRollD = rolls.find(r => r.type === "ATTACK");
+        const damageRollD = rolls.find(r => r.type === "DAMAGE" && !r.skipped);
+        if (attackRollD?.isSuccess && damageRollD?.totalResult) {
+          const rawDmg = damageRollD.totalResult;
+          const gmForDemolish = await tx.gameMap.findUnique({ where: { id: activeGameMap.id }, select: { id: true, data: true } });
+          if (gmForDemolish) {
+            const demolishPois = [...((gmForDemolish.data as any).pois ?? [])] as any[];
+            const dmPoiIdx = demolishPois.findIndex((p: any) => p.id === poiId);
+            if (dmPoiIdx !== -1) {
+              const dmPoi = { ...demolishPois[dmPoiIdx] };
+              const hpBefore = dmPoi.currentHp ?? dmPoi.maxHp ?? 1;
+              const effectiveDamage = calcEffectiveDamage(rawDmg, dmPoi.damageThreshold ?? 0);
+              dmPoi.currentHp = Math.max(0, hpBefore - effectiveDamage);
+              const doorTile = (gmForDemolish.data as any).tiles?.[dmPoi.y]?.[dmPoi.x];
+              let updatedDemolishTiles = (gmForDemolish.data as any).tiles;
+              if (dmPoi.currentHp <= 0) {
+                dmPoi.isDestroyed = true;
+                if (doorTile?.t === "D") {
+                  updatedDemolishTiles = (updatedDemolishTiles as any[][]).map((row: any[], ry: number) =>
+                    row.map((tile: any, rx: number) =>
+                      rx === dmPoi.x && ry === dmPoi.y ? { ...tile, t: "F" } : tile
+                    )
+                  );
+                }
+              }
+              demolishPois[dmPoiIdx] = dmPoi;
+              console.log("[auto-advance] terrain demolish", {
+                poiId,
+                poiName:         dmPoi.name,
+                attackSuccess:   attackRollD.isSuccess,
+                rawDamage:       rawDmg,
+                damageThreshold: dmPoi.damageThreshold ?? 0,
+                effectiveDamage,
+                hpBefore,
+                hpAfter:         dmPoi.currentHp,
+                destroyed:       dmPoi.isDestroyed ?? false,
+                tileConvertedToFloor: doorTile?.t === "D" && dmPoi.currentHp <= 0,
+              });
+              await tx.gameMap.update({
+                where: { id: gmForDemolish.id },
+                data:  { data: { ...(gmForDemolish.data as any), pois: demolishPois, tiles: updatedDemolishTiles } },
+              });
+            }
+          }
+        }
+      }
+
+      // ── F7: Terrain bash handler ──────────────────────────────────────────────
+      if (poiId && !toolItemId && rolls.some(r => r.type === "ABILITY_CHECK" && r.label === "Strength Check") && activeGameMap) {
+        const checkRollB = rolls.find(r => r.type === "ABILITY_CHECK");
+        const damageRollB = rolls.find(r => r.type === "DAMAGE" && !r.skipped);
+        if (checkRollB?.isSuccess && damageRollB?.totalResult) {
+          const rawDmgB = damageRollB.totalResult;
+          const gmForBash = await tx.gameMap.findUnique({ where: { id: activeGameMap.id }, select: { id: true, data: true } });
+          if (gmForBash) {
+            const bashPois = [...((gmForBash.data as any).pois ?? [])] as any[];
+            const bashPoiIdx = bashPois.findIndex((p: any) => p.id === poiId);
+            if (bashPoiIdx !== -1) {
+              const bashPoi = { ...bashPois[bashPoiIdx] };
+              const hpBeforeB = bashPoi.currentHp ?? bashPoi.maxHp ?? 1;
+              const effectiveDamageB = calcEffectiveDamage(rawDmgB, bashPoi.damageThreshold ?? 0);
+              bashPoi.currentHp = Math.max(0, hpBeforeB - effectiveDamageB);
+              const bashDoorTile = (gmForBash.data as any).tiles?.[bashPoi.y]?.[bashPoi.x];
+              let updatedBashTiles = (gmForBash.data as any).tiles;
+              if (bashPoi.currentHp <= 0) {
+                bashPoi.isDestroyed = true;
+                if (bashDoorTile?.t === "D") {
+                  updatedBashTiles = (updatedBashTiles as any[][]).map((row: any[], ry: number) =>
+                    row.map((tile: any, rx: number) =>
+                      rx === bashPoi.x && ry === bashPoi.y ? { ...tile, t: "F" } : tile
+                    )
+                  );
+                }
+              }
+              bashPois[bashPoiIdx] = bashPoi;
+              console.log("[auto-advance] terrain bash", {
+                poiId,
+                poiName:         bashPoi.name,
+                checkSuccess:    checkRollB.isSuccess,
+                checkResult:     checkRollB.totalResult,
+                poiArmorClass:   bashPoi.armorClass,
+                rawDamage:       rawDmgB,
+                damageThreshold: bashPoi.damageThreshold ?? 0,
+                effectiveDamage: effectiveDamageB,
+                hpBefore:        hpBeforeB,
+                hpAfter:         bashPoi.currentHp,
+                destroyed:       bashPoi.isDestroyed ?? false,
+              });
+              await tx.gameMap.update({
+                where: { id: gmForBash.id },
+                data:  { data: { ...(gmForBash.data as any), pois: bashPois, tiles: updatedBashTiles } },
               });
             }
           }

@@ -17,43 +17,98 @@ model User {
   partyMemberships PartyMember[]
 }
 
-// ─── Items ────────────────────────────────────────────────────────────────────
+// ==========================================
+// 1. MASTER BLUEPRINTS / CATALOGS (Read-Only Templates)
+// ==========================================
 
-model Item {
-  id                String  @id @default(uuid())
-  name              String
-  type              String  @default("")
-
-  statKey           String?
-  statModifierBonus Int     @default(0)
-
-  category          String  @default("")
-  description       String  @default("")
-  weightLbs         Float   @default(0)
-  quantity          Int     @default(1)
-  isEquipped        Boolean @default(false)
-  combatImpactLabel String  @default("")
-  weaponType        String  @default("melee")
-  rangeFeet         Int     @default(5)
-  damageDice        String  @default("1d4")
-  attackBonus       Int     @default(0)
-  blocksMovement    Boolean @default(false)
-
-  equippedAsMainHand      Character[] @relation("CharacterMainHand")
-  equippedAsOffHand       Character[] @relation("CharacterOffHand")
-  equippedAsArmor         Character[] @relation("CharacterArmor")
-  equippedAsRing          Character[] @relation("CharacterRing")
-  equippedAsEnemyMainHand Enemy[]     @relation("EnemyMainHand")
+model DungeonTemplate {
+  id            String         @id @default(uuid())
+  name          String // e.g., "The Obsidian Keep"
+  globalStyle   String // e.g., "Gothic Dungeon"
+  roomTemplates RoomTemplate[]
 }
 
-// ─── Character ────────────────────────────────────────────────────────────────
+model RoomTemplate {
+  id                     String          @id @default(uuid())
+  dungeonTemplateId      String
+  dungeonTemplate        DungeonTemplate @relation(fields: [dungeonTemplateId], references: [id], onDelete: Cascade)
+  name                   String
+  baseDescription        String
+  searchFailureNarrative String
+  map_x                  Int             @default(0)
+  map_y                  Int             @default(0)
+  poiTemplates           PoiTemplate[]
+  roomInstances          RoomInstance[]
+}
+
+model PoiTemplate {
+  id                String        @id @default(uuid())
+  roomTemplateId    String
+  roomTemplate      RoomTemplate  @relation(fields: [roomTemplateId], references: [id], onDelete: Cascade)
+  name              String
+  keywordIdentifier String
+  defaultProperties Json
+  grid_slot         String        @default("C")
+  visibility_level  Int           @default(1)
+  exit_direction    String?
+  exit_wall_section String        @default("C")
+  exit_arch_width   Int           @default(1)
+  poiInstances      PoiInstance[]
+}
+
+// ==========================================
+// 2. ACTIVE INSTANCES (The Dynamic Player Sessions)
+// ==========================================
+
+model GameSession {
+  id            String         @id @default(uuid())
+  name          String // e.g., "Friday Night D&D Group"
+  gameState     String         @default("exploration") // "exploration" or "combat"
+  createdAt     DateTime       @default(now())
+  roomInstances RoomInstance[]
+  gameMaps      GameMap[]
+}
+
+model RoomInstance {
+  id              String            @id @default(uuid())
+  sessionId       String
+  session         GameSession       @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  roomTemplateId  String
+  template        RoomTemplate      @relation(fields: [roomTemplateId], references: [id])
+  inGameTimestamp DateTime          @default(now())
+  poiInstances    PoiInstance[]
+  participants    RoomParticipant[]
+  messages        MessageLog[]
+  game            Game?             @relation(fields: [gameId], references: [id])
+  gameId          String?
+}
+
+model PoiInstance {
+  id                String       @id @default(uuid())
+  roomInstanceId    String
+  roomInstance      RoomInstance @relation(fields: [roomInstanceId], references: [id], onDelete: Cascade)
+  poiTemplateId     String
+  template          PoiTemplate  @relation(fields: [poiTemplateId], references: [id])
+  isStateModified   Boolean      @default(false)
+  currentProperties Json // Stores current changes (e.g., if a chest becomes "unlocked")
+}
 
 model Character {
-  id             String        @id @default(uuid())
-  name           String
-  userId         String
-  user           User          @relation(fields: [userId], references: [id])
-  characterClass String
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  id              String            @id @default(uuid())
+  name            String
+  characterClass  String            @default("Fighter")
+  xp              Int               @default(0)
+  level           Int               @default(1)
+  maxHp           Int               @default(12)
+  currentHp       Int               @default(12)
+  skillsModifiers Json              @default("{}")
+  inventory       Json              @default("{}")
+  participants    RoomParticipant[]
+  messages        MessageLog[]
+  // end MVP fields //
 
   baseStrength     Int @default(8)
   baseDexterity    Int @default(8)
@@ -62,10 +117,6 @@ model Character {
   baseWisdom       Int @default(8)
   baseCharisma     Int @default(8)
 
-  xp           Int @default(0)
-  level        Int @default(1)
-  maxHp        Int @default(10)
-  currentHp    Int @default(10)
   skillProficiencies String[] @default([])
 
   mainHandId String?
@@ -77,14 +128,15 @@ model Character {
   ringId     String?
   ring       Item?   @relation("CharacterRing", fields: [ringId], references: [id])
 
-  remainingActions      Int @default(1)
-  remainingBonusActions Int @default(1)
-  remainingMovementFeet Int @default(30)
-  remainingReactions    Int @default(1)
-  hasCastedBonusSpell   Boolean  @default(false)
+  remainingActions            Int     @default(1)
+  remainingObjectInteractions Int     @default(1)
+  remainingBonusActions       Int     @default(1)
+  remainingMovementFeet       Int     @default(30)
+  remainingReactions          Int     @default(1)
+  hasCastedBonusSpell         Boolean @default(false)
 
   activeConditions String[] @default([])
-  backpack String[] @default([])
+  backpack         String[] @default([])
 
   posX        Int     @default(0)
   posY        Int     @default(0)
@@ -93,6 +145,77 @@ model Character {
 
   games            Game[]
   partyMemberships PartyMember[]
+}
+
+model RoomParticipant {
+  id             String       @id @default(uuid())
+  roomInstanceId String
+  roomInstance   RoomInstance @relation(fields: [roomInstanceId], references: [id], onDelete: Cascade)
+  characterId    String
+  character      Character    @relation(fields: [characterId], references: [id], onDelete: Cascade)
+  combatState    Json // { "proximity_target_id": "poi_instance_id", "stance": "elevated_ground" }
+  lastActiveAt   DateTime     @default(now())
+  room           Room?        @relation(fields: [roomId], references: [id])
+  roomId         String?
+
+  @@unique([roomInstanceId, characterId])
+}
+
+model MessageLog {
+  id                String       @id @default(uuid())
+  roomInstanceId    String
+  roomInstance      RoomInstance @relation(fields: [roomInstanceId], references: [id], onDelete: Cascade)
+  characterId       String?
+  character         Character?   @relation(fields: [characterId], references: [id], onDelete: SetNull)
+  isMechanicalEvent Boolean      @default(false)
+  mechanicalSummary Json?
+  text              String
+  createdAt         DateTime     @default(now())
+  room              Room?        @relation(fields: [roomId], references: [id])
+  roomId            String?
+}
+
+// VIEW MODEL FOR THE FRONTEND UI
+// Prisma helper model to represent the client's current context
+model ClientStateView {
+  id                  String @id @default(uuid())
+  roomId              String
+  roomName            String
+  currentNarrative    String
+  activeState         String // "exploration" or "combat"
+  uiLayoutAnchors     Json // Groups players/monsters into visual room cards instantly
+  mechanicalFeedSince Json // Bulleted list updates since last visit
+}
+
+// ─── Items ────────────────────────────────────────────────────────────────────
+
+model Item {
+  id   String @id @default(uuid())
+  name String
+  type String @default("")
+
+  statKey           String?
+  statModifierBonus Int     @default(0)
+
+  category          String   @default("")
+  description       String   @default("")
+  weightLbs         Float    @default(0)
+  quantity          Int      @default(1)
+  isEquipped        Boolean  @default(false)
+  combatImpactLabel String   @default("")
+  weaponType        String   @default("melee")
+  rangeFeet         Int      @default(5)
+  damageDice        String   @default("1d4")
+  attackBonus       Int      @default(0)
+  blocksMovement    Boolean  @default(false)
+  interactionTags   String[] @default([])
+  keyId             String?
+
+  equippedAsMainHand      Character[] @relation("CharacterMainHand")
+  equippedAsOffHand       Character[] @relation("CharacterOffHand")
+  equippedAsArmor         Character[] @relation("CharacterArmor")
+  equippedAsRing          Character[] @relation("CharacterRing")
+  equippedAsEnemyMainHand Enemy[]     @relation("EnemyMainHand")
 }
 
 // ─── Story / Act / Scene ──────────────────────────────────────────────────────
@@ -111,7 +234,7 @@ model Act {
   id                      String @id @default(uuid())
   storyId                 String
   story                   Story  @relation(fields: [storyId], references: [id])
-  order                   Int    // 1-based within the story
+  order                   Int // 1-based within the story
   title                   String
   summary                 String // Always fed to AI DM — enables foreshadowing
   playerFacingDescription String // Shown to players when act begins
@@ -130,18 +253,18 @@ model Scene {
   id          String   @id @default(uuid())
   actId       String
   act         Act      @relation(fields: [actId], references: [id])
-  order       Int      // 1-based within the act
+  order       Int // 1-based within the act
   title       String
-  description String   // Full scene brief fed to AI DM on entry
+  description String // Full scene brief fed to AI DM on entry
   objectives  String[]
 
   // Scene 1 of each act uses ACT_START; others require a trigger.
   triggerType      SceneTriggerType
   triggerEnemyId   String? // ENEMY_DEFEATED: enemy id whose death fires this
   triggerItemId    String? // ITEM_FOUND: item id pickup that fires this
-  triggerAreaX     Int?    // AREA_REACHED: tile x
-  triggerAreaY     Int?    // AREA_REACHED: tile y
-  triggerTurnLimit Int?    // TURN_LIMIT: AI forces progression after N scene turns
+  triggerAreaX     Int? // AREA_REACHED: tile x
+  triggerAreaY     Int? // AREA_REACHED: tile y
+  triggerTurnLimit Int? // TURN_LIMIT: AI forces progression after N scene turns
 
   // Written by AI when scene ends; replaces full message log for past-scene context
   summary     String?
@@ -166,12 +289,12 @@ model Enemy {
   description String @default("")
 
   maxHp        Int
-  strength     Int    @default(10)
-  dexterity    Int    @default(10)
-  constitution Int    @default(10)
-  intelligence Int    @default(10)
-  wisdom       Int    @default(10)
-  charisma     Int    @default(10)
+  strength     Int @default(10)
+  dexterity    Int @default(10)
+  constitution Int @default(10)
+  intelligence Int @default(10)
+  wisdom       Int @default(10)
+  charisma     Int @default(10)
 
   armorClass  Int    @default(10)
   attackBonus Int    @default(0)
@@ -185,14 +308,12 @@ model Enemy {
 }
 
 enum SceneTriggerType {
-  ACT_START      // auto-fires when act begins (always used for scene 1)
-  AREA_REACHED   // any party member steps on triggerAreaX/Y
+  ACT_START // auto-fires when act begins (always used for scene 1)
+  AREA_REACHED // any party member steps on triggerAreaX/Y
   ENEMY_DEFEATED // triggerEnemyId is killed
-  ITEM_FOUND     // triggerItemId is picked up
-  TURN_LIMIT     // AI DM forces transition after triggerTurnLimit turns
+  ITEM_FOUND // triggerItemId is picked up
+  TURN_LIMIT // AI DM forces transition after triggerTurnLimit turns
 }
-
-// ─── Map ─────────────────────────────────────────────────────────────────────
 
 model Map {
   id   String @id @default(uuid())
@@ -206,10 +327,14 @@ model Map {
   gameMaps GameMap[]
 }
 
-// ─── GameMap ──────────────────────────────────────────────────────────────────
-
 model GameMap {
-  id     String @id @default(uuid())
+  id        String      @id @default(uuid())
+  sessionId String
+  session   GameSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  name      String      @default("")
+  rooms     Room[]
+  // END MVP FIELDS
+
   gameId String
   game   Game   @relation(fields: [gameId], references: [id], onDelete: Cascade)
   actId  String
@@ -226,10 +351,38 @@ model GameMap {
   @@index([gameId])
 }
 
+model Room {
+  id                     String            @id @default(uuid())
+  mapId                  String
+  map                    GameMap           @relation(fields: [mapId], references: [id], onDelete: Cascade)
+  name                   String
+  baseDescription        String
+  searchFailureNarrative String
+  inGameTimestamp        DateTime          @default(now())
+  pointsOfInterest       PointOfInterest[]
+  participants           RoomParticipant[]
+  messages               MessageLog[]
+}
+
+model PointOfInterest {
+  id                String  @id @default(uuid())
+  roomId            String
+  room              Room    @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  name              String // e.g., "stone_fountain"
+  keywordIdentifier String // e.g., "fountain"
+  isHidden          Boolean @default(false)
+  combatProperties  Json // Rules dictionary: { "climb": { "resulting_stance": "elevated_ground" } }
+}
+
 // ─── Active Game ──────────────────────────────────────────────────────────────
 
 model Game {
-  id          String    @id @default(uuid())
+  id        String    @id @default(uuid())
+  name      String    @default("")
+  gameState String    @default("exploration") // "exploration" or "combat"
+  createdAt DateTime  @default(now())
+  gameMaps  GameMap[]
+
   characterId String
   character   Character @relation(fields: [characterId], references: [id])
 
@@ -247,21 +400,21 @@ model Game {
 
   currentTurnCharacterId String?
 
-  state Json
-  version Int @default(0)
+  state   Json
+  version Int  @default(0)
 
-  worldState           Json?
-  narrativeHistory     String[] @default([])
+  worldState            Json?
+  narrativeHistory      String[] @default([])
   activeSuggestionChips Json?
 
-  createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
   messages         Message[]
   partyMembers     PartyMember[]
   pendingRolls     PendingRoll[]
   activeTurnQueues ActiveTurnQueue[]
-  gameMaps         GameMap[]
   combatSession    CombatSession?
+
+  roomInstances RoomInstance[]
 }
 
 enum GameStatus {
@@ -326,7 +479,7 @@ enum MessageRole {
 // ─── Class Progression ───────────────────────────────────────────────────────
 
 model ClassProgression {
-  id               String @id @default(uuid())
+  id               String   @id @default(uuid())
   characterClass   String
   level            Int
   proficiencyBonus Int

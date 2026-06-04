@@ -88,6 +88,19 @@ function primaryAttackScore(characterClass: string, stats: CharacterStats): numb
   return stats.strength.total;
 }
 
+// ─── Passive Perception ───────────────────────────────────────────────────────
+
+const LOOK_AROUND_KEYWORDS = [
+  "look around", "search the room", "examine the area", "survey the area",
+  "scan the room", "look about", "check the area", "search for anything",
+  "scout the area", "take in my surroundings",
+];
+
+function isBroadLookAction(action: string): boolean {
+  const lower = action.toLowerCase();
+  return LOOK_AROUND_KEYWORDS.some((kw) => lower.includes(kw));
+}
+
 // ─── Prompt builders ──────────────────────────────────────────────────────────
 
 interface CombatPromptInfo {
@@ -329,16 +342,22 @@ export interface TurnResult {
   skillCheckResult?: SkillCheckResult;
   activeRollContext?: ActiveRollContext;
   combatStarted?:   boolean;
+  turnId?:          string;   // ATQ id for new action type flow
+  requiresRoll?:    boolean;  // false = call autoAdvance immediately; true = show dice UI
 }
 
 // _seededD20 is an internal escape hatch for complete-turn.ts: when provided,
 // the dice roll step is skipped and this pre-verified value is used directly.
 // Never pass this from client code — the server-seeded flow enforces integrity.
 interface ChipSpatial {
-  action_type?:  string;
-  endPosition?:  { x: number; y: number };
-  actionTarget?: { x: number; y: number };
-  type?:         string;
+  action_type?:     string;
+  endPosition?:     { x: number; y: number };
+  actionTarget?:    { x: number; y: number };
+  type?:            string;
+  lootEnemyId?:     string;
+  poiId?:           string;
+  containerItemId?: string;
+  toolItemId?:      string;
 }
 
 export async function takeTurn(
@@ -493,6 +512,170 @@ export async function takeTurn(
     return { success: true, activeRollContext: buildRollContext(chipType, dc, modifier) };
   }
 
+  // ─── E1-E4: New action type early-return branches ────────────────────────
+  // These action types bypass the Claude call entirely and create an ATQ directly.
+  const newActionType = chipSpatial?.action_type;
+  const INSTANT_ACTION_TYPES = new Set(["loot", "key_use", "container_pickup"]);
+  const ROLL_ACTION_TYPES    = new Set(["container_open", "terrain_demolish", "terrain_bash"]);
+
+  if (newActionType && (INSTANT_ACTION_TYPES.has(newActionType) || ROLL_ACTION_TYPES.has(newActionType))) {
+    const { randomUUID: rUUID } = await import("crypto");
+    const turnId    = rUUID();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+    if (INSTANT_ACTION_TYPES.has(newActionType)) {
+      // E1: Create a completed ATQ with no rolls — client calls autoAdvance immediately
+      await prisma.activeTurnQueue.create({
+        data: {
+          id:               turnId,
+          gameId,
+          characterId:      currentCharId,
+          status:           "COMPLETED",
+          currentRollIndex: 0,
+          rolls:            [] as any,
+          expiresAt,
+        },
+      });
+      return { success: true, turnId, requiresRoll: false };
+    }
+
+    // Roll-requiring actions: E2-E4
+    const { abilityModifier: abilMod, proficiencyBonus: profBonusFn } = await import("../../lib/dice");
+    const charForRolls = await prisma.character.findUnique({
+      where:  { id: currentCharId },
+      select: {
+        level: true, baseIntelligence: true, baseStrength: true,
+        skillProficiencies: true, mainHandId: true,
+      },
+    });
+    const profBonusVal = profBonusFn(charForRolls?.level ?? 1);
+
+    let atqRolls: any[] = [];
+
+    if (newActionType === "container_open") {
+      // Proximity gate: must be adjacent (≤5 ft / 1 tile) to examine a container.
+      const poiForProx = chipSpatial?.poiId
+        ? ((gmData.pois ?? []) as any[]).find((p: any) => p.id === chipSpatial!.poiId)
+        : null;
+      if (poiForProx && diagonalDistance(actorCurrentPos, { x: poiForProx.x, y: poiForProx.y }) > 1) {
+        return { success: false, error: "You must move adjacent to examine this." };
+      }
+
+      // E2: Investigation roll for container open
+      const intMod     = abilMod(charForRolls?.baseIntelligence ?? 10);
+      const isProf     = (charForRolls?.skillProficiencies ?? []).includes("Investigation");
+      const invMod     = intMod + (isProf ? profBonusVal : 0);
+      const signedMod  = invMod >= 0 ? `+${invMod}` : `${invMod}`;
+      atqRolls = [{
+        id:                     rUUID(),
+        type:                   "ABILITY_CHECK",
+        actorName:              currentCharacter.name,
+        label:                  "Investigation",
+        diceFormula:            `1d20${signedMod}`,
+        dc:                     null,
+        advantageState:         "NONE",
+        naturalResult:          null,
+        secondaryNaturalResult: null,
+        totalResult:            null,
+        isSuccess:              null,
+        skipped:                false,
+      }];
+    } else if (newActionType === "terrain_demolish") {
+      // E3: Attack + Damage rolls for terrain demolition
+      const poiForDemolish = chipSpatial?.poiId
+        ? ((gmData.pois ?? []) as any[]).find((p: any) => p.id === chipSpatial.poiId)
+        : null;
+      const toolItem = chipSpatial?.toolItemId
+        ? await prisma.item.findUnique({ where: { id: chipSpatial.toolItemId }, select: { damageDice: true } })
+        : null;
+      const atkBonus  = abilMod(stats.strength.total) + profBonusVal;
+      const atkMod    = atkBonus >= 0 ? `+${atkBonus}` : `${atkBonus}`;
+      atqRolls = [
+        {
+          id:                     rUUID(),
+          type:                   "ATTACK",
+          actorName:              currentCharacter.name,
+          label:                  "Tool Attack",
+          diceFormula:            `1d20${atkMod}`,
+          dc:                     poiForDemolish?.armorClass ?? 10,
+          advantageState:         "NONE",
+          naturalResult:          null,
+          secondaryNaturalResult: null,
+          totalResult:            null,
+          isSuccess:              null,
+          skipped:                false,
+        },
+        {
+          id:                     rUUID(),
+          type:                   "DAMAGE",
+          actorName:              currentCharacter.name,
+          label:                  "Tool Damage",
+          diceFormula:            toolItem?.damageDice ?? "1d4",
+          dc:                     null,
+          advantageState:         "NONE",
+          naturalResult:          null,
+          secondaryNaturalResult: null,
+          totalResult:            null,
+          isSuccess:              null,
+          skipped:                false,
+        },
+      ];
+    } else if (newActionType === "terrain_bash") {
+      // E4: Ability check + Damage rolls for terrain bash
+      const poiForBash = chipSpatial?.poiId
+        ? ((gmData.pois ?? []) as any[]).find((p: any) => p.id === chipSpatial.poiId)
+        : null;
+      const mainHandItem = charForRolls?.mainHandId
+        ? await prisma.item.findUnique({ where: { id: charForRolls.mainHandId }, select: { damageDice: true } })
+        : null;
+      const strMod    = abilMod(stats.strength.total);
+      const strModStr = strMod >= 0 ? `+${strMod}` : `${strMod}`;
+      atqRolls = [
+        {
+          id:                     rUUID(),
+          type:                   "ABILITY_CHECK",
+          actorName:              currentCharacter.name,
+          label:                  "Strength Check",
+          diceFormula:            `1d20${strModStr}`,
+          dc:                     poiForBash?.armorClass ?? 10,
+          advantageState:         "NONE",
+          naturalResult:          null,
+          secondaryNaturalResult: null,
+          totalResult:            null,
+          isSuccess:              null,
+          skipped:                false,
+        },
+        {
+          id:                     rUUID(),
+          type:                   "DAMAGE",
+          actorName:              currentCharacter.name,
+          label:                  "Bash Damage",
+          diceFormula:            mainHandItem?.damageDice ?? "1d4",
+          dc:                     null,
+          advantageState:         "NONE",
+          naturalResult:          null,
+          secondaryNaturalResult: null,
+          totalResult:            null,
+          isSuccess:              null,
+          skipped:                false,
+        },
+      ];
+    }
+
+    await prisma.activeTurnQueue.create({
+      data: {
+        id:               turnId,
+        gameId,
+        characterId:      currentCharId,
+        status:           "PENDING_ROLLS",
+        currentRollIndex: 0,
+        rolls:            atqRolls as any,
+        expiresAt,
+      },
+    });
+    return { success: true, turnId, requiresRoll: true };
+  }
+
   // ─── Spatial validation (Phase D) ────────────────────────────────────────
   // Movement distance validation — only enforced during combat (outside combat the AI controls movement).
   let validatedMovDist = 0;
@@ -624,6 +807,58 @@ export async function takeTurn(
     if (e.isHiding) hiddenEnemyIds.add(e.enemyId);
   }
 
+  // ─── Passive Perception — broad look actions ─────────────────────────────
+  // When the player "looks around" (broad, non-targeted search), auto-apply
+  // passive Perception (10 + WIS mod + proficiency) against hidden items
+  // within their visible area. No roll required — items at or below DC are
+  // revealed immediately and described by the DM.
+  let passiveRevealNote = "";
+  if (isBroadLookAction(sanitizedAction) && rawGameTiles.length > 0 && activeGameMap?.id) {
+    const wisScore         = currentCharacter.baseWisdom as number;
+    const wisMod           = abilityModifier(wisScore);
+    const profBonusVal2    = proficiencyBonus(currentCharacter.level);
+    const hasPercProf      = (currentCharacter.skillProficiencies as string[]).includes("Perception");
+    const passivePerc      = 10 + wisMod + (hasPercProf ? profBonusVal2 : 0);
+
+    const visibleSet       = getActorVisibleTiles(rawGameTiles, actorCurrentPos.x, actorCurrentPos.y);
+    const itemStateMap     = { ...((gmData.itemState ?? {}) as Record<string, any>) };
+    const revealedItemIds: string[] = [];
+    const revealedPositions: { id: string; x: number; y: number }[] = [];
+
+    for (let iy = 0; iy < rawGameTiles.length; iy++) {
+      for (let ix = 0; ix < rawGameTiles[iy].length; ix++) {
+        if (!visibleSet.has(`${ix},${iy}`)) continue;
+        const itemId = rawGameTiles[iy][ix].item;
+        if (!itemId) continue;
+        const iState = itemStateMap[itemId];
+        if (!iState || iState.isPickedUp || iState.isVisible) continue;
+        const dc = iState.discoveryDC ?? 15;
+        if (passivePerc >= dc) {
+          itemStateMap[itemId] = { ...iState, isVisible: true };
+          revealedItemIds.push(itemId);
+          revealedPositions.push({ id: itemId, x: ix, y: iy });
+        }
+      }
+    }
+
+    if (revealedItemIds.length > 0) {
+      await prisma.gameMap.update({
+        where: { id: activeGameMap.id },
+        data:  { data: { ...gmData, itemState: itemStateMap } },
+      });
+
+      const revealedNames = await prisma.item.findMany({
+        where:  { id: { in: revealedItemIds } },
+        select: { id: true, name: true },
+      });
+      const nameMap = new Map(revealedNames.map(i => [i.id, i.name]));
+      const itemList = revealedPositions
+        .map(p => `${nameMap.get(p.id) ?? "unknown item"} at (${p.x},${p.y})`)
+        .join(", ");
+      passiveRevealNote = `\n\nPASSIVE PERCEPTION (score ${passivePerc}): The character's awareness reveals ${itemList}. Weave these discoveries naturally into your narration — the item was hidden; the character notices it without actively searching.`;
+    }
+  }
+
   let response;
   try {
     response = await anthropic.messages.create({
@@ -663,7 +898,7 @@ export async function takeTurn(
             undefined,
             hiddenEnemyIds,
             dbEnemies,
-          ),
+          ) + passiveRevealNote,
         },
       ],
       messages: buildConversationMessages(contextWindow, sanitizedAction),
@@ -753,7 +988,7 @@ export async function takeTurn(
               mechanicalContext,
               hiddenEnemyIds,
               dbEnemies,
-            ),
+            ) + passiveRevealNote,
           },
         ],
         messages: buildConversationMessages(contextWindow, sanitizedAction),
