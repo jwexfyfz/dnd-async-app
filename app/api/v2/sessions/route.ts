@@ -22,28 +22,43 @@ export async function GET(req: NextRequest) {
     });
     if (!character) return NextResponse.json({ error: 'Character not found' }, { status: 404 });
 
-    const participants = await prisma.roomParticipant.findMany({
-      where: { characterId },
+    const sessions = await prisma.gameSession.findMany({
+      where: {
+        roomInstances: {
+          some: { participants: { some: { characterId } } },
+        },
+      },
       include: {
-        roomInstance: {
+        dungeonTemplate: { select: { name: true } },
+        roomInstances: {
           include: {
             template: { select: { name: true } },
-            session: { select: { id: true, name: true, gameState: true } },
+            participants: {
+              where: { characterId },
+              select: { lastActiveAt: true },
+            },
           },
         },
       },
-      orderBy: { lastActiveAt: 'desc' },
+      orderBy: { createdAt: 'desc' },
     });
 
     return NextResponse.json({
-      sessions: participants.map(p => ({
-        roomInstanceId: p.roomInstanceId,
-        sessionId: p.roomInstance.session.id,
-        sessionName: p.roomInstance.session.name,
-        gameState: p.roomInstance.session.gameState,
-        roomName: p.roomInstance.template.name,
-        lastActiveAt: p.lastActiveAt,
-      })),
+      sessions: sessions.map(session => {
+        const activeRooms = session.roomInstances.filter(ri => ri.participants.length > 0);
+        const mostRecent = activeRooms.sort(
+          (a, b) => b.participants[0].lastActiveAt.getTime() - a.participants[0].lastActiveAt.getTime(),
+        )[0];
+        return {
+          sessionId: session.id,
+          sessionName: session.name,
+          dungeonName: session.dungeonTemplate?.name ?? session.name,
+          currentRoomName: mostRecent?.template.name ?? 'Unknown',
+          roomInstanceId: mostRecent?.id ?? '',
+          currentObjective: session.currentObjective,
+          lastActiveAt: mostRecent?.participants[0]?.lastActiveAt,
+        };
+      }),
     });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : 'Failed to fetch sessions' }, { status: 500 });
@@ -62,7 +77,6 @@ export async function DELETE(req: NextRequest) {
   }
 
   try {
-    // Verify the character belongs to the user and is a participant in this session
     const participant = await prisma.roomParticipant.findFirst({
       where: {
         characterId,
@@ -84,32 +98,48 @@ export async function POST(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const { characterId, roomTemplateId } = await req.json();
-  if (!characterId || !roomTemplateId) {
-    return NextResponse.json({ error: 'characterId and roomTemplateId are required' }, { status: 400 });
+  const { characterId, dungeonTemplateId } = await req.json();
+  if (!characterId || !dungeonTemplateId) {
+    return NextResponse.json({ error: 'characterId and dungeonTemplateId are required' }, { status: 400 });
   }
 
   try {
-    const [character, roomTemplate] = await Promise.all([
+    const [character, dungeon] = await Promise.all([
       prisma.character.findFirst({
         where: { id: characterId, userId: user.id },
         select: { id: true, name: true, characterClass: true, level: true },
       }),
-      prisma.roomTemplate.findUniqueOrThrow({
-        where: { id: roomTemplateId },
-        select: { name: true, baseDescription: true, poiTemplates: { select: { id: true, name: true, defaultProperties: true } } },
+      prisma.dungeonTemplate.findUniqueOrThrow({
+        where: { id: dungeonTemplateId },
+        select: { startRoomTemplateId: true },
       }),
     ]);
     if (!character) return NextResponse.json({ error: 'Character not found' }, { status: 404 });
+    if (!dungeon.startRoomTemplateId) {
+      return NextResponse.json({ error: 'Dungeon has no start room configured' }, { status: 400 });
+    }
+
+    const roomTemplate = await prisma.roomTemplate.findUniqueOrThrow({
+      where: { id: dungeon.startRoomTemplateId },
+      select: {
+        name: true,
+        baseDescription: true,
+        poiTemplates: { select: { id: true, name: true, defaultProperties: true } },
+      },
+    });
 
     const result = await prisma.$transaction(async tx => {
       const session = await tx.gameSession.create({
-        data: { name: `${character.name}'s Session` },
+        data: {
+          name: `${character.name}'s Session`,
+          dungeonTemplateId,
+          currentObjective: 'Investigate the disturbances in the merchant\'s cellar',
+        },
       });
       const roomInstance = await tx.roomInstance.create({
         data: {
           sessionId: session.id,
-          roomTemplateId,
+          roomTemplateId: dungeon.startRoomTemplateId!,
           poiInstances: {
             create: roomTemplate.poiTemplates.map(tpl => ({ poiTemplateId: tpl.id, currentProperties: {} })),
           },
@@ -124,7 +154,6 @@ export async function POST(req: NextRequest) {
       return { characterId, roomInstanceId: roomInstance.id };
     });
 
-    // Generate opening DM narrative so the player sees scene-setting text on first load.
     try {
       const visiblePois = roomTemplate.poiTemplates.filter(t => {
         const props = t.defaultProperties as Record<string, unknown>;

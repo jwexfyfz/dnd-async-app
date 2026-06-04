@@ -73,6 +73,9 @@ interface PoiContext {
   availableStances: string[];
   examined: boolean;
   interacted: boolean;
+  destroyed: boolean;
+  isLocked: boolean;
+  isUnlocked: boolean;
   isExit: boolean;
   targetRoomTemplateId: string | null;
   items: ItemDefinition[];
@@ -82,23 +85,85 @@ interface PoiContext {
   peekVisibility: 'none' | 'obvious_only' | 'full';
 }
 
+// ─── Grid slot helpers ───────────────────────────────────────────────────────
+
+const SLOT_COORDS: Record<string, [number, number]> = {
+  NW: [0, 0], N: [1, 0], NE: [2, 0],
+  W:  [0, 1], C: [1, 1], E:  [2, 1],
+  SW: [0, 2], S: [1, 2], SE: [2, 2],
+};
+
+function slotGridDistance(a: string, b: string): number {
+  const ca = SLOT_COORDS[a] ?? SLOT_COORDS.C;
+  const cb = SLOT_COORDS[b] ?? SLOT_COORDS.C;
+  return Math.max(Math.abs(ca[0] - cb[0]), Math.abs(ca[1] - cb[1]));
+}
+
+function resolveEffectiveVisibility(
+  defaultProps: Record<string, unknown>,
+  currentProps: Record<string, unknown>,
+): 'always' | 'proximity_only' {
+  if (currentProps.visibility_override === 'always') return 'always';
+  return ((defaultProps.visibility as string) ?? 'always') as 'always' | 'proximity_only';
+}
+
+// ─── Act definitions ──────────────────────────────────────────────────────────
+
+interface ActMutation {
+  poiTemplateId: string;
+  setProps: Record<string, unknown>;
+}
+
+interface ActDefinition {
+  act: number;
+  completionFlags: string[];
+  openingObjective?: string;
+  onStartMutations: ActMutation[];
+}
+
+const DUNGEON_ACTS: ActDefinition[] = [
+  {
+    act: 1,
+    completionFlags: ['commander_note_read'],
+    onStartMutations: [],
+  },
+  {
+    act: 2,
+    openingObjective: 'Descend deeper — something stirs below the flooded passage',
+    onStartMutations: [
+      // Unlock the Submerged Gate so the party can proceed north
+      { poiTemplateId: '77000001-0000-0000-0000-000000000001', setProps: { unlocked: true } },
+    ],
+    completionFlags: ['ritual_disrupted', 'harwick_defeated'],
+  },
+  {
+    act: 3,
+    openingObjective: 'Find the Sealed Vault and deal with what is bound there',
+    onStartMutations: [
+      // Permanently reveal the Hidden Door East in the Ritual Chamber
+      { poiTemplateId: 'b2000006-b2b2-b2b2-b2b2-b2b2b2b2b2b2', setProps: { visibility_override: 'always' } },
+    ],
+    completionFlags: ['binding_seal_used', 'binding_seal_destroyed'],
+  },
+];
+
 function extractAvailableStances(defaultProperties: unknown): string[] {
   if (!defaultProperties || typeof defaultProperties !== 'object' || Array.isArray(defaultProperties)) {
     return [];
   }
-  const reserved = new Set(['items', 'poi_type', 'visibility', 'peek_visibility', 'locked_by', 'enter']);
+  const reserved = new Set(['items', 'poi_type', 'visibility', 'peek_visibility', 'locked_by', 'enter', 'examine_text', 'examine_details', 'lock_dc', 'perception_details']);
   return Object.entries(defaultProperties as Record<string, { resulting_stance?: string }>)
     .filter(([key]) => !reserved.has(key))
     .map(([, v]) => v?.resulting_stance)
     .filter((s): s is string => typeof s === 'string');
 }
 
-function extractExplorationFlags(currentProperties: unknown): { examined: boolean; interacted: boolean } {
+function extractExplorationFlags(currentProperties: unknown): { examined: boolean; interacted: boolean; destroyed: boolean } {
   if (!currentProperties || typeof currentProperties !== 'object' || Array.isArray(currentProperties)) {
-    return { examined: false, interacted: false };
+    return { examined: false, interacted: false, destroyed: false };
   }
   const props = currentProperties as Record<string, unknown>;
-  return { examined: props.examined === true, interacted: props.interacted === true };
+  return { examined: props.examined === true, interacted: props.interacted === true, destroyed: props.destroyed === true };
 }
 
 function extractExitInfo(
@@ -191,8 +256,8 @@ function buildHaikuSystemPrompt(
   currentProximityPoiId: string | null,
   adjacentRoom: AdjacentRoomContext | null,
 ): string {
-  const namedPois = poiContexts.filter(p => !p.isExit && !p.isOpenSpace);
-  const exitPois = poiContexts.filter(p => p.isExit);
+  const namedPois = poiContexts.filter(p => !p.isExit && !p.isOpenSpace && p.visibility !== 'proximity_only');
+  const exitPois = poiContexts.filter(p => p.isExit && p.visibility !== 'proximity_only');
   const openSpacePoi = poiContexts.find(p => p.isOpenSpace);
 
   const formatItemList = (items: ItemDefinition[]) =>
@@ -205,7 +270,10 @@ function buildHaikuSystemPrompt(
             const status = [
               poi.examined ? 'examined' : 'not examined',
               poi.interacted ? 'interacted' : 'not interacted',
-            ].join(', ');
+              poi.isLocked ? 'LOCKED' : null,
+              poi.isUnlocked ? 'UNLOCKED (no need to unlock again)' : null,
+              poi.destroyed ? 'DESTROYED' : null,
+            ].filter(Boolean).join(', ');
             const allItems = [...poi.items, ...poi.floorItems];
             const itemsStr = allItems.length > 0 ? ` | Items here: [${formatItemList(allItems)}]` : '';
             return `  - ID: ${poi.id} | Name: "${poi.name}" | Keyword: "${poi.keyword}" | Status: ${status} | Available stances: [${poi.availableStances.join(', ') || 'none'}]${itemsStr}`;
@@ -263,7 +331,9 @@ function buildHaikuSystemPrompt(
             const status = [
               p.examined ? 'examined' : 'not examined',
               p.interacted ? 'interacted' : 'not interacted',
-            ].join(', ');
+              p.isLocked ? 'LOCKED' : null,
+              p.isUnlocked ? 'UNLOCKED (no need to unlock again)' : null,
+            ].filter(Boolean).join(', ');
             const allItems = [...p.items, ...p.floorItems];
             const itemsStr = allItems.length > 0 ? ` | Items: [${allItems.map(i => `"${i.name}" (id:${i.id})`).join(', ')}]` : '';
             return `  - ID: ${p.id} | Name: "${p.name}" | Keyword: "${p.keyword}" | Status: ${status} | Available stances: [${p.availableStances.join(', ') || 'none'}]${itemsStr}`;
@@ -300,7 +370,8 @@ ${othersStr}
 
 ACTION TYPES:
 - "examine"          — Player looks closely at a specific POI. Requires target_poi_instance_id. No stance.
-- "interact"         — Player physically uses/opens/pulls/loots a POI. Requires target_poi_instance_id. Set interaction_result to a short verb. Valid for exit POIs too (e.g. "open the door", "push the gate", "try the handle").
+- "interact"         — Player physically uses/opens/pulls/loots a POI. Requires target_poi_instance_id. Set interaction_result to a short verb. Valid for exit POIs too (e.g. "open the door", "push the gate", "try the handle"). The engine will reject this if the POI is LOCKED — the player must use a key or Thieves' Tools first.
+- "destroy_poi"      — Player destroys/smashes/breaks a POI (e.g. "smash the crate", "break the barrel", "destroy the bookshelf"). Requires target_poi_instance_id. The engine will reveal all hidden items inside it. Do NOT use for exits or open_space POIs.
 - "look_around"      — Player passively surveys the room (e.g. "look around", "survey the room", "observe the area"). No dice roll. Uses passive Perception (10 + WIS modifier + proficiency if Perception-trained). Reveals perception-gated hidden items automatically if their DC ≤ passive score. No target POI needed.
 - "search"           — Player actively and methodically searches the room (e.g. "search the room", "investigate", "check for traps"). Rolls Investigation per POI for hidden items. No target POI needed.
 - "change_proximity" — Player moves TO a POI but stays in this room. For exit POIs, use when approaching without passing through.
@@ -309,7 +380,7 @@ ACTION TYPES:
 - "drop"             — Player drops an item from their bag. Set item_id. Optionally set target_poi_instance_id to place the item at a specific POI instead of current position.
 - "equip"            — Player equips an item from their bag. Set item_id.
 - "unequip"          — Player removes an equipped item. Set item_id.
-- "use_item"         — Player uses an item (drink a potion, use a key on a lock). Set item_id. For unlocking a POI, also set target_poi_instance_id.
+- "use_item"         — Player uses an item (drink a potion, use a key on a lock, pick a lock with Thieves' Tools). Set item_id. For unlocking or lockpicking a POI, also set target_poi_instance_id.
 - "throw_item"       — Player throws an item. Set item_id. Optionally set target_poi_instance_id for landing location.
 - "narrative_only"   — Purely conversational or idle (talking to self, waiting in place). Do NOT use this for any movement, exploration, or interaction — even vague ones.
 
@@ -323,7 +394,7 @@ RULES:
 - For "move_to_room": target_poi_instance_id = the exit POI's ID from the EXIT POINTS list above; target_room_template_id = the "Leads to room template" value from that same exit's line. Both are REQUIRED and must be copied exactly.
 
 PROXIMITY RULE — contact actions require being adjacent:
-- "examine", "interact", "pick_up", and "drop at POI" all require physical contact. If the character is NOT already at the target POI, ALWAYS prepend a "change_proximity" to that POI first.
+- "examine", "interact", "destroy_poi", "pick_up", and "drop at POI" all require physical contact. If the character is NOT already at the target POI, ALWAYS prepend a "change_proximity" to that POI first.
 - Check CHARACTER POSITION: if the character is already AT the target POI, emit only the action — no change_proximity needed.
 - Exception — these actions do NOT require proximity and must NEVER prepend change_proximity: "throw_item", "look_around", "search", "equip", "unequip", "move_to_room", "narrative_only".
 - Examples:
@@ -343,12 +414,21 @@ function buildNarrativeSystemPrompt(
   roomDescription: string,
   mechanicalFactBlock: string,
   itemsBlock: string,
+  storyFlags: Record<string, unknown>,
 ): string {
+  const flagEntries = Object.entries(storyFlags);
+  const flagsBlock = flagEntries.length > 0
+    ? flagEntries.map(([k, v]) => `  ${k}: ${v}`).join('\n')
+    : '  (none set)';
+
   return `You are a realistic and immersive Dungeon Master narrating an asynchronous text-based D&D adventure.
 
 ROOM CONTEXT:
 Name: ${roomName}
 Description: ${roomDescription}
+
+STORY FLAGS (permanent facts about the session — use these for callbacks and consequences):
+${flagsBlock}
 
 ITEMS CURRENTLY IN THIS ROOM (AUTHORITATIVE — DO NOT INVENT OTHERS):
 ${itemsBlock || '(no items visible in this room)'}
@@ -370,7 +450,7 @@ const roomInstanceQuery = (roomInstanceId: string) =>
     where: { id: roomInstanceId },
     include: {
       template: true,
-      session: { select: { id: true, gameState: true } },
+      session: { select: { id: true, gameState: true, storyFlags: true } },
       poiInstances: { include: { template: true } },
       participants: { include: { character: { select: { id: true, name: true } } } },
     },
@@ -453,6 +533,7 @@ async function parseIntentWithHaiku(
                       'narrative_only',
                       'examine',
                       'interact',
+                      'destroy_poi',
                       'look_around',
                       'search',
                       'move_to_room',
@@ -564,6 +645,7 @@ interface CharacterContext {
   skillsModifiers: unknown;
   skillProficiencies: string[];
   baseWisdom: number;
+  baseDexterity: number;
   currentHp: number;
   maxHp: number;
 }
@@ -573,6 +655,68 @@ function requireValidPoi(id: string | null, validPoiMap: Map<string, string>): s
     throw new Error(`Invalid target_poi_instance_id "${id}" — aborting to prevent corrupt state.`);
   }
   return validPoiMap.get(id)!;
+}
+
+async function writeStoryFlags(
+  tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
+  sessionId: string,
+  newFlags: Record<string, unknown>,
+): Promise<void> {
+  const session = await tx.gameSession.findUniqueOrThrow({
+    where: { id: sessionId },
+    select: { storyFlags: true },
+  });
+  const existing = (session.storyFlags as Record<string, unknown>) ?? {};
+  await tx.gameSession.update({
+    where: { id: sessionId },
+    data: { storyFlags: { ...existing, ...newFlags } as object },
+  });
+  console.log(`[story] flags written to session ${sessionId}:`, newFlags);
+}
+
+interface InteractCheck {
+  skill?: string;
+  dc?: number;
+  item?: string;
+  fallback?: { skill: string; dc: number };
+}
+
+function resolveSkillCheck(
+  character: CharacterContext,
+  skill: string,
+  dc: number,
+): { success: boolean; d20: number; modifier: number; total: number } {
+  const skillMods = (character.skillsModifiers as Record<string, number>) ?? {};
+  const modifier = skillMods[skill] ?? skillMods[skill.toLowerCase()] ?? 0;
+  const d20 = randomInt(1, 21);
+  const total = d20 + modifier;
+  return { success: total >= dc, d20, modifier, total };
+}
+
+function resolveInteractCheck(
+  check: InteractCheck,
+  character: CharacterContext,
+  inventory: CharacterInventory,
+): { success: boolean; usedItem?: string; roll?: { skill: string; d20: number; modifier: number; total: number; dc: number } } {
+  if (check.item) {
+    const allItems = [
+      ...inventory.bag,
+      ...Object.values(inventory.equipped).filter((i): i is ItemDefinition => i != null),
+    ];
+    const hasItem = allItems.some(i => i.id === check.item);
+    if (hasItem) return { success: true, usedItem: check.item };
+    // item not found — fall back to skill check if defined
+    if (check.fallback) {
+      const result = resolveSkillCheck(character, check.fallback.skill, check.fallback.dc);
+      return { success: result.success, roll: { skill: check.fallback.skill, ...result, dc: check.fallback.dc } };
+    }
+    return { success: false };
+  }
+  if (check.skill && check.dc != null) {
+    const result = resolveSkillCheck(character, check.skill, check.dc);
+    return { success: result.success, roll: { skill: check.skill, ...result, dc: check.dc } };
+  }
+  return { success: true }; // no check defined — auto-success
 }
 
 async function handleMoveToRoom(
@@ -620,8 +764,14 @@ async function handleMoveToRoom(
   const exitPoiName = validPoiMap.get(exitPoiId) ?? 'the exit';
 
   return await prisma.$transaction(async tx => {
+    const currentRoom = await tx.roomInstance.findUniqueOrThrow({
+      where: { id: currentRoomInstanceId },
+      select: { roomTemplateId: true },
+    });
+
     let targetRoom = await tx.roomInstance.findFirst({
       where: { sessionId, roomTemplateId: targetRoomTemplateId },
+      include: { poiInstances: { include: { template: true } } },
     });
 
     if (!targetRoom) {
@@ -640,7 +790,37 @@ async function handleMoveToRoom(
             })),
           },
         },
+        include: { poiInstances: { include: { template: true } } },
       });
+    }
+
+    // Mirror door state: find the return-exit POI in the target room that leads
+    // back to the current room. If it's a door (peek_visibility === 'none'),
+    // mark it interacted (open) so the door doesn't appear closed behind the player.
+    const exitPoiInstance = await tx.poiInstance.findUniqueOrThrow({
+      where: { id: exitPoiId },
+      include: { template: true },
+    });
+    const exitDefaultProps = exitPoiInstance.template.defaultProperties as Record<string, unknown>;
+    const isDoor = exitDefaultProps.peek_visibility === 'none';
+
+    if (isDoor) {
+      const returnExitPoi = targetRoom.poiInstances.find(pi => {
+        const dp = pi.template.defaultProperties as Record<string, unknown>;
+        const enter = dp.enter as Record<string, unknown> | undefined;
+        return (
+          dp.poi_type === 'exit' &&
+          dp.peek_visibility === 'none' &&
+          enter?.target_room_template_id === currentRoom.roomTemplateId
+        );
+      });
+      if (returnExitPoi) {
+        const existing = (returnExitPoi.currentProperties as Record<string, unknown>) ?? {};
+        await tx.poiInstance.update({
+          where: { id: returnExitPoi.id },
+          data: { currentProperties: { ...existing, interacted: true } },
+        });
+      }
     }
 
     await tx.roomParticipant.upsert({
@@ -765,6 +945,34 @@ async function mutateGameState(
           update: { combatState: newCombatState, lastActiveAt: new Date() },
           create: { roomInstanceId, characterId, combatState: newCombatState },
         });
+
+        // Reveal proximity_only POIs within grid-distance 1 of the new position
+        const targetPoiInstance = await tx.poiInstance.findUnique({
+          where: { id: action.target_poi_instance_id! },
+          select: { template: { select: { grid_slot: true } } },
+        });
+        const targetSlot = targetPoiInstance?.template.grid_slot ?? 'C';
+
+        const proximityOnlyPois = await tx.poiInstance.findMany({
+          where: { roomInstanceId },
+          include: { template: { select: { grid_slot: true, defaultProperties: true } } },
+        });
+
+        for (const pp of proximityOnlyPois) {
+          const dp = pp.template.defaultProperties as Record<string, unknown>;
+          const cp = pp.currentProperties as Record<string, unknown>;
+          if ((dp.visibility as string) !== 'proximity_only') continue;
+          if (cp.visibility_override === 'always') continue; // already revealed
+          const dist = slotGridDistance(targetSlot, pp.template.grid_slot ?? 'C');
+          if (dist <= 1) {
+            await tx.poiInstance.update({
+              where: { id: pp.id },
+              data: { currentProperties: { ...cp, visibility_override: 'always' } },
+            });
+            console.log(`[proximity] revealed "${pp.id}" (slot ${pp.template.grid_slot}) — approached from slot ${targetSlot}`);
+          }
+        }
+
         await tx.messageLog.create({
           data: {
             roomInstanceId,
@@ -787,6 +995,8 @@ async function mutateGameState(
     } else if (action.action_type === 'examine') {
       const poiName = requireValidPoi(action.target_poi_instance_id, validPoiMap);
       const skillMods = (character.skillsModifiers as Record<string, number>) ?? {};
+      let examineText: string | null = null;
+      const passedDetailTexts: string[] = [];
 
       await prisma.$transaction(async tx => {
         const poi = await tx.poiInstance.findUniqueOrThrow({
@@ -795,6 +1005,34 @@ async function mutateGameState(
         });
         const currentProps = poi.currentProperties as Record<string, unknown>;
         const defaultProps = poi.template.defaultProperties as Record<string, unknown>;
+        examineText = typeof defaultProps.examine_text === 'string' ? defaultProps.examine_text : null;
+
+        const examineDetails = Array.isArray(defaultProps.examine_details)
+          ? (defaultProps.examine_details as Array<{ text: string; skill: string; dc: number }>)
+          : [];
+        const detailRolls: Array<{ text: string; skill: string; d20: number; modifier: number; total: number; dc: number; success: boolean }> = [];
+        for (const detail of examineDetails) {
+          const modifier = skillMods[detail.skill] ?? skillMods[detail.skill.toLowerCase()] ?? 0;
+          const d20 = randomInt(1, 21);
+          const total = d20 + modifier;
+          const success = total >= detail.dc;
+          console.log(`[examine] detail-check: ${characterName} rolled ${d20}+${modifier}=${total} vs DC ${detail.dc} (${detail.skill}) — ${success ? 'PASS' : 'FAIL'}`);
+          detailRolls.push({ text: detail.text, skill: detail.skill, d20, modifier, total, dc: detail.dc, success });
+          if (success) passedDetailTexts.push(detail.text);
+        }
+        if (detailRolls.length > 0) {
+          const summary = detailRolls.map(r => `${r.skill} DC${r.dc}: ${r.d20}${r.modifier !== 0 ? `+${r.modifier}` : ''}=${r.total} — ${r.success ? 'noticed' : 'missed'}`).join(', ');
+          await tx.messageLog.create({
+            data: {
+              roomInstanceId,
+              characterId,
+              isMechanicalEvent: false,
+              mechanicalSummary: { type: 'roll_result', event: 'examine_details', poi: poiName, rolls: detailRolls },
+              text: `🎲 Examine ${poiName}: ${summary}`,
+            },
+          });
+        }
+
         const templateItems = Array.isArray(defaultProps.items) ? (defaultProps.items as ItemDefinition[]) : [];
         const revealedIds = new Set(
           Array.isArray(currentProps.revealed_items) ? (currentProps.revealed_items as string[]) : [],
@@ -867,25 +1105,170 @@ async function mutateGameState(
         }
       });
 
-      appliedActions.push({ action, poiName, itemName: null });
+      const detailsSuffix = passedDetailTexts.length > 0
+        ? ` On closer inspection: ${passedDetailTexts.join(' ')}`
+        : '';
+      const examineFact = examineText
+        ? `Character "${characterName}" examined "${poiName}" closely. What they observe: ${examineText}${detailsSuffix}`
+        : `Character "${characterName}" examined "${poiName}" closely. The engine has recorded this inspection.${detailsSuffix}`;
+      appliedActions.push({ action, poiName, itemName: null, overrideFact: examineFact });
 
     // ── interact ───────────────────────────────────────────────────────────
     } else if (action.action_type === 'interact') {
       const poiName = requireValidPoi(action.target_poi_instance_id, validPoiMap);
       const verb = action.interaction_result ?? 'interacted';
+      let interactOverrideFact: string | undefined;
 
       await prisma.$transaction(async tx => {
-        const poi = await tx.poiInstance.findUniqueOrThrow({ where: { id: action.target_poi_instance_id! } });
-        await tx.poiInstance.update({
+        const poi = await tx.poiInstance.findUniqueOrThrow({
           where: { id: action.target_poi_instance_id! },
-          data: {
-            currentProperties: {
-              ...(poi.currentProperties as object),
-              interacted: true,
-              lastInteraction: verb,
-            },
-          },
+          include: { template: true },
         });
+        const defaultProps = poi.template.defaultProperties as Record<string, unknown>;
+        const currentProps = poi.currentProperties as Record<string, unknown>;
+        const lockedBy = defaultProps.locked_by;
+        const isLockable = Array.isArray(lockedBy)
+          ? (lockedBy as string[]).length > 0
+          : typeof lockedBy === 'string' && lockedBy.length > 0;
+        if (isLockable && currentProps.unlocked !== true) {
+          throw new Error(`"${poiName}" is locked. Use a key or Thieves' Tools to open it.`);
+        }
+
+        // ── NPC interact_options ───────────────────────────────────────────
+        const poiType = defaultProps.poi_type as string | undefined;
+        const interactOptions = Array.isArray(defaultProps.interact_options)
+          ? (defaultProps.interact_options as Array<Record<string, unknown>>)
+          : null;
+
+        if (poiType === 'npc' && interactOptions && interactOptions.length > 0) {
+          // Pick best matching option: prefer one whose label contains the verb, else use first
+          const verbLower = verb.toLowerCase();
+          const option =
+            interactOptions.find(o => (o.label as string)?.toLowerCase().includes(verbLower)) ??
+            interactOptions[0];
+
+          const check = option.check as InteractCheck | undefined;
+          let checkResult: ReturnType<typeof resolveInteractCheck> = { success: true };
+
+          if (check) {
+            const charRow = await tx.character.findUniqueOrThrow({
+              where: { id: characterId },
+              select: { inventory: true },
+            });
+            const inv = normalizeInventory(charRow.inventory);
+            checkResult = resolveInteractCheck(check, character, inv);
+          }
+
+          const storyFlag = option.story_flag as string | undefined;
+          const resultNarrative = checkResult.success
+            ? (option.success as string | undefined) ?? (option.narrative as string | undefined)
+            : (option.failure as string | undefined) ?? `The attempt fails.`;
+
+          if (checkResult.success && storyFlag) {
+            await writeStoryFlags(tx, sessionId, { [storyFlag]: true });
+          }
+
+          if (checkResult.roll) {
+            const r = checkResult.roll;
+            const rollLine = checkResult.usedItem
+              ? `Used item: ${checkResult.usedItem}`
+              : `${r.skill} check: ${r.d20}+${r.modifier}=${r.total} vs DC ${r.dc} — ${checkResult.success ? 'success' : 'failure'}`;
+            await tx.messageLog.create({
+              data: {
+                roomInstanceId,
+                characterId,
+                isMechanicalEvent: false,
+                mechanicalSummary: { type: 'roll_result', event: 'npc_interact', ...r, success: checkResult.success },
+                text: `🎲 ${rollLine}`,
+              },
+            });
+          }
+
+          interactOverrideFact = resultNarrative
+            ? `[NPC INTERACTION — ${poiName}] ${resultNarrative}`
+            : undefined;
+
+          await tx.poiInstance.update({
+            where: { id: action.target_poi_instance_id! },
+            data: {
+              currentProperties: {
+                ...currentProps,
+                interacted: true,
+                lastInteraction: verb,
+                ...(checkResult.success && storyFlag ? { [`flag_${storyFlag}`]: true } : {}),
+              },
+            },
+          });
+        } else if (defaultProps.disrupt && poiType !== 'npc') {
+          // ── disrupt action (Ritual Circle etc.) ───────────────────────────
+          const disrupt = defaultProps.disrupt as Record<string, unknown>;
+          const check = disrupt.check as InteractCheck | undefined;
+          let checkResult: ReturnType<typeof resolveInteractCheck> = { success: true };
+
+          if (check) {
+            const charRow = await tx.character.findUniqueOrThrow({
+              where: { id: characterId },
+              select: { inventory: true },
+            });
+            const inv = normalizeInventory(charRow.inventory);
+            checkResult = resolveInteractCheck(check, character, inv);
+          }
+
+          const storyFlag = disrupt.story_flag as string | undefined;
+          const resultNarrative = checkResult.success
+            ? (disrupt.narrative as string | undefined)
+            : `The disruption attempt fails — the circle's light pulses and holds.`;
+
+          if (checkResult.success && storyFlag) {
+            await writeStoryFlags(tx, sessionId, { [storyFlag]: true });
+          }
+
+          if (checkResult.roll) {
+            const r = checkResult.roll;
+            await tx.messageLog.create({
+              data: {
+                roomInstanceId,
+                characterId,
+                isMechanicalEvent: false,
+                mechanicalSummary: { type: 'roll_result', event: 'disrupt', ...r, success: checkResult.success },
+                text: `🎲 ${r.skill} check: ${r.d20}+${r.modifier}=${r.total} vs DC ${r.dc} — ${checkResult.success ? 'success' : 'failure'}`,
+              },
+            });
+          }
+
+          interactOverrideFact = resultNarrative
+            ? `[DISRUPTION — ${poiName}] ${resultNarrative}`
+            : undefined;
+
+          await tx.poiInstance.update({
+            where: { id: action.target_poi_instance_id! },
+            data: {
+              currentProperties: {
+                ...currentProps,
+                interacted: true,
+                lastInteraction: verb,
+                disrupted: checkResult.success,
+              },
+            },
+          });
+        } else {
+          // ── standard interact ──────────────────────────────────────────────
+          const poiStoryFlag = defaultProps.story_flag as string | undefined;
+          if (poiStoryFlag) {
+            await writeStoryFlags(tx, sessionId, { [poiStoryFlag]: true });
+          }
+          await tx.poiInstance.update({
+            where: { id: action.target_poi_instance_id! },
+            data: {
+              currentProperties: {
+                ...currentProps,
+                interacted: true,
+                lastInteraction: verb,
+              },
+            },
+          });
+        }
+
         await tx.messageLog.create({
           data: {
             roomInstanceId,
@@ -902,7 +1285,67 @@ async function mutateGameState(
         });
       });
 
-      appliedActions.push({ action, poiName, itemName: null });
+      appliedActions.push({ action, poiName, itemName: null, overrideFact: interactOverrideFact });
+
+    // ── destroy_poi ────────────────────────────────────────────────────────
+    } else if (action.action_type === 'destroy_poi') {
+      const poiName = requireValidPoi(action.target_poi_instance_id, validPoiMap);
+      let revealedItemNames: string[] = [];
+
+      await prisma.$transaction(async tx => {
+        const poi = await tx.poiInstance.findUniqueOrThrow({
+          where: { id: action.target_poi_instance_id! },
+          include: { template: true },
+        });
+        const defaultProps = poi.template.defaultProperties as Record<string, unknown>;
+        const currentProps = poi.currentProperties as Record<string, unknown>;
+
+        const templateItems = Array.isArray(defaultProps.items) ? (defaultProps.items as ItemDefinition[]) : [];
+        const takenIds = new Set(Array.isArray(currentProps.items_taken) ? (currentProps.items_taken as string[]) : []);
+        const alreadyRevealed = new Set(Array.isArray(currentProps.revealed_items) ? (currentProps.revealed_items as string[]) : []);
+
+        const newlyRevealed = templateItems
+          .filter(item => item.hidden && !takenIds.has(item.id) && !alreadyRevealed.has(item.id))
+          .map(item => item.id);
+        revealedItemNames = templateItems
+          .filter(item => newlyRevealed.includes(item.id))
+          .map(item => item.name);
+
+        await tx.poiInstance.update({
+          where: { id: action.target_poi_instance_id! },
+          data: {
+            currentProperties: {
+              ...currentProps,
+              destroyed: true,
+              revealed_items: [...Array.from(alreadyRevealed), ...newlyRevealed],
+            } as unknown as object,
+          },
+        });
+        await tx.messageLog.create({
+          data: {
+            roomInstanceId,
+            characterId,
+            isMechanicalEvent: true,
+            mechanicalSummary: {
+              event: 'destroy_poi',
+              poi_instance_id: action.target_poi_instance_id,
+              poi: poiName,
+              revealed_items: revealedItemNames,
+            },
+            text: `[MECHANICAL] ${characterName} destroyed ${poiName}.${revealedItemNames.length > 0 ? ` Revealed: ${revealedItemNames.join(', ')}.` : ''}`,
+          },
+        });
+      });
+
+      const revealedFact = revealedItemNames.length > 0
+        ? ` As it breaks apart, the following items spill out and are now visible: ${revealedItemNames.map(n => `"${n}"`).join(', ')}.`
+        : ' Nothing of value was hidden inside.';
+      appliedActions.push({
+        action,
+        poiName,
+        itemName: null,
+        overrideFact: `Character "${characterName}" destroyed "${poiName}".${revealedFact}`,
+      });
 
     // ── look_around ────────────────────────────────────────────────────────
     } else if (action.action_type === 'look_around') {
@@ -1152,6 +1595,10 @@ async function mutateGameState(
 
         console.log(`[items] pick_up: ${characterName} picked up "${pickedItem.name}" from "${poiName}"`);
         console.log(`[items] inventory: ${inventorySummary(inv)}`);
+
+        if (pickedItem.story_flag) {
+          await writeStoryFlags(tx, sessionId, { [pickedItem.story_flag]: true });
+        }
 
         await tx.messageLog.create({
           data: {
@@ -1428,6 +1875,56 @@ async function mutateGameState(
             const targetPoiName = validPoiMap.get(action.target_poi_instance_id) ?? 'the target';
             effectDescription = `unlocked ${targetPoiName}`;
             console.log(`[items] use_item unlock: ${characterName} unlocked "${targetPoiName}" with "${item.name}"`);
+
+          } else if (item.use_effect === 'lockpick') {
+            if (!action.target_poi_instance_id) {
+              throw new Error('use_item "lockpick" requires target_poi_instance_id');
+            }
+            const poi = await tx.poiInstance.findUniqueOrThrow({
+              where: { id: action.target_poi_instance_id },
+              include: { template: true },
+            });
+            const defaultProps = poi.template.defaultProperties as Record<string, unknown>;
+            const lockedBy = defaultProps.locked_by;
+            const isLockable = Array.isArray(lockedBy)
+              ? (lockedBy as string[]).length > 0
+              : typeof lockedBy === 'string' && lockedBy.length > 0;
+            if (!isLockable) throw new Error(`"${validPoiMap.get(action.target_poi_instance_id) ?? 'this POI'}" has no lock to pick.`);
+            const currentPoiProps = poi.currentProperties as Record<string, unknown>;
+            if (currentPoiProps.unlocked === true) throw new Error(`"${validPoiMap.get(action.target_poi_instance_id) ?? 'this POI'}" is already unlocked.`);
+
+            const lockDc = typeof defaultProps.lock_dc === 'number' ? defaultProps.lock_dc : 15;
+            const profBonus = Math.ceil(character.level / 4) + 1;
+            const dexMod = Math.floor(((character.baseDexterity ?? 10) - 10) / 2);
+            const sleightProficient = character.skillProficiencies.some(
+              s => s.toLowerCase() === 'sleight of hand' || s.toLowerCase() === 'thieves tools',
+            );
+            const d20 = randomInt(1, 21);
+            const total = d20 + dexMod + (sleightProficient ? profBonus : 0);
+            const success = total >= lockDc;
+            const targetPoiName = validPoiMap.get(action.target_poi_instance_id) ?? 'the target';
+
+            console.log(`[items] lockpick: ${characterName} rolled ${d20}+${dexMod}${sleightProficient ? `+${profBonus}` : ''}=${total} vs DC ${lockDc} — ${success ? 'SUCCESS' : 'FAIL'}`);
+
+            await tx.messageLog.create({
+              data: {
+                roomInstanceId,
+                characterId,
+                isMechanicalEvent: false,
+                mechanicalSummary: { type: 'roll_result', event: 'lockpick', poi: targetPoiName, d20, modifier: dexMod + (sleightProficient ? profBonus : 0), total, dc: lockDc, success },
+                text: `🎲 Lockpick ${targetPoiName}: ${d20}+${dexMod + (sleightProficient ? profBonus : 0)}=${total} vs DC ${lockDc} — ${success ? 'success' : 'fail'}`,
+              },
+            });
+
+            if (success) {
+              await tx.poiInstance.update({
+                where: { id: action.target_poi_instance_id },
+                data: { currentProperties: { ...currentPoiProps, unlocked: true } },
+              });
+              effectDescription = `picked the lock on ${targetPoiName} (DC ${lockDc}, rolled ${total})`;
+            } else {
+              effectDescription = `failed to pick the lock on ${targetPoiName} (DC ${lockDc}, rolled ${total})`;
+            }
           }
         }
 
@@ -1573,8 +2070,9 @@ async function generateAndPersistNarrative(
   roomName: string,
   roomDescription: string,
   appliedActions: AppliedAction[],
+  sessionId: string,
 ): Promise<void> {
-  const [recentLogs, freshPois] = await Promise.all([
+  const [recentLogs, freshPois, sessionRow] = await Promise.all([
     prisma.messageLog.findMany({
       where: { roomInstanceId },
       orderBy: { createdAt: 'desc' },
@@ -1585,7 +2083,12 @@ async function generateAndPersistNarrative(
       where: { roomInstanceId },
       include: { template: true },
     }),
+    prisma.gameSession.findUniqueOrThrow({
+      where: { id: sessionId },
+      select: { storyFlags: true },
+    }),
   ]);
+  const storyFlags = (sessionRow.storyFlags as Record<string, unknown>) ?? {};
   const chronologicalLogs = recentLogs.reverse();
 
   const itemsBlock = freshPois
@@ -1655,7 +2158,7 @@ async function generateAndPersistNarrative(
   const narrativeResponse = await anthropic.messages.create({
     model: 'claude-haiku-4-5-20251001',
     max_tokens: 1024,
-    system: buildNarrativeSystemPrompt(roomName, roomDescription, mechanicalFactBlock, itemsBlock),
+    system: buildNarrativeSystemPrompt(roomName, roomDescription, mechanicalFactBlock, itemsBlock, storyFlags),
     messages: [
       {
         role: 'user',
@@ -1720,10 +2223,10 @@ async function buildViewState(
     const defaultProps = poi.template.defaultProperties as Record<string, unknown>;
     const currentProps = poi.currentProperties as Record<string, unknown>;
     const poiType = defaultProps.poi_type as string | undefined;
-    const visibility = (defaultProps.visibility as string) ?? 'always';
+    const visibility = resolveEffectiveVisibility(defaultProps, currentProps);
 
     const isOpenSpace = poiType === 'open_space';
-    const isVisible = isOpenSpace || visibility === 'always' || characterProximityTargetId === poi.id;
+    const isVisible = isOpenSpace || visibility === 'always';
 
     if (!isVisible) continue;
 
@@ -1839,6 +2342,66 @@ async function buildViewState(
   };
 }
 
+// ─── Act Progression ──────────────────────────────────────────────────────────
+
+async function applyActOnStartMutations(
+  tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
+  sessionId: string,
+  mutations: ActMutation[],
+): Promise<void> {
+  for (const mutation of mutations) {
+    const poiInstance = await tx.poiInstance.findFirst({
+      where: { poiTemplateId: mutation.poiTemplateId, roomInstance: { sessionId } },
+      select: { id: true, currentProperties: true },
+    });
+    if (!poiInstance) {
+      console.log(`[act] mutation skip — template ${mutation.poiTemplateId} not yet instantiated`);
+      continue;
+    }
+    await tx.poiInstance.update({
+      where: { id: poiInstance.id },
+      data: { currentProperties: { ...(poiInstance.currentProperties as object), ...mutation.setProps } as object },
+    });
+    console.log(`[act] mutation applied to poi instance ${poiInstance.id}:`, mutation.setProps);
+  }
+}
+
+async function checkAndAdvanceAct(sessionId: string): Promise<void> {
+  const session = await prisma.gameSession.findUniqueOrThrow({
+    where: { id: sessionId },
+    select: { storyFlags: true, currentObjective: true },
+  });
+  const flags = (session.storyFlags as Record<string, unknown>) ?? {};
+  const currentAct = typeof flags.current_act === 'number' ? flags.current_act : 1;
+
+  const actDef = DUNGEON_ACTS.find(a => a.act === currentAct);
+  if (!actDef) return;
+
+  const isComplete = actDef.completionFlags.some(f => flags[f] === true);
+  if (!isComplete) return;
+
+  const nextActDef = DUNGEON_ACTS.find(a => a.act === currentAct + 1);
+  console.log(`[act] act ${currentAct} complete → advancing to act ${currentAct + 1}`);
+
+  await prisma.$transaction(async tx => {
+    await applyActOnStartMutations(tx, sessionId, nextActDef?.onStartMutations ?? []);
+
+    const session2 = await tx.gameSession.findUniqueOrThrow({
+      where: { id: sessionId },
+      select: { storyFlags: true },
+    });
+    const existingFlags = (session2.storyFlags as Record<string, unknown>) ?? {};
+
+    await tx.gameSession.update({
+      where: { id: sessionId },
+      data: {
+        currentObjective: nextActDef?.openingObjective ?? session.currentObjective,
+        storyFlags: { ...existingFlags, current_act: currentAct + 1 } as object,
+      },
+    });
+  });
+}
+
 // ─── Main Handler ─────────────────────────────────────────────────────────────
 
 export async function handleGameAction(body: GameActionRequest): Promise<ViewStatePayload> {
@@ -1855,18 +2418,27 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
 
     const poiContexts: PoiContext[] = roomInstance.poiInstances.map(poi => {
       const defaultProps = poi.template.defaultProperties as Record<string, unknown>;
-      const { items, floorItems } = extractPoiItems(defaultProps, poi.currentProperties);
+      const currentProps = poi.currentProperties as Record<string, unknown>;
+      const { items, floorItems } = extractPoiItems(defaultProps, currentProps);
+      const lockedBy = defaultProps.locked_by;
+      const isLockable = Array.isArray(lockedBy)
+        ? (lockedBy as string[]).length > 0
+        : typeof lockedBy === 'string' && lockedBy.length > 0;
+      const isLocked = isLockable && currentProps.unlocked !== true;
+      const isUnlocked = isLockable && currentProps.unlocked === true;
       return {
         id: poi.id,
         name: poi.template.name,
         keyword: poi.template.keywordIdentifier,
         availableStances: extractAvailableStances(poi.template.defaultProperties),
         ...extractExplorationFlags(poi.currentProperties),
+        isLocked,
+        isUnlocked,
         ...extractExitInfo(poi.template.defaultProperties),
         items,
         floorItems,
         isOpenSpace: (defaultProps.poi_type as string) === 'open_space',
-        visibility: ((defaultProps.visibility as string) ?? 'always') as 'always' | 'proximity_only',
+        visibility: resolveEffectiveVisibility(defaultProps, currentProps),
         peekVisibility: ((defaultProps.peek_visibility as string) ?? 'none') as 'none' | 'obvious_only' | 'full',
       };
     });
@@ -1959,17 +2531,26 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
             .map(pi => {
               const dp = pi.template.defaultProperties as Record<string, unknown>;
               const { items, floorItems } = extractPoiItems(dp, pi.currentProperties);
+              const adjLockedBy = dp.locked_by;
+              const adjIsLockable = Array.isArray(adjLockedBy)
+                ? (adjLockedBy as string[]).length > 0
+                : typeof adjLockedBy === 'string' && adjLockedBy.length > 0;
+              const adjCurrentProps = pi.currentProperties as Record<string, unknown>;
+              const adjIsLocked = adjIsLockable && adjCurrentProps.unlocked !== true;
+              const adjIsUnlocked = adjIsLockable && adjCurrentProps.unlocked === true;
               return {
                 id: pi.id,
                 name: pi.template.name,
                 keyword: pi.template.keywordIdentifier,
                 availableStances: extractAvailableStances(pi.template.defaultProperties),
                 ...extractExplorationFlags(pi.currentProperties),
+                isLocked: adjIsLocked,
+                isUnlocked: adjIsUnlocked,
                 ...extractExitInfo(pi.template.defaultProperties),
                 items,
                 floorItems,
                 isOpenSpace: false,
-                visibility: ((dp.visibility as string) ?? 'always') as 'always' | 'proximity_only',
+                visibility: resolveEffectiveVisibility(dp, pi.currentProperties as Record<string, unknown>),
                 peekVisibility: ((dp.peek_visibility as string) ?? 'none') as 'none' | 'obvious_only' | 'full',
               };
             });
@@ -2019,6 +2600,7 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
       skillsModifiers: character.skillsModifiers,
       skillProficiencies: character.skillProficiencies,
       baseWisdom: character.baseWisdom,
+      baseDexterity: character.baseDexterity,
       currentHp: character.currentHp,
       maxHp: character.maxHp,
     };
@@ -2032,6 +2614,9 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
       validPoiMap,
       openSpacePoiId,
     );
+
+    // Check whether any story flags set this turn complete the current act
+    await checkAndAdvanceAct(roomInstance.session.id);
 
     // Resolve active room context (may change after move_to_room)
     let activeRoomInstanceId = roomInstanceId;
@@ -2070,6 +2655,7 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
       activeRoomName,
       activeRoomDescription,
       appliedActions,
+      roomInstance.session.id,
     );
 
     // Stage 5 — always fetches fresh POI state from DB

@@ -223,13 +223,22 @@ function DungeonMap({ mapData, currentRoomInstanceId }: { mapData: MapData; curr
               const [s] = archOpening(e.exit_wall_section, e.exit_arch_width);
               return s * SLOT_PX === gs;
             });
-            if (exitInGap && exitInGap.exit_arch_width === 1 && exitInGap.peek_visibility === 'none') {
+            if (exitInGap && exitInGap.exit_arch_width === 1) {
               const mx = isHoriz ? x1 + (gs + ge) / 2 : x1;
               const my = isHoriz ? y1 : y1 + (gs + ge) / 2;
-              wallLines.push(
-                <text key={`door-${dir}-${cursor}`} x={mx} y={my + 4}
-                  textAnchor="middle" fontSize={10} fill={wallColor}>▮</text>
-              );
+              if (exitInGap.peek_visibility === 'none' && !exitInGap.interacted) {
+                // closed door
+                wallLines.push(
+                  <text key={`door-${dir}-${cursor}`} x={mx} y={my + 4}
+                    textAnchor="middle" fontSize={10} fill={wallColor}>▮</text>
+                );
+              } else if (exitInGap.interacted) {
+                // opened door
+                wallLines.push(
+                  <text key={`door-${dir}-${cursor}`} x={mx} y={my + 4}
+                    textAnchor="middle" fontSize={10} fill="#94a3b8">▯</text>
+                );
+              }
             }
             cursor = ge;
           }
@@ -275,7 +284,8 @@ function DungeonMap({ mapData, currentRoomInstanceId }: { mapData: MapData; curr
             });
             if (!matchingExit) return false;
 
-            const minVis = matchingExit.peek_visibility === 'full' ? 1 : 2;
+            // opened door → see everything; obvious_only peek → vis>=2 only; full → everything
+            const minVis = (matchingExit.peek_visibility === 'full' || matchingExit.interacted) ? 1 : 2;
             if (p.visibility_level < minVis) return false;
 
             const { px: cpx, py: cpy } = sourcePos;
@@ -398,16 +408,14 @@ function MapSheet({ sessionId, characterId, roomInstanceId, roomName, refreshKey
 
   useEffect(() => {
     console.log('[MapSheet] effect — sheetState:', sheetState, 'roomInstanceId:', roomInstanceId, 'refreshKey:', refreshKey);
-    if (sheetState !== 'closed') {
-      console.log('[MapSheet] fetching map for session:', sessionId, 'char:', characterId);
-      fetch(`/api/v2/map?sessionId=${sessionId}&characterId=${characterId}`)
-        .then(r => r.json())
-        .then(data => {
-          console.log('[MapSheet] map data — rooms:', data.rooms?.length, 'char room:', data.character?.roomInstanceId);
-          setMapData(data);
-        })
-        .catch((e) => console.error('[MapSheet] fetch error:', e));
-    }
+    console.log('[MapSheet] fetching map for session:', sessionId, 'char:', characterId);
+    fetch(`/api/v2/map?sessionId=${sessionId}&characterId=${characterId}`, { cache: 'no-store' })
+      .then(r => r.json())
+      .then(data => {
+        console.log('[MapSheet] map data — rooms:', data.rooms?.length, 'char room:', data.character?.roomInstanceId);
+        setMapData(data);
+      })
+      .catch((e) => console.error('[MapSheet] fetch error:', e));
   }, [sheetState, sessionId, characterId, roomInstanceId, refreshKey]);
 
   const handleTouchStart = (e: React.TouchEvent) => {

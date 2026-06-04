@@ -16,18 +16,23 @@ interface Character {
 }
 
 interface Session {
-  roomInstanceId: string;
   sessionId: string;
   sessionName: string;
-  roomName: string;
+  dungeonName: string;
+  currentRoomName: string;
+  roomInstanceId: string;
+  currentObjective: string | null;
   lastActiveAt: string;
 }
 
-interface RoomTemplate {
+interface Dungeon {
   id: string;
   name: string;
-  baseDescription: string;
-  dungeonTemplate: { name: string };
+  synopsis: string;
+  difficulty: string;
+  length: string;
+  tone: string;
+  startRoomTemplateId: string | null;
 }
 
 const CLASSES = ['Fighter', 'Rogue', 'Wizard', 'Cleric'];
@@ -59,12 +64,11 @@ export default function SetupPage() {
   const [characters, setCharacters] = useState<Character[]>([]);
   const [selectedChar, setSelectedChar] = useState<Character | null>(null);
   const [sessions, setSessions] = useState<Session[]>([]);
-  const [roomTemplates, setRoomTemplates] = useState<RoomTemplate[]>([]);
+  const [dungeons, setDungeons] = useState<Dungeon[]>([]);
   const [showNewChar, setShowNewChar] = useState(false);
   const [showNewSession, setShowNewSession] = useState(false);
   const [error, setError] = useState('');
 
-  // New character form
   const [charName, setCharName] = useState('');
   const [charClass, setCharClass] = useState('Fighter');
   const [stats, setStats] = useState({ str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 });
@@ -103,15 +107,17 @@ export default function SetupPage() {
   }, []);
 
   const loadSessions = useCallback(async (charId: string) => {
-    const res = await fetch(`/api/v2/sessions?characterId=${charId}`);
-    if (res.ok) {
-      const { sessions } = await res.json();
+    const [sRes, dRes] = await Promise.all([
+      fetch(`/api/v2/sessions?characterId=${charId}`),
+      fetch('/api/v2/dungeons'),
+    ]);
+    if (sRes.ok) {
+      const { sessions } = await sRes.json();
       setSessions(sessions);
     }
-    const tRes = await fetch('/api/v2/room-templates');
-    if (tRes.ok) {
-      const { templates } = await tRes.json();
-      setRoomTemplates(templates);
+    if (dRes.ok) {
+      const { dungeons } = await dRes.json();
+      setDungeons(dungeons);
     }
   }, []);
 
@@ -157,7 +163,7 @@ export default function SetupPage() {
   };
 
   const handleDeleteSession = async (session: Session) => {
-    if (!confirm(`Delete "${session.sessionName}"? This cannot be undone.`)) return;
+    if (!confirm(`Abandon "${session.dungeonName}"? This cannot be undone.`)) return;
     setError('');
     const res = await fetch(
       `/api/v2/sessions?sessionId=${session.sessionId}&characterId=${selectedChar!.id}`,
@@ -168,12 +174,12 @@ export default function SetupPage() {
     setSessions(prev => prev.filter(s => s.sessionId !== session.sessionId));
   };
 
-  const handleNewSession = async (templateId: string) => {
+  const handleNewSession = async (dungeonId: string) => {
     setError('');
     const res = await fetch('/api/v2/sessions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ characterId: selectedChar!.id, roomTemplateId: templateId }),
+      body: JSON.stringify({ characterId: selectedChar!.id, dungeonTemplateId: dungeonId }),
     });
     const data = await res.json();
     if (!res.ok) { setError(data.error); return; }
@@ -313,54 +319,71 @@ export default function SetupPage() {
       <h2 className="text-2xl font-bold text-slate-800 mb-1">{selectedChar?.name}</h2>
       <p className="text-sm text-slate-500 mb-6">{selectedChar?.characterClass} · Level {selectedChar?.level}</p>
       {error && <p className="text-red-600 text-sm mb-4">{error}</p>}
-      <div className="space-y-3 mb-6">
-        {sessions.map(s => (
-          <div
-            key={s.roomInstanceId}
-            className="flex items-center gap-2 border border-slate-200 rounded-lg hover:bg-slate-50"
-          >
-            <button
-              onClick={() => handleContinueSession(s)}
-              className="flex-1 text-left p-4 flex justify-between items-center"
+
+      {sessions.length > 0 && (
+        <div className="space-y-3 mb-8">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Continue Adventure</p>
+          {sessions.map(s => (
+            <div
+              key={s.sessionId}
+              className="flex items-stretch border border-slate-200 rounded-lg hover:bg-slate-50 overflow-hidden"
             >
-              <div>
-                <p className="font-medium text-slate-800">{s.sessionName}</p>
-                <p className="text-sm text-slate-500">{s.roomName}</p>
-              </div>
-              <span className="text-xs text-slate-400">Continue →</span>
-            </button>
-            <button
-              onClick={() => handleDeleteSession(s)}
-              className="pr-4 text-slate-300 hover:text-red-500 text-sm"
-              title="Delete session"
-            >
-              ✕
-            </button>
-          </div>
-        ))}
-        {sessions.length === 0 && (
-          <p className="text-slate-400 text-sm text-center py-4">No active sessions.</p>
-        )}
-      </div>
+              <button
+                onClick={() => handleContinueSession(s)}
+                className="flex-1 text-left p-4"
+              >
+                <p className="font-semibold text-slate-800">{s.dungeonName}</p>
+                <p className="text-sm text-slate-500 mt-0.5">
+                  {s.currentRoomName}
+                  {s.currentObjective && (
+                    <span className="text-slate-400"> · {s.currentObjective}</span>
+                  )}
+                </p>
+              </button>
+              <button
+                onClick={() => handleDeleteSession(s)}
+                className="px-4 text-slate-300 hover:text-red-500 border-l border-slate-100 text-sm"
+                title="Abandon this adventure"
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
       <button
         onClick={() => setShowNewSession(v => !v)}
         className="text-indigo-600 text-sm font-medium hover:underline"
       >
-        {showNewSession ? 'Cancel' : '+ New Session'}
+        {showNewSession ? 'Cancel' : '+ Begin New Adventure'}
       </button>
+
       {showNewSession && (
-        <div className="mt-4 border border-slate-200 rounded-lg p-4 space-y-3">
-          <p className="text-sm font-medium text-slate-700">Choose a starting room:</p>
-          {roomTemplates.map(t => (
-            <button
-              key={t.id}
-              onClick={() => handleNewSession(t.id)}
-              className="w-full text-left p-3 border border-slate-200 rounded hover:bg-slate-50"
-            >
-              <p className="font-medium text-slate-800 text-sm">{t.name}</p>
-              <p className="text-xs text-slate-500">{t.dungeonTemplate.name}</p>
-            </button>
+        <div className="mt-4 space-y-4">
+          {dungeons.map(d => (
+            <div key={d.id} className="border border-slate-200 rounded-lg p-4">
+              <h3 className="font-semibold text-slate-800 mb-1">{d.name}</h3>
+              <p className="text-sm text-slate-500 leading-relaxed mb-3">{d.synopsis}</p>
+              <div className="flex items-center justify-between">
+                <div className="flex gap-2">
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">{d.difficulty}</span>
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">{d.length}</span>
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">{d.tone}</span>
+                </div>
+                <button
+                  onClick={() => handleNewSession(d.id)}
+                  disabled={!d.startRoomTemplateId}
+                  className="text-sm font-medium text-indigo-600 hover:text-indigo-800 disabled:opacity-40"
+                >
+                  Begin →
+                </button>
+              </div>
+            </div>
           ))}
+          {dungeons.length === 0 && (
+            <p className="text-slate-400 text-sm text-center py-4">No adventures available.</p>
+          )}
         </div>
       )}
     </div>

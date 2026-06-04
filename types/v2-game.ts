@@ -9,6 +9,7 @@ export type ActionType =
   | 'narrative_only'
   | 'examine'
   | 'interact'
+  | 'destroy_poi'
   | 'look_around'
   | 'search'
   | 'move_to_room'

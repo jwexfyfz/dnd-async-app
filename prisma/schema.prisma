@@ -22,10 +22,16 @@ model User {
 // ==========================================
 
 model DungeonTemplate {
-  id            String         @id @default(uuid())
-  name          String // e.g., "The Obsidian Keep"
-  globalStyle   String // e.g., "Gothic Dungeon"
-  roomTemplates RoomTemplate[]
+  id                  String         @id @default(uuid())
+  name                String
+  globalStyle         String
+  synopsis            String         @default("")
+  difficulty          String         @default("Standard")
+  length              String         @default("Short")
+  tone                String         @default("")
+  startRoomTemplateId String?
+  roomTemplates       RoomTemplate[]
+  gameSessions        GameSession[]
 }
 
 model RoomTemplate {
@@ -61,12 +67,16 @@ model PoiTemplate {
 // ==========================================
 
 model GameSession {
-  id            String         @id @default(uuid())
-  name          String // e.g., "Friday Night D&D Group"
-  gameState     String         @default("exploration") // "exploration" or "combat"
-  createdAt     DateTime       @default(now())
-  roomInstances RoomInstance[]
-  gameMaps      GameMap[]
+  id                String           @id @default(uuid())
+  name              String
+  gameState         String           @default("exploration")
+  currentObjective  String?
+  storyFlags        Json             @default("{}")
+  dungeonTemplateId String?
+  dungeonTemplate   DungeonTemplate? @relation(fields: [dungeonTemplateId], references: [id])
+  createdAt         DateTime         @default(now())
+  roomInstances     RoomInstance[]
+  gameMaps          GameMap[]
 }
 
 model RoomInstance {
