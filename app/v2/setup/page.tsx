@@ -159,7 +159,7 @@ export default function SetupPage() {
   };
 
   const handleContinueSession = (session: Session) => {
-    window.location.href = `/v2/play?room=${session.roomInstanceId}&char=${selectedChar!.id}`;
+    window.location.href = `/v2/play?session=${session.sessionId}&char=${selectedChar!.id}`;
   };
 
   const handleDeleteSession = async (session: Session) => {
@@ -183,7 +183,7 @@ export default function SetupPage() {
     });
     const data = await res.json();
     if (!res.ok) { setError(data.error); return; }
-    window.location.href = `/v2/play?room=${data.roomInstanceId}&char=${selectedChar!.id}`;
+    window.location.href = `/v2/play?session=${data.sessionId}&char=${selectedChar!.id}`;
   };
 
   const toggleSkill = (skill: string) => {

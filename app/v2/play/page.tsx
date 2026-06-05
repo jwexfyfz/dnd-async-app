@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, useCallback, Suspense } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, useCallback, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 
 // ─── Map Types ────────────────────────────────────────────────────────────────
@@ -295,16 +295,41 @@ function DungeonMap({ mapData, currentRoomInstanceId }: { mapData: MapData; curr
           return true;
         });
 
-        const poiLabels = visiblePois.map(p => {
-          const [lx, ly] = slotCenter(p.grid_slot, px, py);
-          const label = p.poi_type === 'exit' ? '' : abbrev(p.name);
-          return (
-            <text key={`poi-${p.templateId}`} x={lx} y={ly + 4}
-              textAnchor="middle" fontSize={9} fill="#475569">
-              {label}
-            </text>
-          );
-        });
+        // Group POIs by slot so shared slots can be stacked vertically
+        const poisBySlot = new Map<string, typeof visiblePois>();
+        for (const p of visiblePois) {
+          const group = poisBySlot.get(p.grid_slot) ?? [];
+          group.push(p);
+          poisBySlot.set(p.grid_slot, group);
+        }
+
+        const poiLabels: React.ReactElement[] = [];
+        for (const [slot, pois] of poisBySlot) {
+          const [lx, ly] = slotCenter(slot, px, py);
+          const n = pois.length;
+          if (n === 1) {
+            poiLabels.push(
+              <text key={`poi-${pois[0].templateId}`} x={lx} y={ly + 4}
+                textAnchor="middle" fontSize={9} fill="#475569">
+                {abbrev(pois[0].name)}
+              </text>
+            );
+          } else if (n === 2) {
+            poiLabels.push(
+              <text key={`poi-${pois[0].templateId}`} x={lx} y={ly - 1}
+                textAnchor="middle" fontSize={8} fill="#475569">{abbrev(pois[0].name)}</text>,
+              <text key={`poi-${pois[1].templateId}`} x={lx} y={ly + 8}
+                textAnchor="middle" fontSize={8} fill="#475569">{abbrev(pois[1].name)}</text>,
+            );
+          } else {
+            poiLabels.push(
+              <text key={`poi-${pois[0].templateId}`} x={lx} y={ly - 1}
+                textAnchor="middle" fontSize={8} fill="#475569">{abbrev(pois[0].name)}</text>,
+              <text key={`poi-slot-${slot}-overflow`} x={lx} y={ly + 8}
+                textAnchor="middle" fontSize={8} fill="#94a3b8">+{n - 1}</text>,
+            );
+          }
+        }
 
         // Character tokens
         const charTokens = room.characters.map((c, i) => {
@@ -381,8 +406,9 @@ function MapLegend({ mapData }: { mapData: MapData | null }) {
       <div className="flex flex-wrap gap-x-4 gap-y-1">
         <span><span className="font-mono font-bold text-indigo-600">@</span> You</span>
         <span><span className="font-mono">·</span> Empty slot</span>
-        <span><span className="font-mono">▮</span> Closed door</span>
-        <span>(gap) Open door / archway</span>
+        <span><span className="font-mono">▮</span> Locked door</span>
+        <span><span className="font-mono">▯</span> Open door</span>
+        <span>(gap) Archway</span>
         {[...seen.entries()].map(([abbr, name]) => (
           <span key={abbr}><span className="font-mono font-medium">{abbr}</span> {name}</span>
         ))}
@@ -557,38 +583,90 @@ function ChatMessage({ entry }: { entry: HistoryEntry }) {
 function PlayContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const roomInstanceId = searchParams.get('room');
+  const sessionId = searchParams.get('session');
   const characterId = searchParams.get('char');
 
   const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [oldestCursor, setOldestCursor] = useState<string | null>(null);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
-  const [sessionId, setSessionId] = useState('');
   const [roomName, setRoomName] = useState('');
-  const [activeRoomInstanceId, setActiveRoomInstanceId] = useState(roomInstanceId ?? '');
+  const [activeRoomInstanceId, setActiveRoomInstanceId] = useState('');
   const [mapRefreshKey, setMapRefreshKey] = useState(0);
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const chatContainerRef = useRef<HTMLDivElement>(null);
+  const suppressScrollRef = useRef(false);
+  const prevScrollHeightRef = useRef(0);
 
+  // Resolve current room from session, then load initial history
   useEffect(() => {
-    if (!roomInstanceId || !characterId) {
+    if (!sessionId || !characterId) {
       router.push('/v2/setup');
       return;
     }
-    setActiveRoomInstanceId(roomInstanceId);
-    Promise.all([
-      fetch(`/api/v2/room/history?roomInstanceId=${roomInstanceId}`).then(r => r.json()),
-      fetch(`/api/v2/room/state?roomInstanceId=${roomInstanceId}`).then(r => r.json()),
-    ]).then(([{ logs }, state]) => {
-      setHistory(logs ?? []);
-      if (state.sessionId) setSessionId(state.sessionId);
-      if (state.roomName) setRoomName(state.roomName);
-    });
-  }, [roomInstanceId, characterId]);
+    fetch(`/api/v2/session/current-room?sessionId=${sessionId}&characterId=${characterId}`)
+      .then(r => r.json())
+      .then(({ roomInstanceId }) => {
+        if (!roomInstanceId) { router.push('/v2/setup'); return; }
+        setActiveRoomInstanceId(roomInstanceId);
+        return Promise.all([
+          fetch(`/api/v2/room/history?sessionId=${sessionId}`).then(r => r.json()),
+          fetch(`/api/v2/room/state?roomInstanceId=${roomInstanceId}`).then(r => r.json()),
+        ]);
+      })
+      .then(result => {
+        if (!result) return;
+        const [{ logs, hasMore: more }, state] = result;
+        const entries: HistoryEntry[] = logs ?? [];
+        console.log('[history] initial load — count:', entries.length, 'hasMore:', more,
+          'oldest:', entries[0]?.createdAt, 'newest:', entries[entries.length - 1]?.createdAt);
+        setHistory(entries);
+        setHasMore(more ?? false);
+        setOldestCursor(entries.length > 0 ? entries[0].createdAt : null);
+        if (state.roomName) setRoomName(state.roomName);
+      });
+  }, [sessionId, characterId]);
 
+  // After load-more prepends: restore scroll position so viewport doesn't jump.
+  // useLayoutEffect fires before paint — adjusts scrollTop while suppressScrollRef is still true.
+  useLayoutEffect(() => {
+    if (suppressScrollRef.current && chatContainerRef.current) {
+      chatContainerRef.current.scrollTop += chatContainerRef.current.scrollHeight - prevScrollHeightRef.current;
+    }
+  }, [history]);
+
+  // After any history change: scroll to bottom for new messages, but skip for load-more.
+  // useEffect fires after useLayoutEffect — resets the flag here so the order is guaranteed.
   useEffect(() => {
+    if (suppressScrollRef.current) {
+      suppressScrollRef.current = false;
+      return;
+    }
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [history]);
+
+  const loadMore = useCallback(async () => {
+    if (loadingMore || !hasMore || !activeRoomInstanceId) return;
+    setLoadingMore(true);
+    try {
+      const params = new URLSearchParams({ sessionId: sessionId! });
+      if (oldestCursor) params.set('cursor', oldestCursor);
+      const { logs, hasMore: more } = await fetch(`/api/v2/room/history?${params}`).then(r => r.json());
+      const older: HistoryEntry[] = logs ?? [];
+      console.log('[history] load more — count:', older.length, 'hasMore:', more,
+        'oldest:', older[0]?.createdAt, 'newest:', older[older.length - 1]?.createdAt);
+      prevScrollHeightRef.current = chatContainerRef.current?.scrollHeight ?? 0;
+      suppressScrollRef.current = true;
+      setHistory(prev => [...older, ...prev]);
+      setHasMore(more ?? false);
+      if (older.length > 0) setOldestCursor(older[0].createdAt);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadingMore, hasMore, sessionId, oldestCursor]);
 
   const sendAction = useCallback(async () => {
     if (!input.trim() || sending || !activeRoomInstanceId || !characterId) return;
@@ -620,24 +698,22 @@ function PlayContent() {
       console.log('[sendAction] currentNarrative length:', data.currentNarrative?.length);
 
       const newNarrative: HistoryEntry[] = data.currentNarrative ?? [];
+      const isRoomChange = data.roomInstanceId && data.roomInstanceId !== activeRoomInstanceId;
+
+      // Append fresh entries to history; also update active room if it changed
       setHistory(prev => {
-        // Remove the optimistic entry; add all genuinely new entries from server
         const withoutOptimistic = prev.filter(e => !e.id.startsWith('optimistic-'));
         const existingIds = new Set(withoutOptimistic.map((e: HistoryEntry) => e.id));
         const fresh = newNarrative.filter((e: HistoryEntry) => !existingIds.has(e.id));
         console.log('[sendAction] fresh entries:', fresh.length, fresh.map(e => (e.mechanicalSummary as Record<string,unknown>)?.type));
         return [...withoutOptimistic, ...fresh];
       });
-
-      setMapRefreshKey(k => k + 1);
-
-      if (data.roomInstanceId && data.roomInstanceId !== activeRoomInstanceId) {
+      if (isRoomChange) {
         console.log('[sendAction] room changed →', data.roomInstanceId);
         setActiveRoomInstanceId(data.roomInstanceId);
-        fetch(`/api/v2/room/state?roomInstanceId=${data.roomInstanceId}`)
-          .then(r => r.json())
-          .then(state => { if (state.roomName) setRoomName(state.roomName); });
       }
+
+      setMapRefreshKey(k => k + 1);
     } catch {
       setError('Network error — please try again.');
       setHistory(prev => prev.filter(e => !e.id.startsWith('optimistic-')));
@@ -659,7 +735,18 @@ function PlayContent() {
       </div>
 
       {/* Chat stream */}
-      <div className="flex-1 overflow-y-auto px-4 py-4">
+      <div ref={chatContainerRef} className="flex-1 overflow-y-auto px-4 py-4">
+        {hasMore && (
+          <div className="flex justify-center mb-3">
+            <button
+              onClick={loadMore}
+              disabled={loadingMore}
+              className="text-xs text-slate-400 hover:text-slate-600 disabled:opacity-40 px-3 py-1 border border-slate-200 rounded-full"
+            >
+              {loadingMore ? 'Loading…' : 'Load earlier messages'}
+            </button>
+          </div>
+        )}
         {history.length === 0 && !sending && (
           <p className="text-center text-slate-400 text-sm mt-8">Loading…</p>
         )}
@@ -680,9 +767,9 @@ function PlayContent() {
       </div>
 
       {/* Map bottom sheet */}
-      {sessionId && (
+      {activeRoomInstanceId && (
         <MapSheet
-          sessionId={sessionId}
+          sessionId={sessionId!}
           characterId={characterId!}
           roomInstanceId={activeRoomInstanceId}
           roomName={roomName}

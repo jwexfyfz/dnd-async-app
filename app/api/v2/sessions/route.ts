@@ -151,7 +151,7 @@ export async function POST(req: NextRequest) {
         update: { lastActiveAt: new Date() },
         create: { roomInstanceId: roomInstance.id, characterId, combatState: { proximity_target_id: null, stance: null } },
       });
-      return { characterId, roomInstanceId: roomInstance.id };
+      return { characterId, sessionId: session.id, roomInstanceId: roomInstance.id };
     });
 
     try {

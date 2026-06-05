@@ -1,6 +1,7 @@
 import { randomInt } from 'crypto';
 import Anthropic from '@anthropic-ai/sdk';
 import { prisma } from '@/lib/prisma';
+import { computeIsLockable, computeEffectivePeek } from '@/lib/v2/poi-utils';
 import type {
   GameActionRequest,
   ExtractedAction,
@@ -391,6 +392,7 @@ RULES:
 - item_id MUST exactly match an item id listed in CHARACTER INVENTORY or in a POI's items list, or null.
 - target_character_id MUST exactly match one of the OTHER CHARACTERS ids listed above, or null.
 - interaction_result is only set for "interact" actions; null otherwise.
+- LOOT RULE: If the player says "grab", "take", "loot", "steal", "search", or "pick up" targeting a specific POI but the named item does NOT appear in that POI's visible items list, emit "interact" on that POI (not "examine" and not "pick_up"). The engine will expose the items. Set interaction_result to "loot" (or a fitting verb).
 - For "move_to_room": target_poi_instance_id = the exit POI's ID from the EXIT POINTS list above; target_room_template_id = the "Leads to room template" value from that same exit's line. Both are REQUIRED and must be copied exactly.
 
 PROXIMITY RULE — contact actions require being adjacent:
@@ -440,7 +442,9 @@ STRICT INSTRUCTIONS:
 - Narrate the above action vividly in 2-4 sentences from a cinematic, third-person perspective.
 - You may ONLY reference items listed in "ITEMS CURRENTLY IN THIS ROOM". Do NOT invent any other items.
 - Do NOT invent mechanical outcomes (damage, rolls, effects) beyond what the engine update states.
-- Do NOT describe future actions or ask the player what they want to do next.`;
+- Do NOT describe future actions or ask the player what they want to do next.
+- EXIT/DOOR RULE: The EXIT STATES block is authoritative. If a door or gate is listed as "closed" or "locked", the character has NOT opened it, unlocked it, or passed through it — even if the action brought them to the doorway. Do NOT write that any door was opened, pushed, or traversed unless the engine update explicitly says so.
+- APPROACH RULE: A "change_proximity" action means the character walked up to a POI and stopped. Narrate their arrival at it. If the ENGINE UPDATE includes "peers through" or "Visible from this vantage", also describe what the character sees through the opening — use only the listed POI names, do not invent contents.`;
 }
 
 // ─── Stage 1: Database Context Lookup ────────────────────────────────────────
@@ -612,11 +616,24 @@ async function parseIntentWithHaiku(
         name: p.name,
         isExit: p.isExit,
         isOpenSpace: p.isOpenSpace,
-        items: p.items.map(i => i.name),
-        floorItems: p.floorItems.map(i => i.name),
+        items: p.items.map(i => `${i.name}(id:${i.id})`),
+        floorItems: p.floorItems.map(i => `${i.name}(id:${i.id})`),
       })),
       null,
       2,
+    ),
+  );
+  console.log(
+    '[intent-parser] inventory:',
+    JSON.stringify(
+      {
+        bag: characterInventory.bag.map(i => `${i.name}(id:${i.id})`),
+        equipped: Object.fromEntries(
+          Object.entries(characterInventory.equipped)
+            .filter(([, v]) => v != null)
+            .map(([slot, i]) => [slot, `${i!.name}(id:${i!.id})`]),
+        ),
+      },
     ),
   );
   console.log('[intent-parser] captured:', JSON.stringify(actions, null, 2));
@@ -728,40 +745,50 @@ async function handleMoveToRoom(
   validPoiMap: Map<string, string>,
   characterName: string,
 ): Promise<string> {
-  const exitPoiId = action.target_poi_instance_id;
-  const targetRoomTemplateId = action.target_room_template_id;
-
-  if (!exitPoiId || !targetRoomTemplateId) {
-    throw new Error('move_to_room requires both target_poi_instance_id and target_room_template_id.');
+  // Auto-resolve when LLM couldn't identify the exit but there's only one available
+  const isUnresolved =
+    !action.target_poi_instance_id ||
+    !action.target_room_template_id ||
+    action.target_room_template_id === '<UNKNOWN>';
+  let resolvedExitPoiId: string;
+  let resolvedTemplateId: string;
+  if (isUnresolved) {
+    if (exitPoiMap.size === 1) {
+      const [[onlyId, onlyTemplate]] = exitPoiMap;
+      resolvedExitPoiId = onlyId;
+      resolvedTemplateId = onlyTemplate;
+    } else {
+      throw new Error('move_to_room requires both target_poi_instance_id and target_room_template_id.');
+    }
+  } else {
+    resolvedExitPoiId = action.target_poi_instance_id!;
+    resolvedTemplateId = action.target_room_template_id!;
   }
-  const expectedTarget = exitPoiMap.get(exitPoiId);
-  if (!expectedTarget || expectedTarget !== targetRoomTemplateId) {
+
+  const expectedTarget = exitPoiMap.get(resolvedExitPoiId);
+  if (!expectedTarget || expectedTarget !== resolvedTemplateId) {
     throw new Error(
-      `Exit POI "${exitPoiId}" does not lead to room template "${targetRoomTemplateId}" — aborting.`,
+      `Exit POI "${resolvedExitPoiId}" does not lead to room template "${resolvedTemplateId}" — aborting.`,
     );
   }
 
   // Check if exit POI is locked
   await prisma.$transaction(async tx => {
     const exitPoi = await tx.poiInstance.findUniqueOrThrow({
-      where: { id: exitPoiId },
+      where: { id: resolvedExitPoiId },
       include: { template: true },
     });
     const defaultProps = exitPoi.template.defaultProperties as Record<string, unknown>;
-    const lockedBy = defaultProps.locked_by;
-    const isLockable =
-      Array.isArray(lockedBy)
-        ? (lockedBy as string[]).length > 0
-        : typeof lockedBy === 'string' && lockedBy.length > 0;
+    const isLockable = computeIsLockable(defaultProps.locked_by);
     if (isLockable) {
       const currentProps = exitPoi.currentProperties as Record<string, unknown>;
       if (currentProps.unlocked !== true) {
-        throw new Error(`${validPoiMap.get(exitPoiId) ?? 'The exit'} is locked.`);
+        throw new Error(`${validPoiMap.get(resolvedExitPoiId) ?? 'The exit'} is locked.`);
       }
     }
   });
 
-  const exitPoiName = validPoiMap.get(exitPoiId) ?? 'the exit';
+  const exitPoiName = validPoiMap.get(resolvedExitPoiId) ?? 'the exit';
 
   return await prisma.$transaction(async tx => {
     const currentRoom = await tx.roomInstance.findUniqueOrThrow({
@@ -770,19 +797,19 @@ async function handleMoveToRoom(
     });
 
     let targetRoom = await tx.roomInstance.findFirst({
-      where: { sessionId, roomTemplateId: targetRoomTemplateId },
+      where: { sessionId, roomTemplateId: resolvedTemplateId },
       include: { poiInstances: { include: { template: true } } },
     });
 
     if (!targetRoom) {
       const targetTemplate = await tx.roomTemplate.findUniqueOrThrow({
-        where: { id: targetRoomTemplateId },
+        where: { id: resolvedTemplateId },
         include: { poiTemplates: true },
       });
       targetRoom = await tx.roomInstance.create({
         data: {
           sessionId,
-          roomTemplateId: targetRoomTemplateId,
+          roomTemplateId: resolvedTemplateId,
           poiInstances: {
             create: targetTemplate.poiTemplates.map(pt => ({
               poiTemplateId: pt.id,
@@ -798,7 +825,7 @@ async function handleMoveToRoom(
     // back to the current room. If it's a door (peek_visibility === 'none'),
     // mark it interacted (open) so the door doesn't appear closed behind the player.
     const exitPoiInstance = await tx.poiInstance.findUniqueOrThrow({
-      where: { id: exitPoiId },
+      where: { id: resolvedExitPoiId },
       include: { template: true },
     });
     const exitDefaultProps = exitPoiInstance.template.defaultProperties as Record<string, unknown>;
@@ -837,7 +864,7 @@ async function handleMoveToRoom(
         mechanicalSummary: {
           event: 'departed',
           through: exitPoiName,
-          target_room_template_id: targetRoomTemplateId,
+          target_room_template_id: resolvedTemplateId,
         },
         text: `[MECHANICAL] ${characterName} passed through ${exitPoiName} and left this room.`,
       },
@@ -989,7 +1016,67 @@ async function mutateGameState(
         });
       });
 
-      appliedActions.push({ action, poiName, itemName: null });
+      // If the character is peering at an exit, inject adjacent room visibility into the narrative fact
+      let peerOverrideFact: string | undefined;
+      const targetExitPoiId = action.target_poi_instance_id;
+      console.log(`[peer] change_proximity target=${targetExitPoiId} isExit=${exitPoiMap.has(targetExitPoiId ?? '')}`);
+      if (targetExitPoiId && exitPoiMap.has(targetExitPoiId)) {
+        const exitPoi = await prisma.poiInstance.findUniqueOrThrow({
+          where: { id: targetExitPoiId },
+          include: { template: true },
+        });
+        const dp = exitPoi.template.defaultProperties as Record<string, unknown>;
+        const cp = exitPoi.currentProperties as Record<string, unknown>;
+        const rawPeek = (dp.peek_visibility as string) ?? 'none';
+        const effectivePeek = computeEffectivePeek(
+          rawPeek,
+          computeIsLockable(dp.locked_by) && cp.unlocked !== true,
+          cp.interacted === true,
+          cp.destroyed === true,
+        );
+
+        const targetRoomTemplateId = exitPoiMap.get(targetExitPoiId)!;
+
+        console.log(`[peer] rawPeek=${rawPeek} effectivePeek=${effectivePeek} unlocked=${cp.unlocked} interacted=${cp.interacted} destroyed=${cp.destroyed} targetTemplate=${targetRoomTemplateId}`);
+        if (effectivePeek === 'none') {
+          peerOverrideFact = `Character "${characterName}" pressed against "${poiName}", straining to sense what lies beyond — but the door is solid and reveals nothing.`;
+        } else {
+          const adjRoom = await prisma.roomInstance.findFirst({
+            where: { sessionId, roomTemplateId: targetRoomTemplateId },
+            include: { template: true, poiInstances: { include: { template: true } } },
+          });
+          console.log(`[peer] adjRoom=${adjRoom ? adjRoom.template.name : 'NOT FOUND (room not yet visited)'} poiCount=${adjRoom?.poiInstances.length ?? 0}`);
+          if (adjRoom) {
+            const minVisLevel = effectivePeek === 'full' ? 1 : 2;
+            const exitDirection: string = exitPoi.template.exit_direction ?? '';
+            const exitWallSection: string = exitPoi.template.exit_wall_section ?? 'C';
+            const exitArchWidth: number = exitPoi.template.exit_arch_width ?? 1;
+            const charGridSlot = exitPoi.template.grid_slot ?? 'C';
+
+            console.log(`[peer] effectivePeek=${effectivePeek} minVisLevel=${minVisLevel} exitDir=${exitDirection||'(none)'} wallSection=${exitWallSection} archWidth=${exitArchWidth} charSlot=${charGridSlot}`);
+
+            const visiblePois = adjRoom.poiInstances.filter(pi => {
+              const pdp = pi.template.defaultProperties as Record<string, unknown>;
+              if ((pdp.poi_type as string) === 'open_space') return false;
+              if (pi.template.visibility_level < minVisLevel) {
+                console.log(`[peer] SKIP "${pi.template.name}" — visibility_level=${pi.template.visibility_level} < minVisLevel=${minVisLevel}`);
+                return false;
+              }
+              if (!exitDirection) return true;
+              const los = isPoiVisibleThroughExit(charGridSlot, pi.template.grid_slot, exitDirection, exitWallSection, exitArchWidth);
+              console.log(`[peer] "${pi.template.name}" slot=${pi.template.grid_slot} LoS=${los}`);
+              return los;
+            });
+
+            const poiList = visiblePois.length > 0
+              ? visiblePois.map(pi => `"${pi.template.name}"`).join(', ')
+              : 'nothing remarkable';
+            peerOverrideFact = `Character "${characterName}" peers through "${poiName}" into "${adjRoom.template.name}". Visible from this vantage: ${poiList}. Describe only what can be seen from this angle — do not fabricate unseen details.`;
+          }
+        }
+      }
+
+      appliedActions.push({ action, poiName, itemName: null, overrideFact: peerOverrideFact });
 
     // ── examine ────────────────────────────────────────────────────────────
     } else if (action.action_type === 'examine') {
@@ -1126,10 +1213,7 @@ async function mutateGameState(
         });
         const defaultProps = poi.template.defaultProperties as Record<string, unknown>;
         const currentProps = poi.currentProperties as Record<string, unknown>;
-        const lockedBy = defaultProps.locked_by;
-        const isLockable = Array.isArray(lockedBy)
-          ? (lockedBy as string[]).length > 0
-          : typeof lockedBy === 'string' && lockedBy.length > 0;
+        const isLockable = computeIsLockable(defaultProps.locked_by);
         if (isLockable && currentProps.unlocked !== true) {
           throw new Error(`"${poiName}" is locked. Use a key or Thieves' Tools to open it.`);
         }
@@ -1257,6 +1341,28 @@ async function mutateGameState(
           if (poiStoryFlag) {
             await writeStoryFlags(tx, sessionId, { [poiStoryFlag]: true });
           }
+
+          // When opening a lockable container, auto-reveal hidden items that
+          // have no reveal_check (items visible immediately on opening).
+          const templateItems = Array.isArray(defaultProps.items)
+            ? (defaultProps.items as ItemDefinition[])
+            : [];
+          const existingRevealed = new Set(
+            Array.isArray(currentProps.revealed_items)
+              ? (currentProps.revealed_items as string[])
+              : [],
+          );
+          const takenIds = new Set(
+            Array.isArray(currentProps.items_taken)
+              ? (currentProps.items_taken as string[])
+              : [],
+          );
+          const autoReveal = isLockable
+            ? templateItems
+                .filter(i => i.hidden && !i.reveal_check && !existingRevealed.has(i.id) && !takenIds.has(i.id))
+                .map(i => i.id)
+            : [];
+
           await tx.poiInstance.update({
             where: { id: action.target_poi_instance_id! },
             data: {
@@ -1264,6 +1370,9 @@ async function mutateGameState(
                 ...currentProps,
                 interacted: true,
                 lastInteraction: verb,
+                ...(autoReveal.length > 0
+                  ? { revealed_items: [...Array.from(existingRevealed), ...autoReveal] }
+                  : {}),
               },
             },
           });
@@ -1868,9 +1977,16 @@ async function mutateGameState(
             }
 
             const currentProps = poi.currentProperties as Record<string, unknown>;
+            const isExitPoi = (defaultProps.poi_type as string) === 'exit';
             await tx.poiInstance.update({
               where: { id: action.target_poi_instance_id },
-              data: { currentProperties: { ...currentProps, unlocked: true } },
+              data: {
+                currentProperties: {
+                  ...currentProps,
+                  unlocked: true,
+                  ...(isExitPoi ? { interacted: true, lastInteraction: 'opened' } : {}),
+                },
+              },
             });
             const targetPoiName = validPoiMap.get(action.target_poi_instance_id) ?? 'the target';
             effectDescription = `unlocked ${targetPoiName}`;
@@ -1885,11 +2001,7 @@ async function mutateGameState(
               include: { template: true },
             });
             const defaultProps = poi.template.defaultProperties as Record<string, unknown>;
-            const lockedBy = defaultProps.locked_by;
-            const isLockable = Array.isArray(lockedBy)
-              ? (lockedBy as string[]).length > 0
-              : typeof lockedBy === 'string' && lockedBy.length > 0;
-            if (!isLockable) throw new Error(`"${validPoiMap.get(action.target_poi_instance_id) ?? 'this POI'}" has no lock to pick.`);
+            if (!computeIsLockable(defaultProps.locked_by)) throw new Error(`"${validPoiMap.get(action.target_poi_instance_id) ?? 'this POI'}" has no lock to pick.`);
             const currentPoiProps = poi.currentProperties as Record<string, unknown>;
             if (currentPoiProps.unlocked === true) throw new Error(`"${validPoiMap.get(action.target_poi_instance_id) ?? 'this POI'}" is already unlocked.`);
 
@@ -1924,6 +2036,42 @@ async function mutateGameState(
               effectDescription = `picked the lock on ${targetPoiName} (DC ${lockDc}, rolled ${total})`;
             } else {
               effectDescription = `failed to pick the lock on ${targetPoiName} (DC ${lockDc}, rolled ${total})`;
+            }
+          }
+        } else if (!item.use_effect && action.target_poi_instance_id) {
+          // Fallback: item has no use_effect but is being used on a POI — check if it's a key for that lock
+          const poi = await tx.poiInstance.findUniqueOrThrow({
+            where: { id: action.target_poi_instance_id },
+            include: { template: true },
+          });
+          const defaultProps = poi.template.defaultProperties as Record<string, unknown>;
+          const lockedBy = defaultProps.locked_by;
+          const lockedByArr = Array.isArray(lockedBy)
+            ? (lockedBy as string[])
+            : typeof lockedBy === 'string'
+            ? [lockedBy]
+            : [];
+          if (lockedByArr.includes(item.id)) {
+            const currentProps = poi.currentProperties as Record<string, unknown>;
+            const isExitPoi = (defaultProps.poi_type as string) === 'exit';
+            await tx.poiInstance.update({
+              where: { id: action.target_poi_instance_id },
+              data: {
+                currentProperties: {
+                  ...currentProps,
+                  unlocked: true,
+                  ...(isExitPoi ? { interacted: true, lastInteraction: 'opened' } : {}),
+                },
+              },
+            });
+            const targetPoiName = validPoiMap.get(action.target_poi_instance_id) ?? 'the target';
+            effectDescription = `unlocked ${targetPoiName}`;
+            console.log(`[items] use_item unlock (fallback): ${characterName} unlocked "${targetPoiName}" with "${item.name}"`);
+            // Consume the key
+            if (itemLocation === 'bag') inv.bag.splice(bagIdx, 1);
+            else {
+              const slot = Object.entries(inv.equipped).find(([, i]) => i?.id === itemId)?.[0];
+              if (slot) delete inv.equipped[slot as keyof CharacterInventory['equipped']];
             }
           }
         }
@@ -2071,7 +2219,7 @@ async function generateAndPersistNarrative(
   roomDescription: string,
   appliedActions: AppliedAction[],
   sessionId: string,
-): Promise<void> {
+): Promise<{ text: string; persisted: boolean }> {
   const [recentLogs, freshPois, sessionRow] = await Promise.all([
     prisma.messageLog.findMany({
       where: { roomInstanceId },
@@ -2173,14 +2321,27 @@ async function generateAndPersistNarrative(
   const narrativeText = textBlock?.text ?? '[No narrative generated]';
   console.log('[narrative] generated:', narrativeText);
 
-  await prisma.messageLog.create({
-    data: {
-      roomInstanceId,
-      characterId,
-      isMechanicalEvent: false,
-      text: narrativeText,
-    },
-  });
+  let persisted = false;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      await prisma.messageLog.create({
+        data: { roomInstanceId, characterId, isMechanicalEvent: false, text: narrativeText },
+      });
+      persisted = true;
+      break;
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (attempt === 0 && msg.includes('Foreign key constraint')) {
+        console.warn('[narrative] FK violation on first attempt — retrying after 200ms');
+        await new Promise(r => setTimeout(r, 200));
+        continue;
+      }
+      console.error('[narrative] messageLog.create failed:', msg);
+      break;
+    }
+  }
+
+  return { text: narrativeText, persisted };
 }
 
 // ─── Stage 5: View State Packager ────────────────────────────────────────────
@@ -2191,6 +2352,7 @@ async function buildViewState(
   characterId: string,
   sessionId: string,
   characterProximityTargetId: string | null,
+  fallbackNarrative?: string,
 ): Promise<ViewStatePayload> {
   const [recentNarrative, participants, charRow, poiInstances] = await Promise.all([
     prisma.messageLog.findMany({
@@ -2281,12 +2443,12 @@ async function buildViewState(
     const enterVerb = defaultProps['enter'] as Record<string, unknown>;
     const targetRoomTemplateId = enterVerb.target_room_template_id as string;
 
-    const rawPeek = (defaultProps.peek_visibility as string) ?? 'none';
-    const lockedBy = defaultProps.locked_by;
-    const isLockable = Array.isArray(lockedBy)
-      ? (lockedBy as string[]).length > 0
-      : typeof lockedBy === 'string' && lockedBy.length > 0;
-    const effectivePeek = isLockable && currentProps.unlocked !== true ? 'none' : rawPeek;
+    const effectivePeek = computeEffectivePeek(
+      (defaultProps.peek_visibility as string) ?? 'none',
+      computeIsLockable(defaultProps.locked_by) && currentProps.unlocked !== true,
+      currentProps.interacted === true,
+      currentProps.destroyed === true,
+    );
 
     if (effectivePeek === 'none') continue;
 
@@ -2329,9 +2491,20 @@ async function buildViewState(
     };
   }
 
+  const orderedNarrative = recentNarrative.reverse();
+  if (fallbackNarrative && !orderedNarrative.some(n => n.text === fallbackNarrative)) {
+    orderedNarrative.push({
+      id: 'injected-current',
+      text: fallbackNarrative,
+      isMechanicalEvent: false,
+      mechanicalSummary: null,
+      createdAt: new Date(),
+    });
+  }
+
   return {
     roomInstanceId,
-    currentNarrative: recentNarrative.reverse(),
+    currentNarrative: orderedNarrative,
     activeState: gameState,
     poiIndex,
     poiStates,
@@ -2420,10 +2593,7 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
       const defaultProps = poi.template.defaultProperties as Record<string, unknown>;
       const currentProps = poi.currentProperties as Record<string, unknown>;
       const { items, floorItems } = extractPoiItems(defaultProps, currentProps);
-      const lockedBy = defaultProps.locked_by;
-      const isLockable = Array.isArray(lockedBy)
-        ? (lockedBy as string[]).length > 0
-        : typeof lockedBy === 'string' && lockedBy.length > 0;
+      const isLockable = computeIsLockable(defaultProps.locked_by);
       const isLocked = isLockable && currentProps.unlocked !== true;
       const isUnlocked = isLockable && currentProps.unlocked === true;
       return {
@@ -2476,11 +2646,12 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
     if (currentProximityPoiId) {
       const proximityCtx = poiContexts.find(p => p.id === currentProximityPoiId);
       if (proximityCtx?.isExit && proximityCtx.targetRoomTemplateId) {
-        // Determine effective peek: doors only become visible after being opened
-        const doorOpened = proximityCtx.interacted;
-        const effectivePeek = proximityCtx.peekVisibility === 'none' && doorOpened
-          ? 'obvious_only'
-          : proximityCtx.peekVisibility;
+        const effectivePeek = computeEffectivePeek(
+          proximityCtx.peekVisibility,
+          proximityCtx.isLocked,
+          proximityCtx.interacted,
+          proximityCtx.destroyed,
+        );
         if (effectivePeek !== 'none') {
           // Fetch or lazily create the adjacent room instance so we have real POI IDs
           let adjRoom = await prisma.roomInstance.findFirst({
@@ -2562,6 +2733,106 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
             pois: adjPois,
           };
           console.log(`[adjacent] fetched ${adjPois.length} POI(s) from "${adjRoom.template.name}" via "${proximityCtx.name}"`);
+        }
+      }
+    }
+
+    // Fallback: if not standing at an exit but there's exactly one peek-visible exit,
+    // still populate adjacentRoom so the LLM can parse cross-room actions like "walk to <POI>".
+    if (!adjacentRoom) {
+      const peekableExits = poiContexts.filter(p => {
+        if (!p.isExit || !p.targetRoomTemplateId) return false;
+        return computeEffectivePeek(p.peekVisibility, p.isLocked, p.interacted, p.destroyed) !== 'none';
+      });
+      if (peekableExits.length === 1) {
+        const fallbackExit = peekableExits[0];
+        const effectivePeek = computeEffectivePeek(
+          fallbackExit.peekVisibility,
+          fallbackExit.isLocked,
+          fallbackExit.interacted,
+          fallbackExit.destroyed,
+        );
+        const minVisLevel = effectivePeek === 'full' ? 1 : 2;
+
+        // Resolve character's current grid slot for LoS check
+        const charPoiInstance = currentProximityPoiId
+          ? roomInstance.poiInstances.find(pi => pi.id === currentProximityPoiId)
+          : null;
+        const charGridSlot: string = charPoiInstance?.template.grid_slot ?? 'C';
+
+        // Resolve exit geometry from the raw template
+        const exitPoiInstance = roomInstance.poiInstances.find(pi => pi.id === fallbackExit.id);
+        const exitDirection: string = exitPoiInstance?.template.exit_direction ?? '';
+        const exitWallSection: string = exitPoiInstance?.template.exit_wall_section ?? 'C';
+        const exitArchWidth: number = exitPoiInstance?.template.exit_arch_width ?? 1;
+
+        let adjRoom = await prisma.roomInstance.findFirst({
+          where: { sessionId: roomInstance.session.id, roomTemplateId: fallbackExit.targetRoomTemplateId! },
+          include: { template: true, poiInstances: { include: { template: true } } },
+        });
+        if (!adjRoom) {
+          const adjTemplate = await prisma.roomTemplate.findUniqueOrThrow({
+            where: { id: fallbackExit.targetRoomTemplateId! },
+            include: { poiTemplates: true },
+          });
+          adjRoom = await prisma.roomInstance.create({
+            data: {
+              sessionId: roomInstance.session.id,
+              roomTemplateId: fallbackExit.targetRoomTemplateId!,
+              poiInstances: {
+                create: adjTemplate.poiTemplates.map(pt => ({ poiTemplateId: pt.id, currentProperties: {} })),
+              },
+            },
+            include: { template: true, poiInstances: { include: { template: true } } },
+          });
+        }
+        const adjPois: PoiContext[] = adjRoom.poiInstances
+          .filter(pi => {
+            const dp = pi.template.defaultProperties as Record<string, unknown>;
+            if (dp.poi_type === 'open_space') return false;
+            if (pi.template.visibility_level < minVisLevel) return false;
+            if (!exitDirection) return true;
+            return isPoiVisibleThroughExit(
+              charGridSlot,
+              pi.template.grid_slot,
+              exitDirection,
+              exitWallSection,
+              exitArchWidth,
+            );
+          })
+          .map(pi => {
+            const dp = pi.template.defaultProperties as Record<string, unknown>;
+            const { items, floorItems } = extractPoiItems(dp, pi.currentProperties);
+            const adjLockedBy = dp.locked_by;
+            const adjIsLockable = Array.isArray(adjLockedBy)
+              ? (adjLockedBy as string[]).length > 0
+              : typeof adjLockedBy === 'string' && adjLockedBy.length > 0;
+            const adjCurrentProps = pi.currentProperties as Record<string, unknown>;
+            return {
+              id: pi.id,
+              name: pi.template.name,
+              keyword: pi.template.keywordIdentifier,
+              availableStances: extractAvailableStances(pi.template.defaultProperties),
+              ...extractExplorationFlags(pi.currentProperties),
+              isLocked: adjIsLockable && adjCurrentProps.unlocked !== true,
+              isUnlocked: adjIsLockable && adjCurrentProps.unlocked === true,
+              ...extractExitInfo(pi.template.defaultProperties),
+              items,
+              floorItems,
+              isOpenSpace: false,
+              visibility: resolveEffectiveVisibility(dp, adjCurrentProps),
+              peekVisibility: ((dp.peek_visibility as string) ?? 'none') as 'none' | 'obvious_only' | 'full',
+            };
+          });
+        if (adjPois.length > 0) {
+          adjacentRoom = {
+            roomName: adjRoom.template.name,
+            exitPoiId: fallbackExit.id,
+            exitPoiName: fallbackExit.name,
+            targetRoomTemplateId: fallbackExit.targetRoomTemplateId!,
+            pois: adjPois,
+          };
+          console.log(`[adjacent] fallback: fetched ${adjPois.length} POI(s) from "${adjRoom.template.name}" via "${fallbackExit.name}" (charSlot=${charGridSlot})`);
         }
       }
     }
@@ -2648,15 +2919,16 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
     }
 
     // Stage 4
-    await generateAndPersistNarrative(
-      activeRoomInstanceId,
-      characterId,
-      character.name,
-      activeRoomName,
-      activeRoomDescription,
-      appliedActions,
-      roomInstance.session.id,
-    );
+    const { text: currentNarrativeText, persisted: narrativePersisted } =
+      await generateAndPersistNarrative(
+        activeRoomInstanceId,
+        characterId,
+        character.name,
+        activeRoomName,
+        activeRoomDescription,
+        appliedActions,
+        roomInstance.session.id,
+      );
 
     // Stage 5 — always fetches fresh POI state from DB
     const viewState = await buildViewState(
@@ -2665,6 +2937,7 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
       characterId,
       roomInstance.session.id,
       activeCharacterProximityTargetId,
+      narrativePersisted ? undefined : currentNarrativeText,
     );
 
     return viewState;

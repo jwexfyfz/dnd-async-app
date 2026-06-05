@@ -30,8 +30,6 @@ async function main() {
   await prisma.map.deleteMany();
   await prisma.act.deleteMany();
   await prisma.story.deleteMany();
-  await prisma.character.deleteMany();
-  await prisma.user.deleteMany();
   await prisma.item.deleteMany();
 
   // ─── Items ─────────────────────────────────────────────────────────────────
@@ -298,15 +296,21 @@ async function main() {
   // ─── User & Character ──────────────────────────────────────────────────────
   console.log("🧙 Seeding user and character...");
 
-  const testUser = await prisma.user.create({
-    data: {
+  const testUser = await prisma.user.upsert({
+    where: { email: "test@example.com" },
+    update: {},
+    create: {
+      id: "00000000-0000-0000-0000-000000000001",
       email: "test@example.com",
       displayName: "Test Player",
     },
   });
 
-  const testChar = await prisma.character.create({
-    data: {
+  const testChar = await prisma.character.upsert({
+    where: { id: "00000000-0000-0000-0000-000000000002" },
+    update: {},
+    create: {
+      id: "00000000-0000-0000-0000-000000000002",
       name: "Aldric",
       userId: testUser.id,
       characterClass: "Fighter",
@@ -709,6 +713,8 @@ async function main() {
             name: "Iron Key",
             throwable: true,
             hidden: true,
+            consumable: true,
+            use_effect: "unlock",
             reveal_check: { skill: "perception", dc: 12 },
           },
           {
@@ -1301,6 +1307,8 @@ async function main() {
             hidden: true,
             reveal_check: { skill: "perception", dc: 11 },
             story_flag: "vorne_key_found",
+            use_effect: "unlock",
+            consumable: true,
           },
         ],
       },

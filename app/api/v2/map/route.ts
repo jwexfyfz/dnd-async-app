@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { computeIsLockable, computeEffectivePeek } from '@/lib/v2/poi-utils';
 
 export async function GET(req: NextRequest) {
   const sessionId = req.nextUrl.searchParams.get('sessionId');
@@ -91,16 +92,12 @@ export async function GET(req: NextRequest) {
       const pois = ri.template.poiTemplates.map(pt => {
         const state = poiStateMap.get(pt.id) ?? {};
         const defaultProps = pt.defaultProperties as Record<string, unknown>;
-        const peekVisibility = (defaultProps.peek_visibility as string) ?? 'none';
-        const lockedBy = defaultProps.locked_by;
-        const isLockable = Array.isArray(lockedBy)
-          ? (lockedBy as string[]).length > 0
-          : typeof lockedBy === 'string' && lockedBy.length > 0;
-        const isExit = (defaultProps.poi_type as string) === 'exit';
-        const doorOpened = isExit && state.interacted === true;
-        const effectivePeek = (isLockable && state.unlocked !== true)
-          ? 'none'
-          : (peekVisibility === 'none' && doorOpened ? 'obvious_only' : peekVisibility);
+        const effectivePeek = computeEffectivePeek(
+          (defaultProps.peek_visibility as string) ?? 'none',
+          computeIsLockable(defaultProps.locked_by) && state.unlocked !== true,
+          state.interacted === true,
+          state.destroyed === true,
+        );
 
         return {
           instanceId: poiInstanceIdMap.get(pt.id) ?? null,
@@ -162,16 +159,12 @@ export async function GET(req: NextRequest) {
         if (!pt.exit_direction) return false;
         const pi = currentRoomInstance.poiInstances.find(pi => pi.poiTemplateId === pt.id);
         const state = (pi?.currentProperties as Record<string, unknown>) ?? {};
-        const rawPeek = (dp.peek_visibility as string) ?? 'none';
-        const lockedBy = dp.locked_by;
-        const isLockable = Array.isArray(lockedBy)
-          ? (lockedBy as string[]).length > 0
-          : typeof lockedBy === 'string' && lockedBy.length > 0;
-        const doorOpened = state.interacted === true;
-        const effectivePeek = (isLockable && state.unlocked !== true)
-          ? 'none'
-          : (rawPeek === 'none' && doorOpened ? 'obvious_only' : rawPeek);
-        return effectivePeek !== 'none';
+        return computeEffectivePeek(
+          (dp.peek_visibility as string) ?? 'none',
+          computeIsLockable(dp.locked_by) && state.unlocked !== true,
+          state.interacted === true,
+          state.destroyed === true,
+        ) !== 'none';
       });
 
       for (const exitPt of peekableExits) {
@@ -207,7 +200,7 @@ export async function GET(req: NextRequest) {
             exit_wall_section: pt.exit_wall_section,
             exit_arch_width: pt.exit_arch_width,
             poi_type: (defaultProps.poi_type as string) ?? 'interactive',
-            peek_visibility: (defaultProps.peek_visibility as string) ?? 'none',
+            peek_visibility: ((defaultProps.peek_visibility as string) ?? 'none') as 'none' | 'obvious_only' | 'full',
             examined: false,
             interacted: false,
             unlocked: false,
@@ -228,7 +221,15 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    return NextResponse.json({ rooms, character });
+    // Restrict to current room + direct neighbors (Manhattan distance ≤ 1)
+    const curTemplate = currentRoomInstance?.template;
+    const nearbyRooms = curTemplate
+      ? rooms.filter(r =>
+          Math.abs(r.map_x - curTemplate.map_x) + Math.abs(r.map_y - curTemplate.map_y) <= 1
+        )
+      : rooms;
+
+    return NextResponse.json({ rooms: nearbyRooms, character });
   } catch (e) {
     console.error('[map] error:', e);
     return NextResponse.json({ error: 'Failed to fetch map data' }, { status: 500 });

@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma';
 export async function GET() {
   try {
     const dungeons = await prisma.dungeonTemplate.findMany({
+      where: { startRoomTemplateId: { not: null } },
       select: {
         id: true,
         name: true,
