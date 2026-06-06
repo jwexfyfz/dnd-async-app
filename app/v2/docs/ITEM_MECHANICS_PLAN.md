@@ -1,4 +1,6 @@
-# V2 Item Mechanics — Finalized Plan
+# V2 Item Mechanics — Implemented
+
+> **Status: Complete.** All item mechanics described here are implemented in `lib/v2/game-controller.ts`.
 
 ## Item Schema (unified, used everywhere)
 

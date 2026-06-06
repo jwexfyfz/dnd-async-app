@@ -1,4 +1,6 @@
-# V2 Map Rendering Plan
+# V2 Map Rendering — Implemented
+
+> **Status: Complete.** Map API implemented in `app/api/v2/map/route.ts`. Frontend SVG renderer in the play page.
 
 ## Concept
 Local area view — current room fills most of the canvas. Adjacent rooms shown only if visible via LoS. Not a full dungeon overview.

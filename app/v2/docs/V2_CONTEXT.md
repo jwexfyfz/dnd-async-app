@@ -97,9 +97,14 @@ npm run db:seed    # Re-seed (templates stable, instances cleared)
 
 ## System Gaps
 
-1. **Combat trigger** — No mechanism to flip `gameState` → `combat` or introduce enemy `RoomParticipant`s.
+1. **Combat** — No mechanism to flip `gameState` → `combat`, spawn enemy `RoomParticipant`s, or run turn-based combat loop. Next planned feature.
 2. **Multi-player polling** — No live updates; a second player's actions are invisible until page refresh.
 3. **Sidebar after room transition** — Sidebar doesn't re-run `loadState()` when `move_to_room` fires; relies on Stage 5 response instead.
+
+## Completed Systems
+
+- **Item mechanics** — `pick_up`, `drop`, `equip`, `unequip`, `use_item` (heal/unlock/lockpick), `throw_item`, hidden item reveal checks, lock/key, open_space POI — implemented in `lib/v2/game-controller.ts`
+- **Map rendering** — SVG 3×3 grid, LoS, peek_visibility, door gaps, adjacent room preview for unvisited rooms — implemented in `app/api/v2/map/route.ts`
 
 ---
 
@@ -111,10 +116,11 @@ npm run db:seed    # Re-seed (templates stable, instances cleared)
 | [V2_DATA_MODEL.md](./V2_DATA_MODEL.md) | MessageLog anatomy, seed, key implementation decisions |
 | [V2_UI_FLOWS.md](./V2_UI_FLOWS.md) | Setup flow, play page, auth pattern |
 | [V2_MAP.md](./V2_MAP.md) | Room/POI layout, `uiLayoutAnchors`, tactical sidebar state |
-| [V2_INVENTORY.md](./V2_INVENTORY.md) | Inventory runtime state, item storage locations [partial] |
+| [V2_INVENTORY.md](./V2_INVENTORY.md) | Inventory runtime state, item storage locations |
 | [V2_CHARACTER.md](./V2_CHARACTER.md) | Stats, skills, character sheet tab [planned] |
-| [ITEM_MECHANICS_PLAN.md](./ITEM_MECHANICS_PLAN.md) | Full item schema, lock/key, hidden items, throw mechanics |
-| [MAP_RENDERING_PLAN.md](./MAP_RENDERING_PLAN.md) | Visual map design, 3×3 grid, mobile bottom sheet |
+| [ITEM_MECHANICS_PLAN.md](./ITEM_MECHANICS_PLAN.md) | Item schema, lock/key, hidden items, throw mechanics — **implemented** |
+| [MAP_RENDERING_PLAN.md](./MAP_RENDERING_PLAN.md) | Visual map design, 3×3 grid, mobile bottom sheet — **implemented** |
 | [STORY-FLOW.md](./STORY-FLOW.md) | End-to-end user journey from login to game completion |
 | [THE-SUNKEN-CELLAR.md](./THE-SUNKEN-CELLAR.md) | Dungeon content — rooms, POIs, story beats |
 | [V2-STORY-TEST-GUIDE.md](./V2-STORY-TEST-GUIDE.md) | Manual test guide for story mechanics |
+| [COMBAT_PLAN.md](./COMBAT_PLAN.md) | Combat system design — detection, stealth, initiative, open questions |

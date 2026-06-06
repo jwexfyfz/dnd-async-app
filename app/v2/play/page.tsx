@@ -623,7 +623,15 @@ function PlayContent() {
         const entries: HistoryEntry[] = logs ?? [];
         console.log('[history] initial load — count:', entries.length, 'hasMore:', more,
           'oldest:', entries[0]?.createdAt, 'newest:', entries[entries.length - 1]?.createdAt);
-        setHistory(entries);
+        setHistory(prev => {
+          // Merge rather than replace: if sendAction already ran and populated state,
+          // preserve those newer messages instead of wiping them with a stale load.
+          const nonOptimistic = prev.filter(e => !e.id.startsWith('optimistic-'));
+          if (nonOptimistic.length === 0) return entries;
+          const existingIds = new Set(nonOptimistic.map(e => e.id));
+          const olderEntries = entries.filter(e => !existingIds.has(e.id));
+          return olderEntries.length > 0 ? [...olderEntries, ...prev] : prev;
+        });
         setHasMore(more ?? false);
         setOldestCursor(entries.length > 0 ? entries[0].createdAt : null);
         if (state.roomName) setRoomName(state.roomName);

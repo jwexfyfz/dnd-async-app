@@ -154,6 +154,7 @@ export async function POST(req: NextRequest) {
       return { characterId, sessionId: session.id, roomInstanceId: roomInstance.id };
     });
 
+    let narrativeText = `You enter ${roomTemplate.name}. ${roomTemplate.baseDescription}`;
     try {
       const visiblePois = roomTemplate.poiTemplates.filter(t => {
         const props = t.defaultProperties as Record<string, unknown>;
@@ -179,19 +180,19 @@ ${poiList}`,
       });
 
       const textBlock = response.content.find((b): b is Anthropic.TextBlock => b.type === 'text');
-      const narrative = textBlock?.text ?? `You enter ${roomTemplate.name}. ${roomTemplate.baseDescription}`;
-
-      await prisma.messageLog.create({
-        data: {
-          roomInstanceId: result.roomInstanceId,
-          characterId,
-          isMechanicalEvent: false,
-          text: narrative,
-        },
-      });
+      if (textBlock?.text) narrativeText = textBlock.text;
     } catch (err) {
-      console.error('[sessions] opening narrative failed:', err instanceof Error ? err.message : err);
+      console.error('[sessions] opening narrative AI call failed — using fallback:', err instanceof Error ? err.message : err);
     }
+
+    await prisma.messageLog.create({
+      data: {
+        roomInstanceId: result.roomInstanceId,
+        characterId,
+        isMechanicalEvent: false,
+        text: narrativeText,
+      },
+    });
 
     return NextResponse.json(result, { status: 201 });
   } catch (error) {
