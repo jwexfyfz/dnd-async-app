@@ -2,6 +2,7 @@ export interface GameActionRequest {
   characterId: string;
   roomInstanceId: string;
   playerActionText: string;
+  action_hint?: string | null;
 }
 
 export type ActionType =
@@ -18,7 +19,14 @@ export type ActionType =
   | 'equip'
   | 'unequip'
   | 'use_item'
-  | 'throw_item';
+  | 'throw_item'
+  | 'attack'
+  | 'dodge'
+  | 'dash'
+  | 'disengage'
+  | 'hide'
+  | 'provoke'
+  | 'death_save';
 
 export interface ExtractedAction {
   action_type: ActionType;
@@ -97,10 +105,42 @@ export interface AdjacentRoomPreview {
   characters: EntityRef[];
 }
 
+export interface InitiativeEntry {
+  id: string;
+  type: 'character' | 'enemy';
+  name: string;
+  initiative: number;
+  hp: number;
+  maxHp: number;
+  ac: number;
+  surprised: boolean;
+  acted: boolean;
+  proximity: 'close' | 'far';
+  status_effects: string[];
+  priority_target?: string;
+  priority_target_until_round?: number;
+}
+
+export interface TurnUsage {
+  actionUsed: boolean;
+  bonusActionUsed: boolean;
+  movementUsed: boolean;
+  reactionUsed: boolean;
+}
+
+export interface CombatState {
+  round: number;
+  initiativeOrder: InitiativeEntry[];
+  activeActorId: string;
+  currentTurnUsage: TurnUsage;
+}
+
 export interface ViewStatePayload {
   roomInstanceId: string;
   currentNarrative: NarrativeLog[];
   activeState: string;
+  gameState: 'exploration' | 'combat';
+  combatState: CombatState | null;
   poiIndex: Record<string, string>;
   poiStates: Record<string, PoiState>;
   uiLayoutAnchors: UiLayoutAnchors;

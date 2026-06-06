@@ -70,6 +70,7 @@ model GameSession {
   id                String           @id @default(uuid())
   name              String
   gameState         String           @default("exploration")
+  combatState       Json?
   currentObjective  String?
   storyFlags        Json             @default("{}")
   dungeonTemplateId String?

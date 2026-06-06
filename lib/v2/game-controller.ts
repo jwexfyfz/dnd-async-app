@@ -1,7 +1,12 @@
 import { randomInt } from 'crypto';
 import Anthropic from '@anthropic-ai/sdk';
+import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { computeIsLockable, computeEffectivePeek } from '@/lib/v2/poi-utils';
+import { rollInitiative } from '@/lib/initiative';
+import { abilityModifier, rollD20Check, rollDice } from '@/lib/dice';
+import { computeAttackDamage } from '@/lib/mechanical-damage';
+import { rollStealthCheck } from '@/lib/stealth';
 import type {
   GameActionRequest,
   ExtractedAction,
@@ -11,6 +16,8 @@ import type {
   UiLayoutAnchors,
   AdjacentRoomPreview,
   ViewStatePayload,
+  CombatState,
+  InitiativeEntry,
 } from '@/types/v2-game';
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -84,6 +91,13 @@ interface PoiContext {
   isOpenSpace: boolean;
   visibility: 'always' | 'proximity_only';
   peekVisibility: 'none' | 'obvious_only' | 'full';
+  // Combat awareness (populated from currentProperties / defaultProperties)
+  _currentAwareness?: string;
+  _hostileTo?: string[];
+  _recognitionException?: string;
+  _combatStats?: PoiCombatStats;
+  _aiBehavior?: AiBehavior;
+  _defaultProps?: Record<string, unknown>;
 }
 
 // ─── Grid slot helpers ───────────────────────────────────────────────────────
@@ -384,6 +398,13 @@ ACTION TYPES:
 - "use_item"         — Player uses an item (drink a potion, use a key on a lock, pick a lock with Thieves' Tools). Set item_id. For unlocking or lockpicking a POI, also set target_poi_instance_id.
 - "throw_item"       — Player throws an item. Set item_id. Optionally set target_poi_instance_id for landing location.
 - "narrative_only"   — Purely conversational or idle (talking to self, waiting in place). Do NOT use this for any movement, exploration, or interaction — even vague ones.
+- "attack"           — Player intends to strike an NPC or enemy. Set target_poi_instance_id to the enemy's POI instance ID if identifiable.
+- "dodge"            — Player takes the Dodge action in combat. No target needed.
+- "dash"             — Player takes the Dash action in combat. No target needed.
+- "disengage"        — Player takes the Disengage action to avoid opportunity attacks.
+- "hide"             — Player attempts to hide. No target needed.
+- "provoke"          — Player attempts to taunt or intimidate an enemy. Set target_poi_instance_id to the enemy's POI instance ID if identifiable.
+- "death_save"       — Player at 0 HP makes a death saving throw. No target needed.
 
 RULES:
 - You MUST call the extract_game_intent tool. No exceptions.
@@ -454,7 +475,7 @@ const roomInstanceQuery = (roomInstanceId: string) =>
     where: { id: roomInstanceId },
     include: {
       template: true,
-      session: { select: { id: true, gameState: true, storyFlags: true } },
+      session: { select: { id: true, gameState: true, storyFlags: true, combatState: true } },
       poiInstances: { include: { template: true } },
       participants: { include: { character: { select: { id: true, name: true } } } },
     },
@@ -480,6 +501,8 @@ async function lookupDatabaseContext(characterId: string, roomInstanceId: string
         baseIntelligence: true,
         baseWisdom: true,
         baseCharisma: true,
+        isHiding: true,
+        stealthRoll: true,
       },
     }),
     roomInstanceQuery(roomInstanceId),
@@ -513,7 +536,11 @@ async function parseIntentWithHaiku(
   playerActionText: string,
   currentProximityPoiId: string | null,
   adjacentRoom: AdjacentRoomContext | null,
+  actionHint?: string | null,
 ): Promise<ExtractedAction[]> {
+  const userContent = actionHint
+    ? `[ACTION HINT: ${actionHint}]\n${playerActionText}`
+    : playerActionText;
   const response = await anthropic.messages.create({
     model: 'claude-haiku-4-5-20251001',
     max_tokens: 1024,
@@ -547,6 +574,13 @@ async function parseIntentWithHaiku(
                       'unequip',
                       'use_item',
                       'throw_item',
+                      'attack',
+                      'dodge',
+                      'dash',
+                      'disengage',
+                      'hide',
+                      'provoke',
+                      'death_save',
                     ],
                     description: 'The category of the action.',
                   },
@@ -594,7 +628,7 @@ async function parseIntentWithHaiku(
       },
     ],
     tool_choice: { type: 'tool', name: 'extract_game_intent' },
-    messages: [{ role: 'user', content: playerActionText }],
+    messages: [{ role: 'user', content: userContent }],
   });
 
   const toolUseBlock = response.content.find(
@@ -641,6 +675,337 @@ async function parseIntentWithHaiku(
   return actions;
 }
 
+// ─── Combat: Enter / Exit ─────────────────────────────────────────────────────
+
+interface PoiCombatStats {
+  dex_score?: number;
+  attack_bonus?: number;
+  damage?: string;
+  max_hp?: number;
+  ac?: number;
+}
+
+interface AiBehavior {
+  priority?: 'aggressive' | 'defensive' | 'cowardly';
+  flee_threshold?: number;
+}
+
+export function detectCombatTrigger(
+  extractedAction: ExtractedAction,
+  poiContexts: PoiContext[],
+  sessionGameState: string,
+  storyFlags: Record<string, unknown>,
+): boolean {
+  if (extractedAction.action_type === 'attack') return true;
+  if (sessionGameState !== 'exploration') return false;
+  for (const poi of poiContexts) {
+    const dp = (poi as unknown as { _defaultProps?: Record<string, unknown> })._defaultProps;
+    const awareness = poi._currentAwareness;
+    if (!awareness) continue;
+    if (awareness !== 'alert') continue;
+    const hostileTo = poi._hostileTo as string[] | undefined;
+    if (!hostileTo || hostileTo.length === 0) continue;
+    const recognitionException = poi._recognitionException as string | undefined;
+    if (recognitionException && storyFlags[recognitionException]) continue;
+    return true;
+  }
+  return false;
+}
+
+interface CombatPoiContext extends PoiContext {
+  _currentAwareness?: string;
+  _hostileTo?: string[];
+  _recognitionException?: string;
+  _combatStats?: PoiCombatStats;
+  _aiBehavior?: AiBehavior;
+  _currentHp?: number;
+  _defaultProps?: Record<string, unknown>;
+}
+
+export async function enterCombat(
+  characterId: string,
+  character: { id: string; name: string; baseDexterity: number; currentHp: number; maxHp: number },
+  roomInstance: { id: string; poiInstances: Array<{ id: string; poiTemplateId: string; currentProperties: unknown; template: { defaultProperties: unknown; name: string } }> },
+  sessionId: string,
+): Promise<CombatState> {
+  // Collect alert enemies
+  const alertEnemies: Array<{ poiInstanceId: string; name: string; combatStats: PoiCombatStats; currentHp: number; ac: number }> = [];
+
+  for (const poi of roomInstance.poiInstances) {
+    const dp = poi.template.defaultProperties as Record<string, unknown>;
+    const cp = poi.currentProperties as Record<string, unknown>;
+    const awareness = cp.awareness_state as string | undefined;
+    if (awareness !== 'alert') continue;
+    const combatStats = (dp.combat_stats ?? {}) as PoiCombatStats;
+    const maxHp = combatStats.max_hp ?? 10;
+    const currentHp = typeof cp.current_hp === 'number' ? cp.current_hp : maxHp;
+    const ac = combatStats.ac ?? 10;
+    alertEnemies.push({ poiInstanceId: poi.id, name: poi.template.name, combatStats, currentHp, ac });
+  }
+
+  // Build actors for initiative roll
+  const actors = [
+    { actorId: characterId, actorType: 'CHARACTER' as const, dexterity: character.baseDexterity },
+    ...alertEnemies.map(e => ({
+      actorId: e.poiInstanceId,
+      actorType: 'ENEMY' as const,
+      dexterity: e.combatStats.dex_score ?? 10,
+    })),
+  ];
+
+  const slots = rollInitiative(actors);
+  const enemyCount = alertEnemies.length;
+
+  console.log(`[stage3:combat] entering combat — room=${roomInstance.id} enemies=${enemyCount}`);
+  console.log(
+    `[stage3:initiative] order=[${slots.map(s => {
+      const name = s.actorId === characterId ? character.name : (alertEnemies.find(e => e.poiInstanceId === s.actorId)?.name ?? s.actorId.slice(0, 8));
+      return `${name}:${s.initiative}`;
+    }).join(' → ')}]`,
+  );
+
+  // Check for unaware enemies in the room (surprised)
+  const unawarePoiIds = new Set(
+    roomInstance.poiInstances
+      .filter(pi => {
+        const cp = pi.currentProperties as Record<string, unknown>;
+        return cp.awareness_state === 'unaware';
+      })
+      .map(pi => pi.id),
+  );
+
+  // Build initiative order
+  const initiativeOrder: InitiativeEntry[] = slots.map(slot => {
+    if (slot.actorId === characterId) {
+      return {
+        id: characterId,
+        type: 'character',
+        name: character.name,
+        initiative: slot.initiative,
+        hp: character.currentHp,
+        maxHp: character.maxHp,
+        ac: 10 + abilityModifier(character.baseDexterity),
+        surprised: false,
+        acted: false,
+        proximity: 'close',
+        status_effects: [],
+      };
+    }
+    const enemy = alertEnemies.find(e => e.poiInstanceId === slot.actorId)!;
+    return {
+      id: slot.actorId,
+      type: 'enemy',
+      name: enemy.name,
+      initiative: slot.initiative,
+      hp: enemy.currentHp,
+      maxHp: enemy.combatStats.max_hp ?? 10,
+      ac: enemy.ac,
+      surprised: unawarePoiIds.has(slot.actorId),
+      acted: false,
+      proximity: 'close',
+      status_effects: [],
+    };
+  });
+
+  const combatState: CombatState = {
+    round: 1,
+    initiativeOrder,
+    activeActorId: initiativeOrder[0].id,
+    currentTurnUsage: { actionUsed: false, bonusActionUsed: false, movementUsed: false, reactionUsed: false },
+  };
+
+  await prisma.gameSession.update({
+    where: { id: sessionId },
+    data: { gameState: 'combat', combatState: combatState as object },
+  });
+
+  console.log(
+    `[stage3:initiative] player=${slots.find(s => s.actorId === characterId)?.initiative} enemies=${alertEnemies.map(e => `${e.name}:${slots.find(s => s.actorId === e.poiInstanceId)?.initiative}`).join(', ')}`,
+  );
+  console.log(`[stage3:initiative] order=[${initiativeOrder.map(e => e.name).join(' → ')}]`);
+
+  return combatState;
+}
+
+export function exitCombat(session: { gameState: string; combatState: unknown }): void {
+  session.gameState = 'exploration';
+  session.combatState = null;
+  console.log('[stage3:combat] combat ended — all enemies dead');
+}
+
+// ─── Combat: Turn Resolution (Phase 3) ───────────────────────────────────────
+
+export function advanceTurn(cs: CombatState): CombatState {
+  const order = cs.initiativeOrder;
+  const currentIdx = order.findIndex(e => e.id === cs.activeActorId);
+  const updated = order.map((e, i) => i === currentIdx ? { ...e, acted: true } : e);
+
+  const nextIdx = updated.findIndex((e, i) => i > currentIdx && !e.acted);
+  if (nextIdx !== -1) {
+    return { ...cs, initiativeOrder: updated, activeActorId: updated[nextIdx].id, currentTurnUsage: { actionUsed: false, bonusActionUsed: false, movementUsed: false, reactionUsed: false } };
+  }
+  // New round
+  const reset = updated.map(e => ({ ...e, acted: false }));
+  return { ...cs, round: cs.round + 1, initiativeOrder: reset, activeActorId: reset[0].id, currentTurnUsage: { actionUsed: false, bonusActionUsed: false, movementUsed: false, reactionUsed: false } };
+}
+
+export function checkCombatEnd(cs: CombatState): boolean {
+  return cs.initiativeOrder.every(e => e.type === 'character' || e.hp <= 0);
+}
+
+interface CombatActionResult {
+  facts: string[];
+  updatedCombatState: CombatState;
+  combatEnded: boolean;
+  deadEnemyPoiIds: string[];
+}
+
+export function resolveCombatAction(
+  action: ExtractedAction,
+  cs: CombatState,
+  character: { id: string; name: string; characterClass: string; level: number; baseDexterity: number; baseStrength: number; baseCharisma: number; baseWisdom: number; isHiding?: boolean },
+  equippedWeapon: { damageDice: string; weaponType?: string } | null,
+): CombatActionResult {
+  const facts: string[] = [];
+  let order = [...cs.initiativeOrder];
+  const playerEntry = order.find(e => e.id === character.id)!;
+  let combatEnded = false;
+  const deadEnemyPoiIds: string[] = [];
+
+  if (action.action_type === 'attack') {
+    const targetId = action.target_poi_instance_id;
+    const targetIdx = targetId ? order.findIndex(e => e.id === targetId) : order.findIndex(e => e.type === 'enemy' && e.hp > 0);
+    if (targetIdx === -1) {
+      facts.push('No valid target found for attack.');
+    } else {
+      const target = order[targetIdx];
+      const strMod = abilityModifier(character.baseStrength);
+      const dexMod = abilityModifier(character.baseDexterity);
+      const isFinesse = equippedWeapon?.weaponType === 'finesse';
+      const statMod = isFinesse ? Math.max(strMod, dexMod) : strMod;
+      const profBonus = character.level >= 5 ? 3 : 2;
+      const attackBonus = statMod + profBonus;
+
+      // Advantage/disadvantage
+      const isHidden = character.isHiding ?? false;
+      const targetSurprised = target.surprised;
+      const hasAdvantage = isHidden || targetSurprised;
+      const hasDisadvantage = !isHidden && equippedWeapon?.weaponType === 'ranged' && order.some(e => e.type === 'enemy' && e.proximity === 'close' && e.hp > 0);
+
+      let roll1 = rollD20Check(attackBonus, target.ac, 'AC');
+      let finalRoll = roll1;
+      if (hasAdvantage && !hasDisadvantage) {
+        const roll2 = rollD20Check(attackBonus, target.ac, 'AC');
+        finalRoll = roll2.roll > roll1.roll ? roll2 : roll1;
+      } else if (hasDisadvantage && !hasAdvantage) {
+        const roll2 = rollD20Check(attackBonus, target.ac, 'AC');
+        finalRoll = roll2.roll < roll1.roll ? roll2 : roll1;
+      }
+
+      // Natural 1 always misses
+      if (finalRoll.fumble) {
+        facts.push(`${character.name} attacked ${target.name} — rolled 1 (fumble), miss.`);
+      } else if (finalRoll.success || finalRoll.critical) {
+        const damageDice = equippedWeapon?.damageDice ?? '1d4';
+        const damage = computeAttackDamage(damageDice, statMod, finalRoll.critical);
+
+        // Sneak attack: Rogue with advantage OR ally adjacent
+        let sneakDamage = 0;
+        let sneakDiceCount = 0;
+        const isRogue = character.characterClass === 'Rogue';
+        if (isRogue && (hasAdvantage || !hasDisadvantage)) {
+          sneakDiceCount = Math.ceil(character.level / 2);
+          sneakDamage = rollDice(sneakDiceCount, 6).total;
+        }
+
+        const totalDamage = damage + sneakDamage;
+        const newHp = Math.max(0, target.hp - totalDamage);
+        order[targetIdx] = { ...target, hp: newHp };
+
+        console.log(`[stage3:attack] target=${target.name} roll=${finalRoll.roll} vs AC=${target.ac} hit=${finalRoll.success} damage=${totalDamage} crit=${finalRoll.critical}`);
+        facts.push(`${character.name} attacked ${target.name} — rolled ${finalRoll.roll}+${attackBonus}=${finalRoll.total} vs AC ${target.ac}, ${finalRoll.critical ? 'CRITICAL HIT' : 'hit'}, dealt ${totalDamage} damage${sneakDamage ? ` (incl. ${sneakDiceCount}d6 sneak attack)` : ''}.`);
+
+        if (newHp <= 0) {
+          console.log(`[stage3:enemy-dead] ${target.name} dropped to 0 HP — removed from initiative`);
+          facts.push(`${target.name} dropped to 0 HP and is dead.`);
+          deadEnemyPoiIds.push(target.id);
+          order = order.filter(e => e.id !== target.id);
+        }
+      } else {
+        console.log(`[stage3:attack] target=${target.name} roll=${finalRoll.roll} vs AC=${target.ac} hit=false damage=0 crit=false`);
+        facts.push(`${character.name} attacked ${target.name} — rolled ${finalRoll.roll}+${attackBonus}=${finalRoll.total} vs AC ${target.ac}, miss.`);
+      }
+    }
+
+  } else if (action.action_type === 'dodge') {
+    const playerIdx = order.findIndex(e => e.id === character.id);
+    order[playerIdx] = { ...playerEntry, status_effects: [...playerEntry.status_effects.filter(s => s !== 'dodging'), 'dodging'] };
+    facts.push(`${character.name} takes the Dodge action — attackers have disadvantage until their next turn.`);
+
+  } else if (action.action_type === 'dash') {
+    facts.push(`${character.name} Dashes — movement doubled this turn.`);
+
+  } else if (action.action_type === 'disengage') {
+    const playerIdx = order.findIndex(e => e.id === character.id);
+    order[playerIdx] = { ...playerEntry, status_effects: [...playerEntry.status_effects.filter(s => s !== 'disengaged'), 'disengaged'] };
+    facts.push(`${character.name} Disengages — no opportunity attacks this turn.`);
+
+  } else if (action.action_type === 'hide') {
+    const dexMod = abilityModifier(character.baseDexterity);
+    const stealthRoll = rollStealthCheck(dexMod);
+    const highestPerception = Math.max(...order.filter(e => e.type === 'enemy').map(() => 10));
+    if (stealthRoll >= highestPerception) {
+      facts.push(`${character.name} hides — Stealth ${stealthRoll} beats passive Perception ${highestPerception}. Now hidden.`);
+    } else {
+      facts.push(`${character.name} attempts to hide — Stealth ${stealthRoll} vs passive Perception ${highestPerception}, fails.`);
+    }
+
+  } else if (action.action_type === 'provoke') {
+    const targetId = action.target_poi_instance_id;
+    const targetIdx = targetId ? order.findIndex(e => e.id === targetId) : order.findIndex(e => e.type === 'enemy' && e.hp > 0);
+    if (targetIdx !== -1) {
+      const target = order[targetIdx];
+      const chaMod = abilityModifier(character.baseCharisma);
+      const intimidDC = 12;
+      const check = rollD20Check(chaMod, intimidDC, 'DC');
+      if (check.success) {
+        order[targetIdx] = { ...target, priority_target: character.id, priority_target_until_round: cs.round + 2 };
+        facts.push(`${character.name} provokes ${target.name} — Intimidation ${check.total} vs DC ${intimidDC}, success. ${target.name} focuses on ${character.name} for 2 rounds.`);
+      } else {
+        order[targetIdx] = { ...target, status_effects: [...target.status_effects, 'advantage_next_attack'] };
+        facts.push(`${character.name} provokes ${target.name} — Intimidation ${check.total} vs DC ${intimidDC}, failure. ${target.name} gains advantage on next attack.`);
+      }
+    }
+
+  } else if (action.action_type === 'change_proximity') {
+    const targetId = action.target_poi_instance_id;
+    const targetIdx = targetId ? order.findIndex(e => e.id === targetId) : -1;
+    if (targetIdx !== -1) {
+      const target = order[targetIdx];
+      const newProx = target.proximity === 'close' ? 'far' : 'close';
+      order[targetIdx] = { ...target, proximity: newProx };
+      facts.push(`${target.name} proximity changed to ${newProx}.`);
+    }
+
+  } else if (action.action_type === 'death_save') {
+    const deathRoll = rollD20Check(0, 10, 'DC');
+    if (deathRoll.success) {
+      facts.push(`${character.name} death save — rolled ${deathRoll.roll}, success.`);
+    } else {
+      facts.push(`${character.name} death save — rolled ${deathRoll.roll}, failure.`);
+    }
+  }
+
+  let updatedCs = { ...cs, initiativeOrder: order };
+  combatEnded = checkCombatEnd(updatedCs);
+  if (!combatEnded) {
+    updatedCs = advanceTurn(updatedCs);
+    console.log(`[stage3:turn-advance] ${cs.activeActorId} → ${updatedCs.activeActorId}`);
+  }
+
+  return { facts, updatedCombatState: updatedCs, combatEnded, deadEnemyPoiIds };
+}
+
 // ─── Stage 3: Deterministic State Mutation ───────────────────────────────────
 
 interface AppliedAction {
@@ -658,13 +1023,17 @@ interface MutationResult {
 interface CharacterContext {
   id: string;
   name: string;
+  characterClass: string;
   level: number;
   skillsModifiers: unknown;
   skillProficiencies: string[];
   baseWisdom: number;
   baseDexterity: number;
+  baseStrength: number;
+  baseCharisma: number;
   currentHp: number;
   maxHp: number;
+  isHiding: boolean;
 }
 
 function requireValidPoi(id: string | null, validPoiMap: Map<string, string>): string {
@@ -2354,7 +2723,7 @@ async function buildViewState(
   characterProximityTargetId: string | null,
   fallbackNarrative?: string,
 ): Promise<ViewStatePayload> {
-  const [recentNarrative, participants, charRow, poiInstances] = await Promise.all([
+  const [recentNarrative, participants, charRow, poiInstances, sessionRow] = await Promise.all([
     prisma.messageLog.findMany({
       where: { roomInstanceId, isMechanicalEvent: false },
       orderBy: { createdAt: 'desc' },
@@ -2372,6 +2741,10 @@ async function buildViewState(
     prisma.poiInstance.findMany({
       where: { roomInstanceId },
       include: { template: true },
+    }),
+    prisma.gameSession.findFirst({
+      where: { roomInstances: { some: { id: roomInstanceId } } },
+      select: { combatState: true, gameState: true },
     }),
   ]);
 
@@ -2502,10 +2875,17 @@ async function buildViewState(
     });
   }
 
+  const resolvedGameState = (sessionRow?.gameState ?? gameState) as 'exploration' | 'combat';
+  const resolvedCombatState = sessionRow?.combatState
+    ? (sessionRow.combatState as unknown as import('@/types/v2-game').CombatState)
+    : null;
+
   return {
     roomInstanceId,
     currentNarrative: orderedNarrative,
-    activeState: gameState,
+    activeState: resolvedGameState,
+    gameState: resolvedGameState,
+    combatState: resolvedCombatState,
     poiIndex,
     poiStates,
     uiLayoutAnchors,
@@ -2578,7 +2958,7 @@ async function checkAndAdvanceAct(sessionId: string): Promise<void> {
 // ─── Main Handler ─────────────────────────────────────────────────────────────
 
 export async function handleGameAction(body: GameActionRequest): Promise<ViewStatePayload> {
-  const { characterId, roomInstanceId, playerActionText } = body;
+  const { characterId, roomInstanceId, playerActionText, action_hint } = body;
 
   if (!characterId || !roomInstanceId || !playerActionText) {
     throw new Error('Missing required fields: characterId, roomInstanceId, playerActionText');
@@ -2610,6 +2990,13 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
         isOpenSpace: (defaultProps.poi_type as string) === 'open_space',
         visibility: resolveEffectiveVisibility(defaultProps, currentProps),
         peekVisibility: ((defaultProps.peek_visibility as string) ?? 'none') as 'none' | 'obvious_only' | 'full',
+        // Combat awareness fields (underscore-prefixed to avoid conflict with existing PoiContext)
+        _currentAwareness: currentProps.awareness_state as string | undefined,
+        _hostileTo: Array.isArray(currentProps.hostile_to) ? (currentProps.hostile_to as string[]) : undefined,
+        _recognitionException: (defaultProps.recognition_exception as string) ?? undefined,
+        _combatStats: (defaultProps.combat_stats ?? {}) as PoiCombatStats,
+        _aiBehavior: (defaultProps.ai_behavior ?? {}) as AiBehavior,
+        _defaultProps: defaultProps,
       };
     });
 
@@ -2845,6 +3232,7 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
       playerActionText,
       currentProximityPoiId,
       adjacentRoom,
+      action_hint,
     );
 
     // Validate item IDs from parser against known items (including adjacent room items)
@@ -2863,17 +3251,66 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
       }
     }
 
+    // Combat turn gate: if in combat and it's not the player's turn, reject
+    const sessionForGate = roomInstance.session;
+    if (sessionForGate.gameState === 'combat' && sessionForGate.combatState) {
+      const cs = sessionForGate.combatState as unknown as CombatState;
+      console.log(`[stage3:turn] actor=${cs.activeActorId} player=${characterId} match=${cs.activeActorId === characterId}`);
+      if (cs.activeActorId !== characterId) {
+        throw Object.assign(new Error("It's not your turn"), { status: 409 });
+      }
+    }
+
+    // Combat action resolution (Phase 3): resolve in-combat actions before normal Stage 3
+    const inCombat = sessionForGate.gameState === 'combat' && !!sessionForGate.combatState;
+    const combatActionTypes = new Set(['attack', 'dodge', 'dash', 'disengage', 'hide', 'provoke', 'change_proximity', 'death_save']);
+    const combatFacts: string[] = [];
+    if (inCombat && parsedActions.length > 0 && combatActionTypes.has(parsedActions[0].action_type)) {
+      const cs = sessionForGate.combatState as unknown as CombatState;
+      const mainHand = characterInventory.equipped.main_hand;
+      const equippedWeapon = mainHand ? { damageDice: '1d6', weaponType: 'melee' } : null;
+      const combatResult = resolveCombatAction(
+        parsedActions[0],
+        cs,
+        { id: character.id, name: character.name, characterClass: character.characterClass, level: character.level, baseDexterity: character.baseDexterity, baseStrength: character.baseStrength, baseCharisma: character.baseCharisma, baseWisdom: character.baseWisdom, isHiding: character.isHiding },
+        equippedWeapon,
+      );
+      combatFacts.push(...combatResult.facts);
+
+      // Mark dead enemies in DB
+      for (const deadId of combatResult.deadEnemyPoiIds) {
+        const existingPoi = await prisma.poiInstance.findUnique({ where: { id: deadId }, select: { currentProperties: true } });
+        if (existingPoi) {
+          await prisma.poiInstance.update({
+            where: { id: deadId },
+            data: { currentProperties: { ...(existingPoi.currentProperties as object), awareness_state: 'dead', current_hp: 0 } },
+          });
+        }
+      }
+
+      if (combatResult.combatEnded) {
+        await prisma.gameSession.update({ where: { id: roomInstance.session.id }, data: { gameState: 'exploration', combatState: Prisma.JsonNull } });
+        console.log('[stage3:combat] combat ended — all enemies dead');
+      } else {
+        await prisma.gameSession.update({ where: { id: roomInstance.session.id }, data: { combatState: combatResult.updatedCombatState as object } });
+      }
+    }
+
     // Stage 3
     const characterCtx: CharacterContext = {
       id: characterId,
       name: character.name,
+      characterClass: character.characterClass,
       level: character.level,
       skillsModifiers: character.skillsModifiers,
       skillProficiencies: character.skillProficiencies,
       baseWisdom: character.baseWisdom,
       baseDexterity: character.baseDexterity,
+      baseStrength: character.baseStrength,
+      baseCharisma: character.baseCharisma,
       currentHp: character.currentHp,
       maxHp: character.maxHp,
+      isHiding: character.isHiding,
     };
 
     const { appliedActions, newRoomInstanceId } = await mutateGameState(
@@ -2888,6 +3325,31 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
 
     // Check whether any story flags set this turn complete the current act
     await checkAndAdvanceAct(roomInstance.session.id);
+
+    // Combat entry: check if any parsed action (or alert enemy) triggers combat
+    const currentSessionGameState = roomInstance.session.gameState;
+    if (currentSessionGameState !== 'combat' && parsedActions.length > 0) {
+      const firstAction = parsedActions[0];
+      const storyFlags = (roomInstance.session.storyFlags as Record<string, unknown>) ?? {};
+      const combatTriggered = detectCombatTrigger(
+        firstAction,
+        poiContexts as CombatPoiContext[],
+        currentSessionGameState,
+        storyFlags,
+      );
+      if (combatTriggered) {
+        const activeRoomId = newRoomInstanceId ?? roomInstanceId;
+        const activeRoomInstance = newRoomInstanceId
+          ? await prisma.roomInstance.findUniqueOrThrow({ where: { id: activeRoomId }, include: { poiInstances: { include: { template: true } } } })
+          : roomInstance;
+        await enterCombat(
+          characterId,
+          { id: character.id, name: character.name, baseDexterity: character.baseDexterity, currentHp: character.currentHp, maxHp: character.maxHp },
+          activeRoomInstance,
+          roomInstance.session.id,
+        );
+      }
+    }
 
     // Resolve active room context (may change after move_to_room)
     let activeRoomInstanceId = roomInstanceId;
