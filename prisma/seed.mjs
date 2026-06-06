@@ -306,9 +306,44 @@ async function main() {
     },
   });
 
+  // Level 3 Fighter: proficiency bonus +2
+  // STR 16 (+3), DEX 13 (+1), CON 14 (+2), INT 10 (+0), WIS 12 (+1), CHA 8 (-1)
+  const aldricSkillsModifiers = {
+    // STR
+    "Athletics":        5,  // +3 + prof +2
+    // DEX
+    "Acrobatics":       1,  // +1
+    "Sleight of Hand":  1,  // +1
+    "Stealth":          1,  // +1
+    // INT
+    "Arcana":           0,
+    "History":          0,
+    "Investigation":    0,
+    "Nature":           0,
+    "Religion":         0,
+    // WIS
+    "Animal Handling":  1,
+    "Insight":          1,
+    "Medicine":         1,
+    "Perception":       1,
+    "Survival":         1,
+    // CHA
+    "Deception":       -1,
+    "Intimidation":     1,  // -1 + prof +2
+    "Performance":     -1,
+    "Persuasion":      -1,
+  };
+  const aldricFields = {
+    level: 3,
+    xp: 900,
+    maxHp: 26,
+    currentHp: 26,
+    skillProficiencies: ["Athletics", "Intimidation"],
+    skillsModifiers: aldricSkillsModifiers,
+  };
   const testChar = await prisma.character.upsert({
     where: { id: "00000000-0000-0000-0000-000000000002" },
-    update: {},
+    update: aldricFields,
     create: {
       id: "00000000-0000-0000-0000-000000000002",
       name: "Aldric",
@@ -320,11 +355,6 @@ async function main() {
       baseIntelligence: 10,
       baseWisdom: 12,
       baseCharisma: 8,
-      xp: 0,
-      level: 1,
-      maxHp: 12,
-      currentHp: 12,
-      skillProficiencies: ["Athletics", "Intimidation"],
       mainHandId: shortSword.id,
       armorId: leatherArmor.id,
       remainingActions: 1,
@@ -334,6 +364,7 @@ async function main() {
       remainingObjectInteractions: 1,
       posX: 1,
       posY: 1,
+      ...aldricFields,
     },
   });
 

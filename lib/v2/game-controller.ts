@@ -808,6 +808,7 @@ export async function enterCombat(
       proximity: 'close',
       status_effects: [],
       resistances: enemy.combatStats.resistances ?? [],
+      passive_perception: enemy.combatStats.passive_perception ?? (10 + abilityModifier(enemy.combatStats.wis_score ?? 10)),
     };
   });
 
@@ -992,6 +993,29 @@ export function resolveEnemyTurn(
   return { facts, hpDamage, updatedEntry };
 }
 
+// ─── Combat: Body Discovery (Phase 13) ───────────────────────────────────────
+
+export type BodyObscurement = 'visible' | 'partial' | 'full';
+
+export interface BodyDiscoveryResult {
+  roll: number;
+  dc: number;
+  escalate: boolean;
+}
+
+export function resolveBodyDiscovery(
+  wisScore: number,
+  passivePerception: number | undefined,
+  obscurement: BodyObscurement,
+  rollFn?: () => number,
+): BodyDiscoveryResult {
+  const dc = obscurement === 'full' ? 16 : obscurement === 'partial' ? 12 : 8;
+  const wisMod = abilityModifier(wisScore);
+  const rawRoll = rollFn ? rollFn() : randomInt(1, 21);
+  const roll = rawRoll + wisMod;
+  return { roll, dc, escalate: roll >= dc };
+}
+
 // ─── Combat: Turn Resolution (Phase 3) ───────────────────────────────────────
 
 export function advanceTurn(cs: CombatState): CombatState {
@@ -1018,6 +1042,7 @@ interface CombatActionResult {
   combatEnded: boolean;
   deadEnemyPoiIds: string[];
   silentKillIds: Set<string>;
+  playerGainedHidden: boolean | null;
 }
 
 export function resolveCombatAction(
@@ -1032,6 +1057,7 @@ export function resolveCombatAction(
   let combatEnded = false;
   const deadEnemyPoiIds: string[] = [];
   const silentKillIds = new Set<string>();
+  let playerGainedHidden: boolean | null = null;
 
   if (action.action_type === 'attack') {
     const targetId = action.target_poi_instance_id;
@@ -1125,11 +1151,16 @@ export function resolveCombatAction(
   } else if (action.action_type === 'hide') {
     const dexMod = abilityModifier(character.baseDexterity);
     const stealthRoll = rollStealthCheck(dexMod);
-    const highestPerception = Math.max(...order.filter(e => e.type === 'enemy').map(() => 10));
+    const enemies = order.filter(e => e.type === 'enemy' && e.hp > 0);
+    const highestPerception = enemies.length > 0
+      ? Math.max(...enemies.map(e => e.passive_perception ?? 10))
+      : 10;
     if (stealthRoll >= highestPerception) {
       facts.push(`${character.name} hides — Stealth ${stealthRoll} beats passive Perception ${highestPerception}. Now hidden.`);
+      playerGainedHidden = true;
     } else {
       facts.push(`${character.name} attempts to hide — Stealth ${stealthRoll} vs passive Perception ${highestPerception}, fails.`);
+      playerGainedHidden = false;
     }
 
   } else if (action.action_type === 'provoke') {
@@ -1150,13 +1181,21 @@ export function resolveCombatAction(
     }
 
   } else if (action.action_type === 'change_proximity') {
-    const targetId = action.target_poi_instance_id;
-    const targetIdx = targetId ? order.findIndex(e => e.id === targetId) : -1;
-    if (targetIdx !== -1) {
-      const target = order[targetIdx];
-      const newProx = target.proximity === 'close' ? 'far' : 'close';
-      order[targetIdx] = { ...target, proximity: newProx };
-      facts.push(`${target.name} proximity changed to ${newProx}.`);
+    const playerIdx = order.findIndex(e => e.id === character.id);
+    const playerIsProne = playerIdx !== -1 && order[playerIdx].status_effects.includes('prone');
+    if (playerIsProne) {
+      // Standing up costs movement — remove prone, no proximity change
+      order[playerIdx] = { ...order[playerIdx], status_effects: order[playerIdx].status_effects.filter(s => s !== 'prone') };
+      facts.push(`${character.name} stands up, no longer prone.`);
+    } else {
+      const targetId = action.target_poi_instance_id;
+      const targetIdx = targetId ? order.findIndex(e => e.id === targetId) : -1;
+      if (targetIdx !== -1) {
+        const target = order[targetIdx];
+        const newProx = target.proximity === 'close' ? 'far' : 'close';
+        order[targetIdx] = { ...target, proximity: newProx };
+        facts.push(`${target.name} proximity changed to ${newProx}.`);
+      }
     }
 
   } else if (action.action_type === 'death_save') {
@@ -1175,7 +1214,7 @@ export function resolveCombatAction(
     console.log(`[stage3:turn-advance] ${cs.activeActorId} → ${updatedCs.activeActorId}`);
   }
 
-  return { facts, updatedCombatState: updatedCs, combatEnded, deadEnemyPoiIds, silentKillIds };
+  return { facts, updatedCombatState: updatedCs, combatEnded, deadEnemyPoiIds, silentKillIds, playerGainedHidden };
 }
 
 // ─── Stage 3: Deterministic State Mutation ───────────────────────────────────
@@ -3473,6 +3512,7 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
     const inCombat = sessionForGate.gameState === 'combat' && !!sessionForGate.combatState;
     const combatActionTypes = new Set(['attack', 'dodge', 'dash', 'disengage', 'hide', 'provoke', 'change_proximity', 'death_save']);
     const allCombatFacts: string[] = [];
+    let hadSilentKill = false; // Phase 13: suppress loud propagation for silent kills
     if (inCombat && parsedActions.length > 0 && combatActionTypes.has(parsedActions[0].action_type)) {
       const cs = sessionForGate.combatState as unknown as CombatState;
       const mainHand = characterInventory.equipped.main_hand;
@@ -3495,6 +3535,12 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
           });
         }
       }
+
+      // Phase 13: persist hide state and track silent kills
+      if (combatResult.playerGainedHidden !== null) {
+        await prisma.character.update({ where: { id: characterId }, data: { isHiding: combatResult.playerGainedHidden } });
+      }
+      hadSilentKill = combatResult.silentKillIds.size > 0;
 
       if (combatResult.combatEnded) {
         await prisma.gameSession.update({ where: { id: roomInstance.session.id }, data: { gameState: 'exploration', combatState: Prisma.JsonNull } });
@@ -3534,6 +3580,41 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
         }
 
         await prisma.gameSession.update({ where: { id: roomInstance.session.id }, data: { combatState: workingCs as object } });
+
+        // Phase 13: body discovery — unaware enemies in the room check for dead allies
+        const newDeadCount = combatResult.deadEnemyPoiIds.length;
+        if (newDeadCount > 0) {
+          for (const poi of roomInstance.poiInstances) {
+            const cp = poi.currentProperties as Record<string, unknown>;
+            if (cp.awareness_state !== 'unaware') continue;
+            const dp = poi.template.defaultProperties as Record<string, unknown>;
+            const combatStats = (dp.combat_stats ?? {}) as PoiCombatStats;
+            const { escalate } = resolveBodyDiscovery(
+              combatStats.wis_score ?? 10,
+              combatStats.passive_perception,
+              'visible',
+            );
+            console.log(`[stage13:body-discovery] ${poi.template.name} check: escalate=${escalate}`);
+            if (escalate) {
+              await prisma.poiInstance.update({
+                where: { id: poi.id },
+                data: { currentProperties: { ...(cp as object), awareness_state: 'suspicious' } },
+              });
+              allCombatFacts.push(`${poi.template.name} notices something wrong and becomes alert!`);
+            }
+          }
+        }
+
+        // Phase 13: patrol — suspicious enemies approach, alert patrol enemies join combat
+        for (const poi of roomInstance.poiInstances) {
+          const dp = poi.template.defaultProperties as Record<string, unknown>;
+          if (!dp.patrol) continue;
+          const cp = poi.currentProperties as Record<string, unknown>;
+          const awareness = cp.awareness_state as string | undefined;
+          if (awareness === 'suspicious') {
+            allCombatFacts.push(`${poi.template.name} moves toward the doorway, drawn by a sound...`);
+          }
+        }
       }
     }
 
@@ -3615,8 +3696,9 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
     }
 
     // Phase 6: loud action propagation to adjacent rooms for attack/destroy_poi
+    // Phase 13: suppress propagation for silent kills (player hidden + silent weapon + instant kill)
     const firstParsedAction = parsedActions[0];
-    if (firstParsedAction?.action_type === 'attack' || firstParsedAction?.action_type === 'destroy_poi') {
+    if (!hadSilentKill && (firstParsedAction?.action_type === 'attack' || firstParsedAction?.action_type === 'destroy_poi')) {
       const targetPoi = firstParsedAction.target_poi_instance_id
         ? roomInstance.poiInstances.find(p => p.id === firstParsedAction.target_poi_instance_id)
         : null;

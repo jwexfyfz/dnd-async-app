@@ -67,7 +67,7 @@ The dividers are optional — a bit of vertical whitespace achieves the same gro
 
 The start screen background is plain white (inherited from the page). This gives no sense of atmosphere.
 
-**Recommendation**: Use a dark stone or parchment background behind the card. A simple `bg-slate-900` full-screen background with a white card on top reads immediately as dramatic and thematic. Alternatively a subtle texture using a CSS `background-image` with a repeating SVG pattern (stone, parchment) via Tailwind's `bg-[url(...)]`. Start with `bg-slate-900` — it costs one class name.
+**Recommendation**: Use a dark stone or parchment background behind the card. A simple `bg-slate-900` full-screen background with a white card on top reads immediately as dramatic and thematic. Alternatively a subtle texture using a CSS `background-image` with a repeating SVG pattern (stone, parchment) via Tailwind arbitrary value syntax. Start with `bg-slate-900` — it costs one class name.
 
 ### 1.3 No error feedback if OAuth fails
 

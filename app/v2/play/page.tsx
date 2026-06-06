@@ -2,6 +2,10 @@
 
 import { useEffect, useLayoutEffect, useRef, useState, useCallback, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
+import type { CombatState, CharacterStats, InitiativeEntry, CharacterInventory, ItemDefinition } from '@/types/v2-game';
+import { classEmoji } from '@/lib/class-emoji';
+import AppBar from '@/components/app-bar';
+import { ABILITY_DESCRIPTIONS, ABILITY_PASSIVE_NOTES, SKILL_ABILITY, SKILL_DESCRIPTIONS } from '@/lib/v2/skill-descriptions';
 
 // ─── Map Types ────────────────────────────────────────────────────────────────
 
@@ -504,6 +508,1177 @@ function MapSheet({ sessionId, characterId, roomInstanceId, roomName, refreshKey
   );
 }
 
+// ─── Header ───────────────────────────────────────────────────────────────────
+
+function Header({ roomName, gameState, round, hp, maxHp }: {
+  roomName: string;
+  gameState: 'exploration' | 'combat';
+  round?: number;
+  hp?: number;
+  maxHp?: number;
+}) {
+  const isCombat = gameState === 'combat';
+  const hpColor = (hp != null && maxHp != null && maxHp > 0)
+    ? hp / maxHp > 0.6 ? 'text-white' : hp / maxHp > 0.3 ? 'text-yellow-200' : 'text-red-200'
+    : 'text-white';
+  return (
+    <div className={`flex items-center justify-between px-4 py-3 flex-shrink-0 ${isCombat ? 'bg-red-600' : 'bg-blue-600'} text-white`}>
+      <span className="font-semibold text-sm truncate max-w-[40%]">{roomName || 'Loading…'}</span>
+      {isCombat && (
+        <span className="px-2 py-0.5 text-xs font-bold bg-white/20 rounded-full tracking-wide">
+          Round {round ?? '—'}
+        </span>
+      )}
+      {hp != null && maxHp != null && (
+        <span className={`text-sm font-semibold ${hpColor}`}>♥ {hp}/{maxHp}</span>
+      )}
+    </div>
+  );
+}
+
+// ─── Bottom Nav ───────────────────────────────────────────────────────────────
+
+type ActiveTab = 'chat' | 'inventory' | 'party' | 'map';
+
+function BottomNav({ activeTab, onTabChange }: {
+  activeTab: ActiveTab;
+  onTabChange: (tab: ActiveTab) => void;
+}) {
+  const tabs: { id: ActiveTab; label: string }[] = [
+    { id: 'chat', label: 'Chat' },
+    { id: 'inventory', label: 'Inventory' },
+    { id: 'party', label: 'Party' },
+    { id: 'map', label: 'Map' },
+  ];
+  return (
+    <div className="flex border-t border-slate-200 bg-white flex-shrink-0">
+      {tabs.map(t => (
+        <button
+          key={t.id}
+          onClick={() => onTabChange(t.id)}
+          className={`flex-1 py-3 text-xs font-medium transition-colors ${
+            activeTab === t.id
+              ? 'text-indigo-600 border-t-2 border-indigo-600 -mt-px font-bold'
+              : 'text-slate-400 hover:text-slate-600'
+          }`}
+        >
+          {t.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ─── Map Tab ──────────────────────────────────────────────────────────────────
+
+function MapTab({ sessionId, characterId, roomInstanceId, refreshKey }: {
+  sessionId: string;
+  characterId: string;
+  roomInstanceId: string;
+  refreshKey: number;
+}) {
+  const [mapData, setMapData] = useState<MapData | null>(null);
+
+  useEffect(() => {
+    fetch(`/api/v2/map?sessionId=${sessionId}&characterId=${characterId}`, { cache: 'no-store' })
+      .then(r => r.json())
+      .then(data => setMapData(data))
+      .catch(e => console.error('[MapTab] fetch error:', e));
+  }, [sessionId, characterId, roomInstanceId, refreshKey]);
+
+  return (
+    <div className="flex-1 overflow-auto p-3">
+      {mapData?.rooms ? (
+        <>
+          <DungeonMap mapData={mapData} currentRoomInstanceId={roomInstanceId} />
+          <MapLegend mapData={mapData} />
+        </>
+      ) : (
+        <div className="flex items-center justify-center h-full text-slate-400 text-sm">
+          {mapData ? 'Map unavailable' : 'Loading map…'}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function abilityMod(score: number): string {
+  const m = Math.floor((score - 10) / 2);
+  return m >= 0 ? `+${m}` : `${m}`;
+}
+
+const ABILITY_LABELS: { key: keyof CharacterStats; short: string; full: string }[] = [
+  { key: 'baseStrength',     short: 'STR', full: 'Strength' },
+  { key: 'baseDexterity',    short: 'DEX', full: 'Dexterity' },
+  { key: 'baseConstitution', short: 'CON', full: 'Constitution' },
+  { key: 'baseIntelligence', short: 'INT', full: 'Intelligence' },
+  { key: 'baseWisdom',       short: 'WIS', full: 'Wisdom' },
+  { key: 'baseCharisma',     short: 'CHA', full: 'Charisma' },
+];
+
+function buildBannerEntry(type: 'combat_start' | 'combat_end', cs?: CombatState | null): HistoryEntry {
+  if (type === 'combat_end') {
+    return {
+      id: `banner-end-${Date.now()}`,
+      text: '',
+      isMechanicalEvent: true,
+      mechanicalSummary: { type: 'combat_end' },
+      createdAt: new Date().toISOString(),
+    };
+  }
+  return {
+    id: `banner-start-${Date.now()}`,
+    text: '',
+    isMechanicalEvent: true,
+    mechanicalSummary: {
+      type: 'combat_start',
+      round: cs?.round ?? 1,
+      initiativeOrder: cs?.initiativeOrder ?? [],
+    },
+    createdAt: new Date().toISOString(),
+  };
+}
+
+// ─── Party Tab ────────────────────────────────────────────────────────────────
+
+const COMBAT_STAT_META: Record<string, { labelColor: string; description: string }> = {
+  HP:   { labelColor: 'text-red-400',    description: 'Your remaining hit points. Reach 0 and you fall unconscious — allies must stabilize you before you die.' },
+  AC:   { labelColor: 'text-blue-500',   description: 'Armor Class — how hard you are to hit. An attacker must roll this number or higher to land a strike.' },
+  Atk:  { labelColor: 'text-orange-500', description: 'Your attack bonus added to the d20 roll whenever you strike. Higher means you hit more reliably.' },
+  Init: { labelColor: 'text-amber-500',  description: 'Initiative modifier rolled at the start of combat. Higher means you act earlier in the turn order.' },
+};
+
+
+function abilityModColor(score: number, isActive: boolean): string {
+  if (isActive) return 'text-slate-800';
+  const mod = Math.floor((score - 10) / 2);
+  if (mod > 0) return 'text-emerald-600';
+  if (mod < 0) return 'text-red-500';
+  return 'text-slate-500';
+}
+
+function CharacterSheet({ stats, isCombat, isOwn, onFeatureActivate }: {
+  stats: CharacterStats;
+  isCombat: boolean;
+  isOwn: boolean;
+  onFeatureActivate?: (label: string) => void;
+}) {
+  const [featureTooltip, setFeatureTooltip] = useState<string | null>(null);
+  const [activeStat, setActiveStat] = useState<string | null>(null);
+  const [activeAbility, setActiveAbility] = useState('STR');
+  const features = CLASS_FEATURES[stats.characterClass] ?? [];
+
+  const skillsModifiers = stats.skillsModifiers as Record<string, number>;
+  const activeSkills = Object.entries(skillsModifiers)
+    .filter(([skill]) => SKILL_ABILITY[skill] === activeAbility)
+    .sort(([a], [b]) => a.localeCompare(b));
+
+  const atkMod = stats.attackBonus >= 0 ? `+${stats.attackBonus}` : `${stats.attackBonus}`;
+  const initMod = stats.initiativeMod >= 0 ? `+${stats.initiativeMod}` : `${stats.initiativeMod}`;
+  const hpPct = stats.maxHp > 0 ? stats.currentHp / stats.maxHp : 1;
+  const hpValueColor = hpPct > 0.6 ? 'text-emerald-600' : hpPct > 0.3 ? 'text-yellow-600' : 'text-red-600';
+  const combatStats = [
+    { key: 'HP',   label: 'HP',   value: `${stats.currentHp}/${stats.maxHp}`, valueColor: hpValueColor },
+    { key: 'AC',   label: 'AC',   value: String(stats.ac),                     valueColor: 'text-slate-800' },
+    { key: 'Atk',  label: 'Atk',  value: atkMod,                               valueColor: 'text-slate-800' },
+    { key: 'Init', label: 'Init', value: initMod,                              valueColor: 'text-slate-800' },
+  ];
+
+  return (
+    <div className="overflow-y-auto flex-1 px-4 py-4 space-y-5">
+      {/* Combat stats */}
+      <div>
+        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Combat</p>
+        <div className="grid grid-cols-4 gap-2">
+          {combatStats.map(s => {
+            const meta = COMBAT_STAT_META[s.key];
+            const isActive = activeStat === s.key;
+            return (
+              <button
+                key={s.key}
+                onClick={() => setActiveStat(a => a === s.key ? null : s.key)}
+                className={`bg-white rounded-lg px-1.5 py-2.5 text-center border transition-all active:scale-[0.97] ${
+                  isActive ? 'border-slate-300 shadow-sm' : 'border-slate-200 hover:border-slate-300 hover:shadow-sm'
+                }`}
+              >
+                <div className={`text-xs font-semibold leading-none mb-1.5 ${meta.labelColor}`}>{s.label}</div>
+                <div className={`text-2xl font-bold tracking-tight ${s.valueColor}`}>{s.value}</div>
+              </button>
+            );
+          })}
+        </div>
+        {activeStat && COMBAT_STAT_META[activeStat] && (
+          <p className="mt-2 text-xs text-slate-500 bg-slate-50 rounded-lg px-3 py-2">
+            {COMBAT_STAT_META[activeStat].description}
+          </p>
+        )}
+      </div>
+
+      {/* Class features */}
+      {features.length > 0 && (
+        <div>
+          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Features</p>
+          <div className="flex flex-wrap gap-2">
+            {features.map(f => (
+              <button
+                key={f.id}
+                onClick={() => {
+                  if (!isOwn) return;
+                  if (isCombat && onFeatureActivate) {
+                    onFeatureActivate(f.label);
+                  } else {
+                    setFeatureTooltip(t => t === f.id ? null : f.id);
+                  }
+                }}
+                className={`text-xs px-3 py-1.5 rounded-full border font-medium transition-colors ${
+                  isOwn
+                    ? isCombat
+                      ? 'border-indigo-300 text-indigo-700 bg-indigo-50 hover:bg-indigo-100'
+                      : 'border-emerald-200 text-emerald-700 bg-emerald-50 hover:bg-emerald-100'
+                    : 'border-slate-200 text-slate-300 cursor-default'
+                }`}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+          {featureTooltip && (() => {
+            const f = features.find(x => x.id === featureTooltip);
+            return f ? (
+              <p className="mt-2 text-xs text-slate-500 bg-slate-50 rounded-lg px-3 py-2">
+                {f.description}
+              </p>
+            ) : null;
+          })()}
+        </div>
+      )}
+
+      {/* Abilities + Skills folder */}
+      <div>
+        {/* Section header */}
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Abilities</p>
+          <p className="text-xs font-medium text-amber-600">★ = proficient</p>
+        </div>
+
+        {/* Tab row */}
+        <div className="grid grid-cols-6 border-b border-slate-200">
+          {ABILITY_LABELS.map(({ key, short }) => {
+            const score = stats[key] as number;
+            const isActive = activeAbility === short;
+            return (
+              <button
+                key={short}
+                onClick={() => setActiveAbility(short)}
+                className={`py-2 text-center transition-colors relative ${
+                  isActive
+                    ? 'bg-white border-x border-t border-slate-200 rounded-t-lg -mb-px z-10'
+                    : 'hover:bg-slate-100'
+                }`}
+              >
+                <div className={`text-xs font-semibold leading-none mb-1 ${isActive ? 'text-indigo-600' : 'text-slate-400'}`}>
+                  {short}
+                </div>
+                <div className={`text-base font-bold leading-none mb-0.5 ${abilityModColor(score, isActive)}`}>
+                  {abilityMod(score)}
+                </div>
+                <div className={`text-xs leading-none ${isActive ? 'text-slate-500' : 'text-slate-400'}`}>
+                  {score}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Skill panel */}
+        <div className="border-x border-b border-slate-200 rounded-b-lg bg-white px-3 py-3">
+          <p className="text-sm font-semibold text-slate-700 mb-1">
+            {ABILITY_LABELS.find(l => l.short === activeAbility)?.full}
+          </p>
+          <p className="text-xs text-slate-500">
+            {ABILITY_DESCRIPTIONS[activeAbility]}
+          </p>
+          {activeSkills.length > 0 && <div className="border-t border-slate-100 my-3" />}
+          {activeSkills.length > 0 ? (
+            <div className="space-y-2.5">
+              {activeSkills.map(([skill, mod]) => {
+                const prof = stats.skillProficiencies.includes(skill);
+                const modStr = mod >= 0 ? `+${mod}` : `${mod}`;
+                return (
+                  <div key={skill}>
+                    <div className="flex items-center justify-between">
+                      <span className={`text-xs ${prof ? 'font-semibold text-amber-700' : 'text-slate-600'}`}>
+                        {prof && <span className="text-amber-500">★ </span>}
+                        {skill}
+                      </span>
+                      <span className={`text-xs font-mono ${prof ? 'font-semibold text-amber-700' : 'text-slate-500'}`}>
+                        {modStr}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      {SKILL_DESCRIPTIONS[skill]}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="text-xs text-slate-500 italic">
+              {ABILITY_PASSIVE_NOTES[activeAbility] ?? 'No skills for this ability.'}
+            </p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PartyTab({ characterStats, gameState, onFeatureActivate }: {
+  characterStats: CharacterStats | null;
+  gameState: 'exploration' | 'combat';
+  onFeatureActivate: (label: string) => void;
+}) {
+  if (!characterStats) {
+    return <div className="flex-1 flex items-center justify-center text-slate-400 text-sm">Loading…</div>;
+  }
+  return (
+    <div className="flex-1 flex flex-col overflow-hidden">
+      {/* PartyHeader */}
+      <div className="flex items-center gap-3 px-4 py-3 border-b border-slate-200 bg-white flex-shrink-0 overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
+        <div className="flex flex-col items-center gap-0.5 flex-shrink-0">
+          <div className="w-10 h-10 rounded-full bg-indigo-100 border-2 border-indigo-400 flex items-center justify-center text-xl">
+            {classEmoji(characterStats.characterClass)}
+          </div>
+          <span className="text-xs text-slate-600 font-medium">{characterStats.characterClass}</span>
+          <span className={`text-xs ${characterStats.currentHp / characterStats.maxHp < 0.3 ? 'text-red-500 font-semibold' : 'text-slate-400'}`}>
+            {characterStats.currentHp}/{characterStats.maxHp} HP
+          </span>
+        </div>
+      </div>
+      <CharacterSheet
+        stats={characterStats}
+        isCombat={gameState === 'combat'}
+        isOwn={true}
+        onFeatureActivate={onFeatureActivate}
+      />
+    </div>
+  );
+}
+
+// ─── Inventory Tab ────────────────────────────────────────────────────────────
+
+// ─── UseButtons ──────────────────────────────────────────────────────────────
+
+function UseButtons({ item, isCombat, availablePois, partyMembers, canUse, canEquip, onExplorationAction, onAllyPick, onPoiPick }: {
+  item: ItemDefinition;
+  isCombat: boolean;
+  availablePois: { id: string; name: string }[];
+  partyMembers: { id: string; name: string }[];
+  canUse: boolean;
+  canEquip: boolean;
+  onExplorationAction: (text: string, hint: string) => void;
+  onAllyPick: (item: ItemDefinition) => void;
+  onPoiPick: (item: ItemDefinition) => void;
+}) {
+  return (
+    <div className="flex flex-wrap justify-end gap-x-4 gap-y-1 pt-0.5" onClick={e => e.stopPropagation()}>
+      {isCombat ? (
+        item.combat_usable && (
+          <button onClick={() => onAllyPick(item)} className="text-xs font-medium text-indigo-600 hover:text-indigo-800">
+            Use on…
+          </button>
+        )
+      ) : (
+        <>
+          {canUse && availablePois.length > 0 && (
+            <button onClick={() => onPoiPick(item)} className="text-xs font-medium text-blue-600 hover:text-blue-800">
+              Use on…
+            </button>
+          )}
+          {canUse && partyMembers.length > 0 && (
+            <button onClick={() => onAllyPick(item)} className="text-xs font-medium text-blue-600 hover:text-blue-800">
+              Use on ally
+            </button>
+          )}
+          {canUse && (
+            <button
+              onClick={() => onExplorationAction(`use ${item.name}`, 'use_item')}
+              className="text-xs font-medium text-blue-600 hover:text-blue-800"
+            >
+              Use
+            </button>
+          )}
+          {canEquip && (
+            <button
+              onClick={() => onExplorationAction(`equip ${item.name}`, 'equip')}
+              className="text-xs font-medium text-blue-600 hover:text-blue-800"
+            >
+              Equip
+            </button>
+          )}
+          <button
+            onClick={() => onExplorationAction(`drop ${item.name}`, 'drop')}
+            className="text-xs font-medium text-slate-400 hover:text-slate-600"
+          >
+            Drop
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
+const SLOT_GROUPS = [
+  { label: 'Weapons',     slots: ['main_hand', 'off_hand'] as const },
+  { label: 'Armor',       slots: ['head', 'chest', 'legs', 'feet'] as const },
+  { label: 'Accessories', slots: ['ring', 'amulet'] as const },
+];
+
+const SLOT_LABELS: Record<string, string> = {
+  main_hand: 'Main Hand', off_hand: 'Off-Hand',
+  head: 'Head', chest: 'Chest', legs: 'Legs', feet: 'Feet',
+  ring: 'Ring', amulet: 'Amulet',
+};
+
+const BONUS_LABELS: Record<string, string> = {
+  ac: 'AC', damage: 'DMG', to_hit: 'HIT', hp: 'HP',
+};
+
+function fmtBonus(bonus: Record<string, number>): string {
+  return Object.entries(bonus)
+    .filter(([, v]) => v !== 0)
+    .map(([k, v]) => `${v > 0 ? '+' : ''}${v} ${BONUS_LABELS[k] ?? k.toUpperCase()}`)
+    .join(' · ');
+}
+
+function bagBadge(item: ItemDefinition): string {
+  if (!item.equip_slot) return item.consumable || item.use_effect ? 'C' : '·';
+  if (item.equip_slot === 'main_hand' || item.equip_slot === 'off_hand') return 'W';
+  if (['head', 'chest', 'legs', 'feet'].includes(item.equip_slot)) return 'A';
+  return 'X';
+}
+
+function InventoryTab({ characterInventory, gameState, onExplorationAction, onCombatUse, proximityPoi, availablePois, partyMembers, combatState }: {
+  characterInventory: CharacterInventory | null;
+  gameState: 'exploration' | 'combat';
+  onExplorationAction: (text: string, hint: string) => void;
+  onCombatUse: (item: ItemDefinition, targetName?: string) => void;
+  proximityPoi: { id: string; name: string } | null;
+  availablePois: { id: string; name: string }[];
+  partyMembers: { id: string; name: string }[];
+  combatState: CombatState | null;
+}) {
+  const isCombat = gameState === 'combat';
+  const [expandedSlot, setExpandedSlot] = useState<string | null>(null);
+  const [expandedBagIdx, setExpandedBagIdx] = useState<number | null>(null);
+  const [allyPickerItem, setAllyPickerItem] = useState<ItemDefinition | null>(null);
+  const [poiPickerItem, setPoiPickerItem] = useState<ItemDefinition | null>(null);
+
+  if (!characterInventory) {
+    return <div className="flex-1 flex items-center justify-center text-slate-400 text-sm">Loading…</div>;
+  }
+
+  // Aggregate equip_bonus across all equipped items for the gear banner
+  const gearBonus: Record<string, number> = {};
+  for (const item of Object.values(characterInventory.equipped)) {
+    if (!item?.equip_bonus) continue;
+    for (const [k, v] of Object.entries(item.equip_bonus)) {
+      gearBonus[k] = (gearBonus[k] ?? 0) + v;
+    }
+  }
+  const gearBonusEntries = Object.entries(gearBonus).filter(([, v]) => v > 0);
+
+  const allyCombatTargets = combatState?.initiativeOrder
+    .map(e => ({ id: e.id, name: e.name })) ?? partyMembers;
+
+  return (
+    <div className="flex-1 overflow-y-auto px-4">
+
+      {/* ── Ally picker overlay ── */}
+      {allyPickerItem && (
+        <div className="fixed inset-0 z-50 flex flex-col justify-end" onClick={() => setAllyPickerItem(null)}>
+          <div className="bg-white rounded-t-2xl shadow-xl max-h-[40vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 pt-4 pb-2 border-b border-slate-100">
+              <span className="text-sm font-semibold text-slate-800">Use {allyPickerItem.name} on…</span>
+              <button onClick={() => setAllyPickerItem(null)} className="text-slate-400 hover:text-slate-600 text-lg leading-none">✕</button>
+            </div>
+            <div className="overflow-y-auto flex-1 p-3 space-y-1">
+              {(isCombat ? allyCombatTargets : partyMembers).map(m => (
+                <button
+                  key={m.id}
+                  onClick={() => {
+                    if (isCombat) onCombatUse(allyPickerItem, m.name);
+                    else onExplorationAction(`use ${allyPickerItem.name} on ${m.name}`, 'use_item');
+                    setAllyPickerItem(null);
+                  }}
+                  className="w-full text-left px-4 py-3 rounded-xl border border-slate-200 hover:bg-indigo-50 hover:border-indigo-300"
+                >
+                  <p className="text-sm font-medium text-slate-800">{m.name}</p>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── POI picker overlay ── */}
+      {poiPickerItem && (
+        <div className="fixed inset-0 z-50 flex flex-col justify-end" onClick={() => setPoiPickerItem(null)}>
+          <div className="bg-white rounded-t-2xl shadow-xl max-h-[40vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 pt-4 pb-2 border-b border-slate-100">
+              <span className="text-sm font-semibold text-slate-800">Use {poiPickerItem.name} on…</span>
+              <button onClick={() => setPoiPickerItem(null)} className="text-slate-400 hover:text-slate-600 text-lg leading-none">✕</button>
+            </div>
+            <div className="overflow-y-auto flex-1 p-3 space-y-1">
+              {availablePois
+                .sort((a, b) => (b.id === proximityPoi?.id ? 1 : 0) - (a.id === proximityPoi?.id ? 1 : 0))
+                .map(poi => (
+                  <button
+                    key={poi.id}
+                    onClick={() => {
+                      onExplorationAction(`use ${poiPickerItem.name} on ${poi.name}`, 'use_item');
+                      setPoiPickerItem(null);
+                    }}
+                    className="w-full text-left px-4 py-3 rounded-xl border hover:bg-indigo-50 hover:border-indigo-300 transition-colors border-slate-200"
+                  >
+                    <p className="text-sm font-medium text-slate-800">{poi.name}</p>
+                    {poi.id === proximityPoi?.id && (
+                      <p className="text-[10px] text-slate-400 mt-0.5">nearby</p>
+                    )}
+                  </button>
+                ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Gear bonus chips ── */}
+      {gearBonusEntries.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 py-3 border-b border-slate-100">
+          {gearBonusEntries.map(([k, v]) => (
+            <span key={k} className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-600">
+              +{v}{' '}{BONUS_LABELS[k] ?? k.toUpperCase()}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* ── Equipped ── */}
+      <div className="py-3 space-y-4 border-b border-slate-100">
+        <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest">Equipped</p>
+        {SLOT_GROUPS.map(({ label, slots }) => (
+          <div key={label}>
+            <p className="text-[10px] text-slate-400 mb-1.5">{label}</p>
+            <div className="space-y-1">
+              {slots.map((slot) => {
+                const item = characterInventory.equipped[slot];
+                const isExpanded = expandedSlot === slot;
+
+                if (!item) {
+                  return (
+                    <div key={slot} className="flex items-center gap-3 py-0.5">
+                      <span className="text-xs text-slate-400 w-20 shrink-0">{SLOT_LABELS[slot]}</span>
+                      <span className="text-xs text-slate-300">—</span>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div
+                    key={slot}
+                    onClick={() => setExpandedSlot(isExpanded ? null : slot)}
+                    className="rounded-xl bg-amber-50 border border-amber-200 px-3 py-2 cursor-pointer select-none"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-[9px] font-semibold text-amber-600 uppercase tracking-wider leading-none mb-0.5">
+                          {SLOT_LABELS[slot]}
+                        </p>
+                        <p className="text-sm font-medium text-slate-800 truncate">{item.name}</p>
+                      </div>
+                      <span className="text-[10px] text-slate-300 shrink-0">{isExpanded ? '▴' : '▾'}</span>
+                    </div>
+                    {isExpanded && (
+                      <div className="mt-2 pt-2 border-t border-amber-200 space-y-1.5">
+                        {item.description && (
+                          <p className="text-xs text-slate-600 italic">{item.description}</p>
+                        )}
+                        {item.passive_effect && (
+                          <p className="text-xs text-slate-500">{item.passive_effect}</p>
+                        )}
+                        {item.equip_bonus && Object.keys(item.equip_bonus).length > 0 && (
+                          <p className="text-xs font-medium text-emerald-700">{fmtBonus(item.equip_bonus)}</p>
+                        )}
+                        {!isCombat && (
+                          <div className="flex justify-end">
+                            <button
+                              onClick={(e) => { e.stopPropagation(); onExplorationAction(`unequip ${item.name}`, 'unequip'); }}
+                              className="text-xs font-medium text-blue-600 hover:text-blue-800"
+                            >
+                              Unequip
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Backpack ── */}
+      <div className="py-3">
+        <div className="flex items-baseline justify-between mb-2">
+          <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest">Backpack</p>
+          {characterInventory.bag.length > 0 && (
+            <span className="text-[10px] text-slate-300">{characterInventory.bag.length} items</span>
+          )}
+        </div>
+        {characterInventory.bag.length === 0 ? (
+          <p className="text-xs text-slate-400 italic">Empty</p>
+        ) : (
+          <div className="divide-y divide-slate-100">
+            {characterInventory.bag.map((item, i) => {
+              const isExpanded = expandedBagIdx === i;
+              const canEquip = !!item.equip_slot;
+              const canUse = !!(item.consumable || item.use_effect);
+              const bonusStr = item.equip_bonus && Object.keys(item.equip_bonus).length > 0
+                ? fmtBonus(item.equip_bonus) : null;
+
+              // Stat diff vs current slot item
+              let diffLine: { vs: string; entries: [string, number][] } | null = null;
+              if (canEquip && item.equip_slot) {
+                const currentItem = characterInventory.equipped[item.equip_slot];
+                const myBonus = item.equip_bonus ?? {};
+                const theirBonus = currentItem?.equip_bonus ?? {};
+                const allKeys = new Set([...Object.keys(myBonus), ...Object.keys(theirBonus)]);
+                const entries = [...allKeys]
+                  .map(k => [k, (myBonus[k] ?? 0) - (theirBonus[k] ?? 0)] as [string, number])
+                  .filter(([, v]) => v !== 0);
+                diffLine = { vs: currentItem?.name ?? 'empty slot', entries };
+              }
+
+              return (
+                <div
+                  key={`${item.id ?? 'item'}-${i}`}
+                  onClick={() => setExpandedBagIdx(isExpanded ? null : i)}
+                  className="flex items-start gap-2.5 py-2 cursor-pointer select-none"
+                >
+                  <span className="shrink-0 mt-0.5 w-5 h-5 rounded text-[9px] font-bold flex items-center justify-center bg-slate-100 text-slate-500">
+                    {bagBadge(item)}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-baseline justify-between gap-1">
+                      <p className="text-sm font-medium text-slate-800 truncate">
+                        {item.name}{item.quantity && item.quantity > 1 ? ` ×${item.quantity}` : ''}
+                      </p>
+                      <span className="shrink-0 text-[10px] text-slate-300">{isExpanded ? '▴' : '▾'}</span>
+                    </div>
+                    {bonusStr && !isExpanded && (
+                      <p className="text-[11px] text-emerald-700">{bonusStr}</p>
+                    )}
+                    {isExpanded && (
+                      <div className="mt-1.5 space-y-1.5">
+                        {item.description && (
+                          <p className="text-xs text-slate-600 italic">{item.description}</p>
+                        )}
+                        {item.passive_effect && (
+                          <p className="text-xs text-slate-500">{item.passive_effect}</p>
+                        )}
+                        {bonusStr && (
+                          <p className="text-xs font-medium text-emerald-700">{bonusStr}</p>
+                        )}
+                        {diffLine && (
+                          <div>
+                            <p className="text-[10px] text-slate-400 mb-0.5">vs {diffLine.vs}</p>
+                            {diffLine.entries.length === 0 ? (
+                              <p className="text-[10px] text-slate-400 italic">No numeric difference</p>
+                            ) : (
+                              <div className="flex flex-wrap gap-x-2">
+                                {diffLine.entries.map(([k, v]) => (
+                                  <span key={k} className={`text-xs font-bold ${v > 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                                    {v > 0 ? '+' : ''}{v}{' '}{BONUS_LABELS[k] ?? k.toUpperCase()}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        <UseButtons
+                          item={item}
+                          isCombat={isCombat}
+                          availablePois={availablePois}
+                          partyMembers={partyMembers}
+                          canUse={canUse}
+                          canEquip={canEquip}
+                          onExplorationAction={onExplorationAction}
+                          onAllyPick={(i) => setAllyPickerItem(i)}
+                          onPoiPick={(i) => setPoiPickerItem(i)}
+                        />
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Item Picker Sheet ────────────────────────────────────────────────────────
+
+function ItemPickerSheet({ items, targets, onSelect, onDismiss }: {
+  items: ItemDefinition[];
+  targets: { id: string; name: string; hp: number; maxHp: number }[];
+  onSelect: (chip: string) => void;
+  onDismiss: () => void;
+}) {
+  const [selectedItem, setSelectedItem] = useState<ItemDefinition | null>(null);
+
+  const combatUsable = items.filter(i => i.combat_usable);
+
+  function handleItemTap(item: ItemDefinition) {
+    const targets = item.target ? (Array.isArray(item.target) ? item.target : [item.target]) : ['self'];
+    const needsPicker = targets.some(t => t === 'ally' || t === 'enemy');
+    if (needsPicker) {
+      setSelectedItem(item);
+    } else {
+      onSelect(`Use: ${item.name}`);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col justify-end" onClick={onDismiss}>
+      <div
+        className="bg-white rounded-t-2xl shadow-xl max-h-[55vh] flex flex-col"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-5 pt-4 pb-2 border-b border-slate-100 flex-shrink-0">
+          <span className="text-sm font-semibold text-slate-800">
+            {selectedItem ? `Target for ${selectedItem.name}` : 'Use Item'}
+          </span>
+          <button onClick={onDismiss} className="text-slate-400 hover:text-slate-600 text-lg leading-none">✕</button>
+        </div>
+
+        <div className="overflow-y-auto flex-1 p-3 space-y-1">
+          {selectedItem ? (
+            targets.length === 0 ? (
+              <p className="text-sm text-slate-400 text-center py-6">No targets available.</p>
+            ) : (
+              targets.map(t => (
+                <button
+                  key={t.id}
+                  onClick={() => onSelect(`Use: ${selectedItem.name} → ${t.name}`)}
+                  className="w-full text-left px-4 py-3 rounded-xl border border-slate-200 hover:bg-indigo-50 hover:border-indigo-300 transition-colors"
+                >
+                  <p className="text-sm font-medium text-slate-800">{t.name}</p>
+                  <p className="text-xs text-slate-400 mt-0.5">HP {t.hp}/{t.maxHp}</p>
+                </button>
+              ))
+            )
+          ) : combatUsable.length === 0 ? (
+            <p className="text-sm text-slate-400 text-center py-6">Nothing usable in combat.</p>
+          ) : (
+            combatUsable.map(item => (
+              <button
+                key={item.id}
+                onClick={() => handleItemTap(item)}
+                className="w-full text-left px-4 py-3 rounded-xl border border-slate-200 hover:bg-indigo-50 hover:border-indigo-300 transition-colors"
+              >
+                <p className="text-sm font-medium text-slate-800">{item.name}{item.quantity && item.quantity > 1 ? ` ×${item.quantity}` : ''}</p>
+                {item.use_effect && <p className="text-xs text-slate-400 mt-0.5">{item.use_effect}</p>}
+              </button>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Action Chips ─────────────────────────────────────────────────────────────
+
+const STANDARD_CHIPS = [
+  { id: 'attack',     label: 'Attack' },
+  { id: 'dodge',      label: 'Dodge' },
+  { id: 'dash',       label: 'Dash' },
+  { id: 'disengage',  label: 'Disengage' },
+  { id: 'hide',       label: 'Hide' },
+  { id: 'use_item',   label: 'Use Item' },
+  { id: 'provoke',    label: 'Provoke' },
+];
+
+const CUNNING_SUB = [
+  { id: 'cunning_hide',       label: 'Hide' },
+  { id: 'cunning_dash',       label: 'Dash' },
+  { id: 'cunning_disengage',  label: 'Disengage' },
+];
+
+function ActionChips({ characterStats, characterInventory, combatState, chip, setChip, onOpenItemSheet }: {
+  characterStats: CharacterStats | null;
+  characterInventory: CharacterInventory | null;
+  combatState: CombatState | null;
+  chip: string | null;
+  setChip: (v: string | null) => void;
+  onOpenItemSheet: () => void;
+}) {
+  const [showCunningPicker, setShowCunningPicker] = useState(false);
+
+  const actionUsed = combatState?.currentTurnUsage.actionUsed ?? false;
+  const hasCombatItems = (characterInventory?.bag ?? []).some(i => i.combat_usable);
+  const features = CLASS_FEATURES[characterStats?.characterClass ?? ''] ?? [];
+
+  function tapChip(label: string) {
+    setChip(chip === label ? null : label);
+  }
+
+  function tapCunning(sublabel: string) {
+    setChip(`Cunning Action: ${sublabel}`);
+    setShowCunningPicker(false);
+  }
+
+  return (
+    <div className="bg-white border-t border-slate-100 flex-shrink-0">
+      {showCunningPicker && (
+        <div className="flex items-center gap-2 px-4 py-2 bg-slate-50 border-b border-slate-100 overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
+          <span className="text-xs font-medium text-slate-600 whitespace-nowrap">Cunning Action — use as:</span>
+          {CUNNING_SUB.map(c => (
+            <button
+              key={c.id}
+              onClick={() => tapCunning(c.label)}
+              className="px-2.5 py-1 rounded-full border border-indigo-300 text-indigo-700 bg-white hover:bg-indigo-50 text-xs font-medium whitespace-nowrap flex-shrink-0"
+            >
+              {c.label}
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="flex gap-2 overflow-x-auto px-4 py-2" style={{ scrollbarWidth: 'none' }}>
+        {STANDARD_CHIPS.map(c => {
+          const isUseItem = c.id === 'use_item';
+          const greyed = actionUsed || (isUseItem && !hasCombatItems);
+          const isActive = chip?.startsWith('Use:') && isUseItem ? true : chip === c.label;
+          return (
+            <button
+              key={c.id}
+              disabled={actionUsed}
+              onClick={() => {
+                if (isUseItem) onOpenItemSheet();
+                else tapChip(c.label);
+              }}
+              className={`px-3 py-1.5 rounded-full border text-xs font-medium whitespace-nowrap flex-shrink-0 transition-colors ${
+                isActive
+                  ? 'bg-indigo-600 text-white border-indigo-600'
+                  : greyed
+                  ? 'border-slate-200 text-slate-300 cursor-not-allowed'
+                  : 'border-slate-300 text-slate-600 hover:bg-slate-50'
+              }`}
+            >
+              {c.label}
+            </button>
+          );
+        })}
+        {features.map(f => {
+          const isCunning = !!f.cunning;
+          const isActive = isCunning ? chip?.startsWith('Cunning Action') : chip === f.label;
+          return (
+            <button
+              key={f.id}
+              onClick={() => {
+                if (isCunning) setShowCunningPicker(p => !p);
+                else tapChip(f.label);
+              }}
+              className={`px-3 py-1.5 rounded-full border text-xs font-medium whitespace-nowrap flex-shrink-0 transition-colors ${
+                isActive
+                  ? 'bg-indigo-600 text-white border-indigo-600'
+                  : 'border-indigo-200 text-indigo-700 hover:bg-indigo-50'
+              }`}
+            >
+              {f.label} ●
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ─── Chat Tab ─────────────────────────────────────────────────────────────────
+
+function ChatTab({ history, hasMore, loadingMore, loadMore, sending, error, input, setInput, sendAction, handleKeyDown, chip, setChip, gameState, combatState, characterStats, characterInventory, chatEndRef, chatContainerRef, showResumeCard, roomName, characterId }: {
+  history: HistoryEntry[];
+  hasMore: boolean;
+  loadingMore: boolean;
+  loadMore: () => void;
+  sending: boolean;
+  error: string;
+  input: string;
+  setInput: (v: string) => void;
+  sendAction: () => void;
+  handleKeyDown: (e: React.KeyboardEvent) => void;
+  chip: string | null;
+  setChip: (v: string | null) => void;
+  gameState: 'exploration' | 'combat';
+  combatState: CombatState | null;
+  characterStats: CharacterStats | null;
+  characterInventory: CharacterInventory | null;
+  chatEndRef: React.RefObject<HTMLDivElement | null>;
+  chatContainerRef: React.RefObject<HTMLDivElement | null>;
+  showResumeCard: boolean;
+  roomName: string;
+  characterId: string;
+}) {
+  const [showItemSheet, setShowItemSheet] = useState(false);
+
+  const combatUsableItems = characterInventory?.bag.filter(i => i.combat_usable) ?? [];
+  const partyTargets = combatState?.initiativeOrder
+    .map(e => ({ id: e.id, name: e.name, hp: e.hp, maxHp: e.maxHp })) ?? [];
+
+  function handleOpenItemSheet() {
+    const items = characterInventory?.bag.filter(i => i.combat_usable) ?? [];
+    const needsPicker = (i: ItemDefinition) => { const t = i.target ? (Array.isArray(i.target) ? i.target : [i.target]) : ['self']; return t.some(v => v === 'ally' || v === 'enemy'); };
+    if (items.length === 1 && !needsPicker(items[0])) {
+      setChip(`Use: ${items[0].name}`);
+    } else {
+      setShowItemSheet(true);
+    }
+  }
+
+  return (
+    <>
+      {showItemSheet && (
+        <ItemPickerSheet
+          items={combatUsableItems}
+          targets={partyTargets}
+          onSelect={chip => { setChip(chip); setShowItemSheet(false); }}
+          onDismiss={() => setShowItemSheet(false)}
+        />
+      )}
+      <div ref={chatContainerRef} className="flex-1 overflow-y-auto px-4 py-4">
+        {hasMore && (
+          <div className="flex justify-center mb-3">
+            <button
+              onClick={loadMore}
+              disabled={loadingMore}
+              className="text-xs text-slate-400 hover:text-slate-600 disabled:opacity-40 px-3 py-1 border border-slate-200 rounded-full"
+            >
+              {loadingMore ? 'Loading…' : 'Load earlier messages'}
+            </button>
+          </div>
+        )}
+        {history.length === 0 && !sending && (
+          <p className="text-center text-slate-400 text-sm mt-8">Loading…</p>
+        )}
+        {history.map(entry => (
+          <ChatMessage key={entry.id} entry={entry} characterId={characterId} />
+        ))}
+        {showResumeCard && gameState === 'combat' && combatState && (
+          <CombatResumeCard combatState={combatState} roomName={roomName} characterId={characterId} />
+        )}
+        {sending && (
+          <div className="flex justify-start my-2">
+            <div className="px-4 py-3 bg-white border border-slate-200 rounded-2xl rounded-bl-sm text-sm text-slate-400 italic">
+              The DM is writing…
+            </div>
+          </div>
+        )}
+        {error && (
+          <p className="text-center text-red-500 text-xs my-2">{error}</p>
+        )}
+        <div ref={chatEndRef} />
+      </div>
+
+      {gameState === 'combat' && (
+        <ActionChips
+          characterStats={characterStats}
+          characterInventory={characterInventory}
+          combatState={combatState}
+          chip={chip}
+          setChip={setChip}
+          onOpenItemSheet={handleOpenItemSheet}
+        />
+      )}
+
+      <div className="px-4 pt-2 pb-3 bg-white border-t border-slate-200 flex-shrink-0">
+        {chip && (
+          <div className="flex mb-2">
+            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-indigo-100 text-indigo-700 rounded-full text-xs font-semibold">
+              {chip}
+              <button
+                onClick={() => setChip(null)}
+                className="text-indigo-400 hover:text-indigo-600 leading-none ml-0.5"
+                aria-label="Remove chip"
+              >
+                ×
+              </button>
+            </span>
+          </div>
+        )}
+        <div className="flex gap-2">
+          <textarea
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            rows={2}
+            placeholder="What do you do? (Enter to send)"
+            className="flex-1 resize-none border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+            disabled={sending}
+          />
+          <button
+            onClick={sendAction}
+            disabled={sending || !input.trim()}
+            className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-40"
+          >
+            Send
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ─── Initiative Strip ─────────────────────────────────────────────────────────
+
+const CLASS_FEATURES: Record<string, Array<{ id: string; label: string; description: string; cunning?: boolean }>> = {
+  Fighter: [{ id: 'second_wind', label: '⚡ Second Wind', description: 'Spend a bonus action to recover 1d10 + your Fighter level in hit points. Once per short rest.' }],
+  Rogue: [{ id: 'cunning_action', label: '⚡ Cunning Action', cunning: true, description: 'Use a bonus action to Dash, Disengage, or Hide — letting you move fast or vanish without spending your main action.' }],
+  Wizard: [{ id: 'arcane_recovery', label: '⚡ Arcane Recovery', description: 'After a short rest, recover spell slot levels equal to half your Wizard level (min 1). Once per long rest.' }],
+  Cleric: [{ id: 'channel_divinity', label: '⚡ Channel Divinity', description: 'Channel divine power to turn undead or invoke your deity\'s domain ability. Once per short rest.' }],
+};
+
+function hpRingClass(hp: number, maxHp: number): string {
+  if (hp === 0 || maxHp === 0) return 'border-slate-300 bg-slate-100';
+  const pct = hp / maxHp;
+  if (pct > 0.6) return 'border-emerald-400 bg-emerald-50';
+  if (pct > 0.3) return 'border-yellow-400 bg-yellow-50';
+  return 'border-red-400 bg-red-50';
+}
+
+function InitiativeStrip({ initiativeOrder, activeActorId, characterId, characterClass, selectedId, onSelect }: {
+  initiativeOrder: InitiativeEntry[];
+  activeActorId: string;
+  characterId: string;
+  characterClass: string;
+  selectedId: string | null;
+  onSelect: (id: string | null) => void;
+}) {
+  const activeIconRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    activeIconRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+  }, [activeActorId]);
+
+  return (
+    <div
+      className="flex gap-3 overflow-x-auto px-4 py-2 bg-red-700 border-b border-red-900 flex-shrink-0"
+      style={{ scrollbarWidth: 'none' }}
+    >
+      {initiativeOrder.map(entry => {
+        const isActive = entry.id === activeActorId;
+        const isOwn = entry.id === characterId;
+        const isDead = entry.hp === 0;
+        const ringCls = hpRingClass(entry.hp, entry.maxHp);
+        const isSelected = entry.id === selectedId;
+
+        return (
+          <button
+            key={entry.id}
+            ref={isActive ? activeIconRef : undefined}
+            onClick={e => { e.stopPropagation(); onSelect(isSelected ? null : entry.id); }}
+            className={`flex flex-col items-center gap-0.5 flex-shrink-0 transition-all ${entry.acted && !isActive ? 'opacity-50 scale-[0.85]' : ''}`}
+          >
+            <span className={`text-xs leading-none ${isActive ? 'text-white' : 'text-transparent'}`}>▼</span>
+            <div className={`w-10 h-10 rounded-full border-2 ${ringCls} flex items-center justify-center relative text-lg ${isSelected ? 'ring-2 ring-white ring-offset-1 ring-offset-red-700' : ''}`}>
+              <span>{isOwn ? classEmoji(characterClass) : '👹'}</span>
+              {isDead && (
+                <span className="absolute inset-0 flex items-center justify-center bg-slate-200/80 rounded-full text-base">💀</span>
+              )}
+            </div>
+            <span className="text-xs text-red-100 truncate max-w-[48px] leading-tight">{entry.name.split(' ')[0]}</span>
+            <span className="text-xs text-red-200 leading-tight">{entry.hp}/{entry.maxHp}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function InitiativeMiniSheet({ entry, characterStats, isOwnCharacter, isCombat, onClose, onNavigateToChat }: {
+  entry: InitiativeEntry;
+  characterStats: CharacterStats | null;
+  isOwnCharacter: boolean;
+  isCombat: boolean;
+  onClose: () => void;
+  onNavigateToChat: () => void;
+}) {
+  const features = isOwnCharacter ? (CLASS_FEATURES[characterStats?.characterClass ?? ''] ?? []) : [];
+
+  return (
+    <div className="bg-white border-b border-slate-200 px-4 py-3 flex-shrink-0" onClick={e => e.stopPropagation()}>
+      {isOwnCharacter && characterStats ? (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="font-semibold text-slate-800 text-sm">{entry.name}</span>
+            <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-lg leading-none">✕</button>
+          </div>
+          <div className="flex gap-4 text-sm text-slate-600">
+            <span>
+              HP{' '}
+              <span className={characterStats.currentHp / characterStats.maxHp < 0.3 ? 'text-red-500 font-semibold' : ''}>
+                {characterStats.currentHp}/{characterStats.maxHp}
+              </span>
+            </span>
+            <span>AC {characterStats.ac}</span>
+            <span>Atk +{characterStats.attackBonus}</span>
+          </div>
+          {features.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {features.map(f => (
+                <button
+                  key={f.id}
+                  onClick={() => { if (isCombat) { onNavigateToChat(); onClose(); } }}
+                  className={`text-xs px-2 py-1 rounded border font-medium transition-colors ${
+                    isCombat
+                      ? 'border-indigo-300 text-indigo-700 bg-indigo-50 hover:bg-indigo-100'
+                      : 'border-slate-200 text-slate-400 cursor-default'
+                  }`}
+                >
+                  {f.label} ●
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="font-semibold text-slate-800 text-sm">{entry.name}</span>
+            <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-lg leading-none">✕</button>
+          </div>
+          <div className="flex gap-4 text-sm text-slate-600">
+            <span>HP {entry.hp}/{entry.maxHp}</span>
+            <span>AC {entry.ac}</span>
+            <span className="capitalize">Proximity: {entry.proximity}</span>
+          </div>
+          <div className="text-xs text-slate-400">
+            {entry.status_effects.length > 0 ? `Status: ${entry.status_effects.join(', ')}` : 'Status: —'}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Message Types ────────────────────────────────────────────────────────────
+
 interface HistoryEntry {
   id: string;
   text: string;
@@ -521,6 +1696,17 @@ interface RollResult {
   dc: number;
   success: boolean;
   poi?: string;
+}
+
+interface CombatRollData {
+  action: string;
+  d20: number;
+  modifier: number;
+  total: number;
+  vsTarget: string;
+  success: boolean;
+  isCrit?: boolean;
+  damage?: string;
 }
 
 function RollBadge({ rolls }: { rolls: RollResult[] }) {
@@ -551,7 +1737,115 @@ function RollBadge({ rolls }: { rolls: RollResult[] }) {
   );
 }
 
-function ChatMessage({ entry }: { entry: HistoryEntry }) {
+function CombatRollBadge({ data }: { data: CombatRollData }) {
+  return (
+    <div className="my-2 flex flex-col gap-0.5">
+      <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-mono w-fit border ${
+        data.isCrit
+          ? 'bg-amber-50 border-amber-300 text-amber-800'
+          : data.success
+          ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+          : 'bg-slate-50 border-slate-200 text-slate-500'
+      }`}>
+        <span>🎲</span>
+        <span className="font-semibold">{data.action}</span>
+        <span className="font-bold">
+          {data.d20}{data.modifier !== 0 ? (data.modifier > 0 ? `+${data.modifier}` : data.modifier) : ''}={data.total}
+        </span>
+        <span>vs {data.vsTarget}</span>
+        <span className={data.success ? (data.isCrit ? 'text-amber-600 font-bold' : 'text-emerald-600 font-semibold') : 'text-slate-400'}>
+          {data.isCrit ? '✓ CRIT' : data.success ? '✓' : '✗'}
+        </span>
+      </div>
+      {data.damage && (
+        <div className="pl-3 text-xs font-mono text-slate-500">
+          &nbsp;&nbsp;Damage&nbsp;&nbsp;{data.damage}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CombatBanner({ type, round, initiativeSnapshot, characterId }: {
+  type: 'combat_start' | 'combat_end';
+  round?: number;
+  initiativeSnapshot?: InitiativeEntry[];
+  characterId?: string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+
+  if (type === 'combat_end') {
+    return (
+      <div className="my-3 px-4 py-2 rounded-lg border border-slate-200 bg-slate-50 text-sm text-slate-500 text-center">
+        Combat ended — all enemies defeated
+      </div>
+    );
+  }
+
+  return (
+    <div className="my-3 rounded-lg border border-red-300 bg-red-50 overflow-hidden">
+      <div className="flex items-center justify-between px-4 py-2">
+        <span className="text-sm font-semibold text-red-700">⚔ Combat started — Round {round ?? 1}</span>
+        {initiativeSnapshot && initiativeSnapshot.length > 0 && (
+          <button
+            onClick={() => setExpanded(e => !e)}
+            className="text-xs text-red-500 hover:text-red-700 underline"
+          >
+            {expanded ? 'Hide snapshot' : 'Show snapshot'}
+          </button>
+        )}
+      </div>
+      {expanded && initiativeSnapshot && (
+        <div className="px-4 pb-2 space-y-1 border-t border-red-200 pt-2">
+          {initiativeSnapshot.map(e => (
+            <div key={e.id} className="flex items-center justify-between text-xs text-slate-600">
+              <span>{e.name}{e.id === characterId ? ' (you)' : ''}</span>
+              <span className="text-slate-400">Initiative {e.initiative}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CombatResumeCard({ combatState, roomName, characterId }: {
+  combatState: CombatState;
+  roomName: string;
+  characterId: string;
+}) {
+  const living = combatState.initiativeOrder.filter(e => e.hp > 0);
+  return (
+    <div className="my-3 mx-1 rounded-lg border border-slate-200 bg-slate-50 overflow-hidden text-xs">
+      <div className="px-3 py-2 bg-slate-100 border-b border-slate-200 font-medium text-slate-600">
+        Combat resumed · Round {combatState.round} · {roomName}
+      </div>
+      <div className="px-3 py-2 space-y-1.5">
+        {living.map(e => {
+          const isYou = e.id === characterId;
+          const isActive = e.id === combatState.activeActorId;
+          const acted = e.acted && !isActive;
+          return (
+            <div key={e.id} className="flex items-center justify-between text-slate-600">
+              <span className="font-medium">{e.name}{isYou ? ' (you)' : ''}</span>
+              <span className="flex items-center gap-2">
+                <span className="text-slate-500">♥ {e.hp}/{e.maxHp}</span>
+                <span className="text-slate-400">AC {e.ac}</span>
+                {isActive && <span className="text-indigo-600 font-semibold">← your turn</span>}
+                {acted && <span className="text-slate-400">(acted)</span>}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      <div className="px-3 py-1.5 border-t border-slate-200 text-slate-400 text-center">
+        Scroll up to see how this fight started.
+      </div>
+    </div>
+  );
+}
+
+function ChatMessage({ entry, characterId }: { entry: HistoryEntry; characterId?: string }) {
   const summary = entry.mechanicalSummary;
   const type = summary?.type as string | undefined;
 
@@ -568,6 +1862,25 @@ function ChatMessage({ entry }: { entry: HistoryEntry }) {
   if (type === 'roll_result') {
     const rolls = (summary?.rolls as RollResult[]) ?? [];
     return <RollBadge rolls={rolls} />;
+  }
+
+  if (type === 'combat_roll') {
+    return <CombatRollBadge data={summary as unknown as CombatRollData} />;
+  }
+
+  if (type === 'combat_start') {
+    return (
+      <CombatBanner
+        type="combat_start"
+        round={summary?.round as number | undefined}
+        initiativeSnapshot={summary?.initiativeOrder as InitiativeEntry[] | undefined}
+        characterId={characterId}
+      />
+    );
+  }
+
+  if (type === 'combat_end') {
+    return <CombatBanner type="combat_end" />;
   }
 
   // DM narrative
@@ -596,6 +1909,17 @@ function PlayContent() {
   const [roomName, setRoomName] = useState('');
   const [activeRoomInstanceId, setActiveRoomInstanceId] = useState('');
   const [mapRefreshKey, setMapRefreshKey] = useState(0);
+  const [gameState, setGameState] = useState<'exploration' | 'combat'>('exploration');
+  const [combatState, setCombatState] = useState<CombatState | null>(null);
+  const [characterStats, setCharacterStats] = useState<CharacterStats | null>(null);
+  const [characterInventory, setCharacterInventory] = useState<CharacterInventory | null>(null);
+  const [proximityPoi, setProximityPoi] = useState<{ id: string; name: string } | null>(null);
+  const [partyMembers, setPartyMembers] = useState<{ id: string; name: string }[]>([]);
+  const [availablePois, setAvailablePois] = useState<{ id: string; name: string }[]>([]);
+  const [chip, setChip] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<ActiveTab>('chat');
+  const [showResumeCard, setShowResumeCard] = useState(true);
+  const [selectedStripEntryId, setSelectedStripEntryId] = useState<string | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const suppressScrollRef = useRef(false);
@@ -614,7 +1938,7 @@ function PlayContent() {
         setActiveRoomInstanceId(roomInstanceId);
         return Promise.all([
           fetch(`/api/v2/room/history?sessionId=${sessionId}`).then(r => r.json()),
-          fetch(`/api/v2/room/state?roomInstanceId=${roomInstanceId}`).then(r => r.json()),
+          fetch(`/api/v2/room/state?roomInstanceId=${roomInstanceId}&characterId=${characterId}`).then(r => r.json()),
         ]);
       })
       .then(result => {
@@ -635,6 +1959,13 @@ function PlayContent() {
         setHasMore(more ?? false);
         setOldestCursor(entries.length > 0 ? entries[0].createdAt : null);
         if (state.roomName) setRoomName(state.roomName);
+        if (state.gameState) setGameState(state.gameState);
+        setCombatState(state.combatState ?? null);
+        if (state.characterStats) setCharacterStats(state.characterStats);
+        if (state.characterInventory) setCharacterInventory(state.characterInventory);
+        setProximityPoi(state.characterProximityPoi ?? null);
+        setPartyMembers(state.partyMembers ?? []);
+        setAvailablePois(Object.entries((state.poiIndex as Record<string,string>) ?? {}).map(([id, name]) => ({ id, name })));
       });
   }, [sessionId, characterId]);
 
@@ -679,9 +2010,11 @@ function PlayContent() {
   const sendAction = useCallback(async () => {
     if (!input.trim() || sending || !activeRoomInstanceId || !characterId) return;
     const text = input.trim();
+    const prevGameState = gameState;
     setInput('');
     setSending(true);
     setError('');
+    setShowResumeCard(false);
 
     // Add player message to history immediately
     const optimisticEntry: HistoryEntry = {
@@ -697,7 +2030,7 @@ function PlayContent() {
       const res = await fetch('/api/v2/game/action', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ characterId, roomInstanceId: activeRoomInstanceId, playerActionText: text }),
+        body: JSON.stringify({ characterId, roomInstanceId: activeRoomInstanceId, playerActionText: text, action_hint: chip ?? undefined }),
       });
       const data = await res.json();
       if (!res.ok) { setError(data.error ?? 'Something went wrong'); return; }
@@ -707,19 +2040,34 @@ function PlayContent() {
 
       const newNarrative: HistoryEntry[] = data.currentNarrative ?? [];
       const isRoomChange = data.roomInstanceId && data.roomInstanceId !== activeRoomInstanceId;
+      const nextGameState = (data.gameState as 'exploration' | 'combat') ?? prevGameState;
+      const isTransition = prevGameState !== nextGameState;
 
-      // Append fresh entries to history; also update active room if it changed
+      // Append fresh entries to history; inject combat banner on state transitions
       setHistory(prev => {
         const withoutOptimistic = prev.filter(e => !e.id.startsWith('optimistic-'));
         const existingIds = new Set(withoutOptimistic.map((e: HistoryEntry) => e.id));
         const fresh = newNarrative.filter((e: HistoryEntry) => !existingIds.has(e.id));
         console.log('[sendAction] fresh entries:', fresh.length, fresh.map(e => (e.mechanicalSummary as Record<string,unknown>)?.type));
-        return [...withoutOptimistic, ...fresh];
+        const base = [...withoutOptimistic, ...fresh];
+        if (isTransition) {
+          base.push(buildBannerEntry(nextGameState === 'combat' ? 'combat_start' : 'combat_end', data.combatState as CombatState | null));
+        }
+        return base;
       });
       if (isRoomChange) {
         console.log('[sendAction] room changed →', data.roomInstanceId);
         setActiveRoomInstanceId(data.roomInstanceId);
       }
+      if (data.gameState) setGameState(data.gameState);
+      setCombatState(data.combatState ?? null);
+      if (data.characterStats) setCharacterStats(data.characterStats);
+      if (data.characterInventory) setCharacterInventory(data.characterInventory);
+      if (data.roomName) setRoomName(data.roomName);
+      setProximityPoi(data.characterProximityPoi ?? null);
+      if (data.partyMembers) setPartyMembers(data.partyMembers);
+      if (data.poiIndex) setAvailablePois(Object.entries(data.poiIndex as Record<string,string>).map(([id, name]) => ({ id, name })));
+      setChip(null);
 
       setMapRefreshKey(k => k + 1);
     } catch {
@@ -728,84 +2076,160 @@ function PlayContent() {
     } finally {
       setSending(false);
     }
-  }, [input, sending, activeRoomInstanceId, characterId]);
+  }, [input, sending, activeRoomInstanceId, characterId, chip, gameState]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendAction(); }
   };
 
+  // Fires a game action directly (e.g. from inventory buttons) without touching the chat input.
+  const executeDirectAction = useCallback(async (text: string, hint: string) => {
+    if (sending || !activeRoomInstanceId || !characterId) return;
+    const prevGs = gameState;
+    setSending(true);
+    setError('');
+    setShowResumeCard(false);
+    try {
+      const res = await fetch('/api/v2/game/action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ characterId, roomInstanceId: activeRoomInstanceId, playerActionText: text, action_hint: hint }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setError(data.error ?? 'Action failed'); return; }
+      const newNarrative: HistoryEntry[] = data.currentNarrative ?? [];
+      const nextGs = (data.gameState as 'exploration' | 'combat') ?? prevGs;
+      setHistory(prev => {
+        const existingIds = new Set(prev.map(e => e.id));
+        const fresh = newNarrative.filter(e => !existingIds.has(e.id));
+        const base = [...prev, ...fresh];
+        if (prevGs !== nextGs) base.push(buildBannerEntry(nextGs === 'combat' ? 'combat_start' : 'combat_end', data.combatState as CombatState | null));
+        return base;
+      });
+      if (data.gameState) setGameState(data.gameState);
+      setCombatState(data.combatState ?? null);
+      if (data.characterStats) setCharacterStats(data.characterStats);
+      if (data.characterInventory) setCharacterInventory(data.characterInventory);
+      if (data.roomName) setRoomName(data.roomName);
+      setProximityPoi(data.characterProximityPoi ?? null);
+      if (data.partyMembers) setPartyMembers(data.partyMembers);
+      if (data.poiIndex) setAvailablePois(Object.entries(data.poiIndex as Record<string,string>).map(([id, name]) => ({ id, name })));
+      setMapRefreshKey(k => k + 1);
+      setActiveTab('chat');
+    } finally {
+      setSending(false);
+    }
+  }, [sending, activeRoomInstanceId, characterId, gameState]);
+
+  const handleFeatureActivate = useCallback((label: string) => {
+    setChip(label);
+    setActiveTab('chat');
+  }, []);
+
+  const handleCombatUseItem = useCallback((item: ItemDefinition, targetName?: string) => {
+    const text = targetName ? `use ${item.name} on ${targetName}` : `use ${item.name}`;
+    executeDirectAction(text, 'use_item');
+  }, [executeDirectAction]);
+
   return (
     <div className="flex flex-col h-screen bg-slate-50">
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 bg-white border-b border-slate-200">
-        <h1 className="font-semibold text-slate-800">D&amp;D Async</h1>
-        <a href="/v2/setup" className="text-xs text-slate-400 hover:text-slate-600">Switch session</a>
-      </div>
+      <AppBar
+        left={
+          <a href="/v2/setup" className="text-sm text-slate-400 hover:text-slate-600">
+            Switch session
+          </a>
+        }
+      />
+      <Header
+        roomName={roomName}
+        gameState={gameState}
+        round={combatState?.round}
+        hp={characterStats?.currentHp}
+        maxHp={characterStats?.maxHp}
+      />
 
-      {/* Chat stream */}
-      <div ref={chatContainerRef} className="flex-1 overflow-y-auto px-4 py-4">
-        {hasMore && (
-          <div className="flex justify-center mb-3">
-            <button
-              onClick={loadMore}
-              disabled={loadingMore}
-              className="text-xs text-slate-400 hover:text-slate-600 disabled:opacity-40 px-3 py-1 border border-slate-200 rounded-full"
-            >
-              {loadingMore ? 'Loading…' : 'Load earlier messages'}
-            </button>
-          </div>
-        )}
-        {history.length === 0 && !sending && (
-          <p className="text-center text-slate-400 text-sm mt-8">Loading…</p>
-        )}
-        {history.map(entry => (
-          <ChatMessage key={entry.id} entry={entry} />
-        ))}
-        {sending && (
-          <div className="flex justify-start my-2">
-            <div className="px-4 py-3 bg-white border border-slate-200 rounded-2xl rounded-bl-sm text-sm text-slate-400 italic">
-              The DM is writing…
-            </div>
-          </div>
-        )}
-        {error && (
-          <p className="text-center text-red-500 text-xs my-2">{error}</p>
-        )}
-        <div ref={chatEndRef} />
-      </div>
-
-      {/* Map bottom sheet */}
-      {activeRoomInstanceId && (
-        <MapSheet
-          sessionId={sessionId!}
-          characterId={characterId!}
-          roomInstanceId={activeRoomInstanceId}
-          roomName={roomName}
-          refreshKey={mapRefreshKey}
-        />
+      {gameState === 'combat' && combatState && (
+        <>
+          <InitiativeStrip
+            initiativeOrder={combatState.initiativeOrder}
+            activeActorId={combatState.activeActorId}
+            characterId={characterId!}
+            characterClass={characterStats?.characterClass ?? ''}
+            selectedId={selectedStripEntryId}
+            onSelect={setSelectedStripEntryId}
+          />
+          {selectedStripEntryId && (() => {
+            const entry = combatState.initiativeOrder.find(e => e.id === selectedStripEntryId);
+            return entry ? (
+              <InitiativeMiniSheet
+                entry={entry}
+                characterStats={characterStats}
+                isOwnCharacter={entry.id === characterId}
+                isCombat={true}
+                onClose={() => setSelectedStripEntryId(null)}
+                onNavigateToChat={() => setActiveTab('chat')}
+              />
+            ) : null;
+          })()}
+        </>
       )}
 
-      {/* Input */}
-      <div className="px-4 py-3 bg-white border-t border-slate-200">
-        <div className="flex gap-2">
-          <textarea
-            value={input}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            rows={2}
-            placeholder="What do you do? (Enter to send)"
-            className="flex-1 resize-none border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
-            disabled={sending}
+      <div className="flex-1 flex flex-col overflow-hidden" onClick={() => setSelectedStripEntryId(null)}>
+        {activeTab === 'chat' && (
+          <ChatTab
+            history={history}
+            hasMore={hasMore}
+            loadingMore={loadingMore}
+            loadMore={loadMore}
+            sending={sending}
+            error={error}
+            input={input}
+            setInput={setInput}
+            sendAction={sendAction}
+            handleKeyDown={handleKeyDown}
+            chip={chip}
+            setChip={setChip}
+            gameState={gameState}
+            combatState={combatState}
+            characterStats={characterStats}
+            characterInventory={characterInventory}
+            chatEndRef={chatEndRef}
+            chatContainerRef={chatContainerRef}
+            showResumeCard={showResumeCard}
+            roomName={roomName}
+            characterId={characterId!}
           />
-          <button
-            onClick={sendAction}
-            disabled={sending || !input.trim()}
-            className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-40"
-          >
-            Send
-          </button>
-        </div>
+        )}
+        {activeTab === 'inventory' && (
+          <InventoryTab
+            characterInventory={characterInventory}
+            gameState={gameState}
+            onExplorationAction={executeDirectAction}
+            onCombatUse={handleCombatUseItem}
+            proximityPoi={proximityPoi}
+            availablePois={availablePois}
+            partyMembers={partyMembers}
+            combatState={combatState}
+          />
+        )}
+        {activeTab === 'party' && (
+          <PartyTab
+            characterStats={characterStats}
+            gameState={gameState}
+            onFeatureActivate={handleFeatureActivate}
+          />
+        )}
+        {activeTab === 'map' && activeRoomInstanceId && (
+          <MapTab
+            sessionId={sessionId!}
+            characterId={characterId!}
+            roomInstanceId={activeRoomInstanceId}
+            refreshKey={mapRefreshKey}
+          />
+        )}
       </div>
+
+      <BottomNav activeTab={activeTab} onTabChange={setActiveTab} />
     </div>
   );
 }

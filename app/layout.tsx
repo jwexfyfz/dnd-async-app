@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-import UserMenu from "../components/user-menu";
+import GlobalUserMenu from "../components/global-user-menu";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -14,8 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "D&D Async",
-  description: "Asynchronous Dungeons & Dragons campaign manager — build your hero, then play on your own schedule.",
+  title: "Delve",
+  description: "Play D&D with friends — or solo — without scheduling a session. Take your turn whenever you have five minutes.",
 };
 
 export default function RootLayout({
@@ -30,7 +30,7 @@ export default function RootLayout({
     >
       <body className="min-h-full flex flex-col">
         <div id="global-user-menu" className="fixed top-3 right-3 z-50">
-          <UserMenu />
+          <GlobalUserMenu />
         </div>
         {children}
       </body>

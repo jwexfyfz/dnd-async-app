@@ -57,7 +57,24 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    // Proximity POI and party members for the requesting character
+    let characterProximityPoi: { id: string; name: string } | null = null;
+    const partyMembers: { id: string; name: string }[] = [];
+    if (characterId) {
+      const selfParticipant = participants.find(p => p.characterId === characterId);
+      const cs = selfParticipant?.combatState as { proximity_target_id?: string } | null;
+      if (cs?.proximity_target_id && poiIndex[cs.proximity_target_id]) {
+        characterProximityPoi = { id: cs.proximity_target_id, name: poiIndex[cs.proximity_target_id] };
+      }
+      for (const p of participants) {
+        if (p.characterId !== characterId) {
+          partyMembers.push({ id: p.characterId, name: p.character.name });
+        }
+      }
+    }
+
     let characterStats = null;
+    let characterInventory = null;
     if (characterId) {
       const char = await prisma.character.findUnique({
         where: { id: characterId },
@@ -69,6 +86,7 @@ export async function GET(req: NextRequest) {
       });
       if (char) {
         const inv = normalizeInventory(char.inventory);
+        characterInventory = inv;
         const dexMod = abilityModifier(char.baseDexterity);
         const strMod = abilityModifier(char.baseStrength);
         const profBonus = char.level >= 5 ? 3 : 2;
@@ -100,6 +118,9 @@ export async function GET(req: NextRequest) {
       poiStates,
       uiLayoutAnchors,
       characterStats,
+      characterInventory,
+      characterProximityPoi,
+      partyMembers,
     });
   } catch {
     return NextResponse.json({ error: 'Failed to fetch room state' }, { status: 500 });

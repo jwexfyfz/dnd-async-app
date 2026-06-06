@@ -38,9 +38,12 @@ export interface ExtractedAction {
   target_character_id: string | null;
 }
 
+export type TargetClass = 'self' | 'ally' | 'enemy' | 'poi';
+
 export interface ItemDefinition {
   id: string;
   name: string;
+  description?: string;
   quantity?: number;
   equip_slot?: 'main_hand' | 'off_hand' | 'head' | 'chest' | 'legs' | 'feet' | 'ring' | 'amulet';
   equip_bonus?: Record<string, number>;
@@ -58,6 +61,7 @@ export interface ItemDefinition {
   value_gp?: number;
   combat_usable?: boolean;
   silent?: boolean;
+  target?: TargetClass | TargetClass[];
 }
 
 export interface CharacterInventory {
@@ -123,6 +127,7 @@ export interface InitiativeEntry {
   priority_target_until_round?: number;
   reactionUsed?: boolean;
   resistances?: string[];
+  passive_perception?: number;
 }
 
 export interface TurnUsage {
