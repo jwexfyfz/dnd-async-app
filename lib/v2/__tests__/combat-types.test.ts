@@ -52,6 +52,7 @@ describe('CombatState structure', () => {
       characterInventory: { bag: [], equipped: {} },
       openSpaceItems: [],
       adjacentRoomPreviews: {},
+      characterStats: { currentHp: 18, maxHp: 18, ac: 12, level: 3, characterClass: 'Rogue', attackBonus: 4, initiativeMod: 2, baseStrength: 10, baseDexterity: 14, baseConstitution: 12, baseIntelligence: 10, baseWisdom: 10, baseCharisma: 10, skillsModifiers: {}, skillProficiencies: [], isHiding: false },
     };
     expect(payload.gameState).toBe('exploration');
     expect(payload.combatState).toBeNull();
@@ -79,6 +80,7 @@ describe('CombatState structure', () => {
       characterInventory: { bag: [], equipped: {} },
       openSpaceItems: [],
       adjacentRoomPreviews: {},
+      characterStats: { currentHp: 14, maxHp: 18, ac: 12, level: 3, characterClass: 'Rogue', attackBonus: 4, initiativeMod: 2, baseStrength: 10, baseDexterity: 14, baseConstitution: 12, baseIntelligence: 10, baseWisdom: 10, baseCharisma: 10, skillsModifiers: {}, skillProficiencies: [], isHiding: false },
     };
     expect(payload.gameState).toBe('combat');
     expect(payload.combatState?.round).toBe(2);

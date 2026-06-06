@@ -24,7 +24,7 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 // ─── Item Helpers ─────────────────────────────────────────────────────────────
 
-function normalizeInventory(raw: unknown): CharacterInventory {
+export function normalizeInventory(raw: unknown): CharacterInventory {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     return { bag: [], equipped: {} };
   }
@@ -679,10 +679,13 @@ async function parseIntentWithHaiku(
 
 interface PoiCombatStats {
   dex_score?: number;
+  wis_score?: number;
   attack_bonus?: number;
   damage?: string;
   max_hp?: number;
   ac?: number;
+  passive_perception?: number;
+  resistances?: string[];
 }
 
 interface AiBehavior {
@@ -804,6 +807,7 @@ export async function enterCombat(
       acted: false,
       proximity: 'close',
       status_effects: [],
+      resistances: enemy.combatStats.resistances ?? [],
     };
   });
 
@@ -833,6 +837,161 @@ export function exitCombat(session: { gameState: string; combatState: unknown })
   console.log('[stage3:combat] combat ended — all enemies dead');
 }
 
+// ─── Combat: Opportunity Attacks (Phase 5) ───────────────────────────────────
+
+export interface OpportunityAttackResult {
+  facts: string[];
+  hpDamage: number;
+  updatedCombatState: CombatState;
+}
+
+export function resolveOpportunityAttacks(
+  cs: CombatState,
+  characterId: string,
+  characterName: string,
+  poiInstances: Array<{ id: string; template: { defaultProperties: unknown } }>,
+): OpportunityAttackResult {
+  const facts: string[] = [];
+  let hpDamage = 0;
+
+  const playerEntry = cs.initiativeOrder.find(e => e.id === characterId);
+  const hasDisengaged = playerEntry?.status_effects.includes('disengaged') ?? false;
+  if (hasDisengaged) {
+    return { facts, hpDamage, updatedCombatState: cs };
+  }
+
+  const charAc = playerEntry?.ac ?? 10;
+  let order = cs.initiativeOrder.map(e => ({ ...e }));
+
+  for (let i = 0; i < order.length; i++) {
+    const entry = order[i];
+    if (entry.type !== 'enemy') continue;
+    if (entry.proximity !== 'close') continue;
+    if (entry.reactionUsed) continue;
+    if (entry.hp <= 0) continue;
+
+    const poi = poiInstances.find(p => p.id === entry.id);
+    const dp = (poi?.template?.defaultProperties ?? {}) as Record<string, unknown>;
+    const combatStats = (dp.combat_stats ?? {}) as PoiCombatStats;
+    const attackBonus = combatStats.attack_bonus ?? 0;
+    const damageDice = combatStats.damage ?? '1d4';
+
+    const roll = rollD20Check(attackBonus, charAc, 'AC');
+    order[i] = { ...entry, reactionUsed: true };
+
+    if (roll.fumble) {
+      facts.push(`${entry.name} swings at ${characterName} (opportunity) — rolled 1, miss.`);
+      console.log(`[stage3:opportunity] ${entry.name} opportunity attack — roll=1 hit=false damage=0`);
+    } else if (roll.success || roll.critical) {
+      const damage = computeAttackDamage(damageDice, 0, roll.critical);
+      hpDamage += damage;
+      facts.push(`${entry.name} strikes ${characterName} as they flee — rolled ${roll.roll}+${attackBonus}=${roll.total} vs AC ${charAc}, hit, dealt ${damage} damage.`);
+      console.log(`[stage3:opportunity] ${entry.name} opportunity attack — roll=${roll.roll} vs AC=${charAc} hit=true damage=${damage}`);
+    } else {
+      facts.push(`${entry.name} swings at ${characterName} (opportunity) — rolled ${roll.roll}+${attackBonus}=${roll.total} vs AC ${charAc}, miss.`);
+      console.log(`[stage3:opportunity] ${entry.name} opportunity attack — roll=${roll.roll} vs AC=${charAc} hit=false damage=0`);
+    }
+  }
+
+  return { facts, hpDamage, updatedCombatState: { ...cs, initiativeOrder: order } };
+}
+
+// ─── Combat: Enemy AI Turn Resolution (Phase 4) ──────────────────────────────
+
+export interface EnemyTurnResult {
+  facts: string[];
+  hpDamage: number;
+  updatedEntry: InitiativeEntry;
+}
+
+export function resolveEnemyTurn(
+  entry: InitiativeEntry,
+  cs: CombatState,
+  characterId: string,
+  characterName: string,
+  defaultProps: Record<string, unknown>,
+): EnemyTurnResult {
+  const facts: string[] = [];
+  let hpDamage = 0;
+  let updatedEntry = { ...entry };
+
+  if (entry.surprised) {
+    updatedEntry = { ...entry, surprised: false };
+    facts.push(`${entry.name} is surprised and loses their turn.`);
+    console.log(`[stage3:enemy-turn] ${entry.name} — action=skip (surprised)`);
+    return { facts, hpDamage, updatedEntry };
+  }
+
+  const combatStats = (defaultProps.combat_stats ?? {}) as PoiCombatStats;
+  const aiBehavior = (defaultProps.ai_behavior ?? {}) as AiBehavior;
+  const priority = aiBehavior.priority ?? 'aggressive';
+  const fleeThreshold = aiBehavior.flee_threshold ?? 0;
+
+  const charEntry = cs.initiativeOrder.find(e => e.id === characterId);
+  const characterAc = charEntry?.ac ?? 10;
+  const playerDodging = charEntry?.status_effects.includes('dodging') ?? false;
+
+  const hasPriorityTarget =
+    entry.priority_target === characterId &&
+    (entry.priority_target_until_round === undefined || cs.round <= entry.priority_target_until_round);
+
+  type EnemyAction = 'attack' | 'move' | 'flee' | 'hold';
+  let action: EnemyAction = 'hold';
+
+  if (hasPriorityTarget || priority === 'aggressive') {
+    action = entry.proximity === 'close' ? 'attack' : 'move';
+  } else if (priority === 'defensive') {
+    action = entry.proximity === 'close' ? 'attack' : 'hold';
+  } else if (priority === 'cowardly') {
+    const hpPercent = entry.maxHp > 0 ? entry.hp / entry.maxHp : 1;
+    action = hpPercent <= fleeThreshold ? 'flee' : 'attack';
+  }
+
+  console.log(`[stage3:enemy-turn] ${entry.name} — action=${action} target=${characterName}`);
+
+  if (action === 'attack') {
+    const attackBonus = combatStats.attack_bonus ?? 0;
+    const damageDice = combatStats.damage ?? '1d4';
+    const hasAdvantage = entry.status_effects.includes('advantage_next_attack');
+    const hasDisadvantage = playerDodging;
+
+    let roll = rollD20Check(attackBonus, characterAc, 'AC');
+    if (hasAdvantage && !hasDisadvantage) {
+      const roll2 = rollD20Check(attackBonus, characterAc, 'AC');
+      roll = roll2.roll > roll.roll ? roll2 : roll;
+    } else if (hasDisadvantage && !hasAdvantage) {
+      const roll2 = rollD20Check(attackBonus, characterAc, 'AC');
+      roll = roll2.roll < roll.roll ? roll2 : roll;
+    }
+
+    if (hasAdvantage) {
+      updatedEntry = { ...updatedEntry, status_effects: updatedEntry.status_effects.filter(s => s !== 'advantage_next_attack') };
+    }
+
+    if (roll.fumble) {
+      facts.push(`${entry.name} attacked ${characterName} — rolled 1 (fumble), miss.`);
+      console.log(`[stage3:enemy-attack] ${entry.name} roll=1 vs AC=${characterAc} hit=false damage=0`);
+    } else if (roll.success || roll.critical) {
+      const damage = computeAttackDamage(damageDice, 0, roll.critical);
+      hpDamage = damage;
+      facts.push(`${entry.name} attacked ${characterName} — rolled ${roll.roll}+${attackBonus}=${roll.total} vs AC ${characterAc}, ${roll.critical ? 'CRITICAL HIT' : 'hit'}, dealt ${damage} damage.`);
+      console.log(`[stage3:enemy-attack] ${entry.name} roll=${roll.roll} vs AC=${characterAc} hit=true damage=${damage}`);
+    } else {
+      facts.push(`${entry.name} attacked ${characterName} — rolled ${roll.roll}+${attackBonus}=${roll.total} vs AC ${characterAc}, miss.`);
+      console.log(`[stage3:enemy-attack] ${entry.name} roll=${roll.roll} vs AC=${characterAc} hit=false damage=0`);
+    }
+  } else if (action === 'move') {
+    updatedEntry = { ...updatedEntry, proximity: 'close' };
+    facts.push(`${entry.name} moves to close range.`);
+  } else if (action === 'flee') {
+    facts.push(`${entry.name} attempts to flee!`);
+  } else {
+    facts.push(`${entry.name} holds position.`);
+  }
+
+  return { facts, hpDamage, updatedEntry };
+}
+
 // ─── Combat: Turn Resolution (Phase 3) ───────────────────────────────────────
 
 export function advanceTurn(cs: CombatState): CombatState {
@@ -858,19 +1017,21 @@ interface CombatActionResult {
   updatedCombatState: CombatState;
   combatEnded: boolean;
   deadEnemyPoiIds: string[];
+  silentKillIds: Set<string>;
 }
 
 export function resolveCombatAction(
   action: ExtractedAction,
   cs: CombatState,
   character: { id: string; name: string; characterClass: string; level: number; baseDexterity: number; baseStrength: number; baseCharisma: number; baseWisdom: number; isHiding?: boolean },
-  equippedWeapon: { damageDice: string; weaponType?: string } | null,
+  equippedWeapon: { damageDice: string; weaponType?: string; silent?: boolean } | null,
 ): CombatActionResult {
   const facts: string[] = [];
   let order = [...cs.initiativeOrder];
   const playerEntry = order.find(e => e.id === character.id)!;
   let combatEnded = false;
   const deadEnemyPoiIds: string[] = [];
+  const silentKillIds = new Set<string>();
 
   if (action.action_type === 'attack') {
     const targetId = action.target_poi_instance_id;
@@ -886,11 +1047,14 @@ export function resolveCombatAction(
       const profBonus = character.level >= 5 ? 3 : 2;
       const attackBonus = statMod + profBonus;
 
-      // Advantage/disadvantage
+      // Advantage/disadvantage (Phase 13: add prone)
       const isHidden = character.isHiding ?? false;
       const targetSurprised = target.surprised;
-      const hasAdvantage = isHidden || targetSurprised;
-      const hasDisadvantage = !isHidden && equippedWeapon?.weaponType === 'ranged' && order.some(e => e.type === 'enemy' && e.proximity === 'close' && e.hp > 0);
+      const targetProne = target.status_effects.includes('prone');
+      const meleeAttack = equippedWeapon?.weaponType !== 'ranged';
+      const hasAdvantage = isHidden || targetSurprised || (targetProne && meleeAttack);
+      const hasDisadvantage = (!isHidden && equippedWeapon?.weaponType === 'ranged' && order.some(e => e.type === 'enemy' && e.proximity === 'close' && e.hp > 0))
+        || (targetProne && !meleeAttack);
 
       let roll1 = rollD20Check(attackBonus, target.ac, 'AC');
       let finalRoll = roll1;
@@ -918,17 +1082,25 @@ export function resolveCombatAction(
           sneakDamage = rollDice(sneakDiceCount, 6).total;
         }
 
-        const totalDamage = damage + sneakDamage;
-        const newHp = Math.max(0, target.hp - totalDamage);
+        // Phase 13: damage resistance halves damage
+        const weaponType = equippedWeapon?.weaponType ?? 'melee';
+        const isResisted = (target.resistances ?? []).includes(weaponType);
+        const effectiveDamage = isResisted ? Math.max(1, Math.floor((damage + sneakDamage) / 2)) : damage + sneakDamage;
+
+        const newHp = Math.max(0, target.hp - effectiveDamage);
         order[targetIdx] = { ...target, hp: newHp };
 
-        console.log(`[stage3:attack] target=${target.name} roll=${finalRoll.roll} vs AC=${target.ac} hit=${finalRoll.success} damage=${totalDamage} crit=${finalRoll.critical}`);
-        facts.push(`${character.name} attacked ${target.name} — rolled ${finalRoll.roll}+${attackBonus}=${finalRoll.total} vs AC ${target.ac}, ${finalRoll.critical ? 'CRITICAL HIT' : 'hit'}, dealt ${totalDamage} damage${sneakDamage ? ` (incl. ${sneakDiceCount}d6 sneak attack)` : ''}.`);
+        console.log(`[stage3:attack] target=${target.name} roll=${finalRoll.roll} vs AC=${target.ac} hit=${finalRoll.success} damage=${effectiveDamage}${isResisted ? '(resisted)' : ''} crit=${finalRoll.critical}`);
+        facts.push(`${character.name} attacked ${target.name} — rolled ${finalRoll.roll}+${attackBonus}=${finalRoll.total} vs AC ${target.ac}, ${finalRoll.critical ? 'CRITICAL HIT' : 'hit'}, dealt ${effectiveDamage} damage${sneakDamage ? ` (incl. ${sneakDiceCount}d6 sneak attack)` : ''}${isResisted ? ' (resisted)' : ''}.`);
 
         if (newHp <= 0) {
           console.log(`[stage3:enemy-dead] ${target.name} dropped to 0 HP — removed from initiative`);
           facts.push(`${target.name} dropped to 0 HP and is dead.`);
+          // Phase 13: silent kill only if hidden + silent weapon
+          const isSilentKill = isHidden && (equippedWeapon?.silent ?? false);
           deadEnemyPoiIds.push(target.id);
+          if (!isSilentKill) silentKillIds.delete(target.id);
+          else silentKillIds.add(target.id);
           order = order.filter(e => e.id !== target.id);
         }
       } else {
@@ -1003,7 +1175,7 @@ export function resolveCombatAction(
     console.log(`[stage3:turn-advance] ${cs.activeActorId} → ${updatedCs.activeActorId}`);
   }
 
-  return { facts, updatedCombatState: updatedCs, combatEnded, deadEnemyPoiIds };
+  return { facts, updatedCombatState: updatedCs, combatEnded, deadEnemyPoiIds, silentKillIds };
 }
 
 // ─── Stage 3: Deterministic State Mutation ───────────────────────────────────
@@ -2588,6 +2760,7 @@ async function generateAndPersistNarrative(
   roomDescription: string,
   appliedActions: AppliedAction[],
   sessionId: string,
+  extraFacts?: string[],
 ): Promise<{ text: string; persisted: boolean }> {
   const [recentLogs, freshPois, sessionRow] = await Promise.all([
     prisma.messageLog.findMany({
@@ -2665,17 +2838,21 @@ async function generateAndPersistNarrative(
     })
     .join(' ');
 
+  const finalFactBlock = extraFacts && extraFacts.length > 0
+    ? extraFacts.join(' ') + (mechanicalFactBlock ? ' ' + mechanicalFactBlock : '')
+    : mechanicalFactBlock;
+
   const historyBlock = chronologicalLogs
     .map((log, i) => `[${i + 1}] ${log.text}`)
     .join('\n');
 
   console.log('[narrative] room:', roomName);
-  console.log('[narrative] fact block:', mechanicalFactBlock);
+  console.log('[narrative] fact block:', finalFactBlock);
 
   const narrativeResponse = await anthropic.messages.create({
     model: 'claude-haiku-4-5-20251001',
     max_tokens: 1024,
-    system: buildNarrativeSystemPrompt(roomName, roomDescription, mechanicalFactBlock, itemsBlock, storyFlags),
+    system: buildNarrativeSystemPrompt(roomName, roomDescription, finalFactBlock, itemsBlock, storyFlags),
     messages: [
       {
         role: 'user',
@@ -2736,7 +2913,12 @@ async function buildViewState(
     }),
     prisma.character.findUniqueOrThrow({
       where: { id: characterId },
-      select: { inventory: true },
+      select: {
+        inventory: true, currentHp: true, maxHp: true, level: true, characterClass: true,
+        baseStrength: true, baseDexterity: true, baseConstitution: true, baseIntelligence: true,
+        baseWisdom: true, baseCharisma: true, skillsModifiers: true, skillProficiencies: true,
+        isHiding: true,
+      },
     }),
     prisma.poiInstance.findMany({
       where: { roomInstanceId },
@@ -2880,6 +3062,14 @@ async function buildViewState(
     ? (sessionRow.combatState as unknown as import('@/types/v2-game').CombatState)
     : null;
 
+  const profBonus = charRow.level >= 5 ? 3 : charRow.level >= 3 ? 2 : 2;
+  const dexMod = abilityModifier(charRow.baseDexterity);
+  const strMod = abilityModifier(charRow.baseStrength);
+  const inv = normalizeInventory(charRow.inventory);
+  const armorBonus = Object.values(inv.equipped)
+    .filter((i): i is import('@/types/v2-game').ItemDefinition => i != null)
+    .reduce((acc, item) => acc + ((item.equip_bonus?.ac) ?? 0), 0);
+
   return {
     roomInstanceId,
     currentNarrative: orderedNarrative,
@@ -2892,6 +3082,24 @@ async function buildViewState(
     characterInventory,
     openSpaceItems,
     adjacentRoomPreviews,
+    characterStats: {
+      currentHp: charRow.currentHp,
+      maxHp: charRow.maxHp,
+      ac: 10 + dexMod + armorBonus,
+      level: charRow.level,
+      characterClass: charRow.characterClass,
+      attackBonus: strMod + profBonus,
+      initiativeMod: dexMod,
+      baseStrength: charRow.baseStrength,
+      baseDexterity: charRow.baseDexterity,
+      baseConstitution: charRow.baseConstitution,
+      baseIntelligence: charRow.baseIntelligence,
+      baseWisdom: charRow.baseWisdom,
+      baseCharisma: charRow.baseCharisma,
+      skillsModifiers: (charRow.skillsModifiers as Record<string, number>) ?? {},
+      skillProficiencies: charRow.skillProficiencies ?? [],
+      isHiding: charRow.isHiding,
+    },
   };
 }
 
@@ -3261,10 +3469,10 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
       }
     }
 
-    // Combat action resolution (Phase 3): resolve in-combat actions before normal Stage 3
+    // Combat action resolution (Phase 3 + 4): resolve in-combat actions, then auto-resolve enemy turns
     const inCombat = sessionForGate.gameState === 'combat' && !!sessionForGate.combatState;
     const combatActionTypes = new Set(['attack', 'dodge', 'dash', 'disengage', 'hide', 'provoke', 'change_proximity', 'death_save']);
-    const combatFacts: string[] = [];
+    const allCombatFacts: string[] = [];
     if (inCombat && parsedActions.length > 0 && combatActionTypes.has(parsedActions[0].action_type)) {
       const cs = sessionForGate.combatState as unknown as CombatState;
       const mainHand = characterInventory.equipped.main_hand;
@@ -3275,9 +3483,9 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
         { id: character.id, name: character.name, characterClass: character.characterClass, level: character.level, baseDexterity: character.baseDexterity, baseStrength: character.baseStrength, baseCharisma: character.baseCharisma, baseWisdom: character.baseWisdom, isHiding: character.isHiding },
         equippedWeapon,
       );
-      combatFacts.push(...combatResult.facts);
+      allCombatFacts.push(...combatResult.facts);
 
-      // Mark dead enemies in DB
+      // Mark dead enemies in DB (from player attack)
       for (const deadId of combatResult.deadEnemyPoiIds) {
         const existingPoi = await prisma.poiInstance.findUnique({ where: { id: deadId }, select: { currentProperties: true } });
         if (existingPoi) {
@@ -3292,7 +3500,40 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
         await prisma.gameSession.update({ where: { id: roomInstance.session.id }, data: { gameState: 'exploration', combatState: Prisma.JsonNull } });
         console.log('[stage3:combat] combat ended — all enemies dead');
       } else {
-        await prisma.gameSession.update({ where: { id: roomInstance.session.id }, data: { combatState: combatResult.updatedCombatState as object } });
+        // Phase 4: auto-resolve enemy turns until the next player turn
+        let workingCs = combatResult.updatedCombatState;
+        let totalEnemyDamage = 0;
+
+        while (true) {
+          const activeEntry = workingCs.initiativeOrder.find(e => e.id === workingCs.activeActorId);
+          if (!activeEntry || activeEntry.type === 'character') break;
+
+          const poi = roomInstance.poiInstances.find(p => p.id === activeEntry.id);
+          const defaultProps = (poi?.template?.defaultProperties ?? {}) as Record<string, unknown>;
+
+          const result = resolveEnemyTurn(activeEntry, workingCs, characterId, character.name, defaultProps);
+          allCombatFacts.push(...result.facts);
+          totalEnemyDamage += result.hpDamage;
+
+          workingCs = {
+            ...workingCs,
+            initiativeOrder: workingCs.initiativeOrder.map(e =>
+              e.id === activeEntry.id ? result.updatedEntry : e,
+            ),
+          };
+
+          // Player is down — remaining enemies skip
+          if (totalEnemyDamage >= character.currentHp) break;
+
+          workingCs = advanceTurn(workingCs);
+        }
+
+        if (totalEnemyDamage > 0) {
+          const newHp = Math.max(0, character.currentHp - totalEnemyDamage);
+          await prisma.character.update({ where: { id: characterId }, data: { currentHp: newHp } });
+        }
+
+        await prisma.gameSession.update({ where: { id: roomInstance.session.id }, data: { combatState: workingCs as object } });
       }
     }
 
@@ -3313,6 +3554,20 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
       isHiding: character.isHiding,
     };
 
+    // Phase 5: opportunity attacks fire when player flees (move_to_room in combat)
+    if (inCombat && parsedActions[0]?.action_type === 'move_to_room') {
+      const cs = sessionForGate.combatState as unknown as CombatState;
+      const oppResult = resolveOpportunityAttacks(cs, characterId, character.name, roomInstance.poiInstances);
+      allCombatFacts.push(...oppResult.facts);
+      if (oppResult.hpDamage > 0) {
+        const newHp = Math.max(0, character.currentHp - oppResult.hpDamage);
+        await prisma.character.update({ where: { id: characterId }, data: { currentHp: newHp } });
+      }
+      if (oppResult.hpDamage > 0 || oppResult.facts.length > 0) {
+        await prisma.gameSession.update({ where: { id: roomInstance.session.id }, data: { combatState: oppResult.updatedCombatState as object } });
+      }
+    }
+
     const { appliedActions, newRoomInstanceId } = await mutateGameState(
       parsedActions,
       characterCtx,
@@ -3325,6 +3580,80 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
 
     // Check whether any story flags set this turn complete the current act
     await checkAndAdvanceAct(roomInstance.session.id);
+
+    // Phase 6: on room entry, run awareness detection for enemies in new room
+    if (newRoomInstanceId && parsedActions[0]?.action_type === 'move_to_room') {
+      const newRoomFull = await prisma.roomInstance.findUniqueOrThrow({
+        where: { id: newRoomInstanceId },
+        include: { poiInstances: { include: { template: true } } },
+      });
+      const stealthRollValue = rollStealthCheck(abilityModifier(character.baseDexterity));
+      const isSneaking = character.isHiding;
+      console.log(`[stage3:detection] room=${newRoomInstanceId} sneaking=${isSneaking}`);
+      for (const poi of newRoomFull.poiInstances) {
+        const dp = poi.template.defaultProperties as Record<string, unknown>;
+        const cp = poi.currentProperties as Record<string, unknown>;
+        const awareness = cp.awareness_state as string | undefined;
+        if (!awareness || awareness === 'alert' || awareness === 'dead') continue;
+        const combatStats = (dp.combat_stats ?? {}) as PoiCombatStats;
+        const wisScore = combatStats.wis_score ?? 10;
+        const passivePerception = combatStats.passive_perception ?? (10 + abilityModifier(wisScore));
+        if (awareness === 'unaware') {
+          if (!isSneaking) {
+            await prisma.poiInstance.update({ where: { id: poi.id }, data: { currentProperties: { ...cp, awareness_state: 'suspicious' } } });
+            allCombatFacts.push(`${poi.template.name} notices your entry.`);
+            console.log(`[stage3:detection] ${poi.template.name}: unaware → suspicious (no stealth)`);
+          } else {
+            console.log(`[stage3:stealth] roll=${stealthRollValue} vs DC=${passivePerception} result=${stealthRollValue >= passivePerception ? 'pass' : 'fail'}`);
+            if (stealthRollValue < passivePerception) {
+              await prisma.poiInstance.update({ where: { id: poi.id }, data: { currentProperties: { ...cp, awareness_state: 'suspicious' } } });
+              allCombatFacts.push(`${poi.template.name} heard something — their gaze sharpens.`);
+            }
+          }
+        }
+      }
+    }
+
+    // Phase 6: loud action propagation to adjacent rooms for attack/destroy_poi
+    const firstParsedAction = parsedActions[0];
+    if (firstParsedAction?.action_type === 'attack' || firstParsedAction?.action_type === 'destroy_poi') {
+      const targetPoi = firstParsedAction.target_poi_instance_id
+        ? roomInstance.poiInstances.find(p => p.id === firstParsedAction.target_poi_instance_id)
+        : null;
+      const isLoud = !targetPoi || (targetPoi.template.defaultProperties as Record<string, unknown>).loud !== false;
+      if (isLoud) {
+        const exits = roomInstance.poiInstances.filter(p => {
+          const dp = p.template.defaultProperties as Record<string, unknown>;
+          return dp.poi_type === 'exit' && (dp.enter as Record<string, unknown>)?.target_room_template_id;
+        });
+        for (const exit of exits) {
+          const dp = exit.template.defaultProperties as Record<string, unknown>;
+          const cp = exit.currentProperties as Record<string, unknown>;
+          const enterVerb = dp.enter as Record<string, unknown>;
+          const targetTemplateId = enterVerb.target_room_template_id as string;
+          const barrierDc = dp.peek_visibility === 'none' ? (cp.unlocked ? 15 : 18) : 10;
+          const adjRoom = await prisma.roomInstance.findFirst({
+            where: { sessionId: roomInstance.session.id, roomTemplateId: targetTemplateId },
+            include: { poiInstances: { include: { template: true } } },
+          });
+          if (!adjRoom) continue;
+          console.log(`[stage3:loud] propagating to adjacent room ${adjRoom.id}, barrier DC=${barrierDc}`);
+          for (const adjPoi of adjRoom.poiInstances) {
+            const adjDp = adjPoi.template.defaultProperties as Record<string, unknown>;
+            const adjCp = adjPoi.currentProperties as Record<string, unknown>;
+            const awareness = adjCp.awareness_state as string | undefined;
+            if (!awareness || awareness === 'alert' || awareness === 'dead') continue;
+            const wisMod = abilityModifier((adjDp.combat_stats as PoiCombatStats | undefined)?.wis_score ?? 10);
+            const hearRoll = randomInt(1, 21) + wisMod;
+            const nextAwareness = awareness === 'unaware' ? 'suspicious' : 'alert';
+            console.log(`[stage3:loud] ${adjPoi.template.name}: roll=${hearRoll} vs DC=${barrierDc} → ${hearRoll >= barrierDc ? nextAwareness : 'unchanged'}`);
+            if (hearRoll >= barrierDc) {
+              await prisma.poiInstance.update({ where: { id: adjPoi.id }, data: { currentProperties: { ...adjCp, awareness_state: nextAwareness } } });
+            }
+          }
+        }
+      }
+    }
 
     // Combat entry: check if any parsed action (or alert enemy) triggers combat
     const currentSessionGameState = roomInstance.session.gameState;
@@ -3390,6 +3719,7 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
         activeRoomDescription,
         appliedActions,
         roomInstance.session.id,
+        allCombatFacts.length > 0 ? allCombatFacts : undefined,
       );
 
     // Stage 5 — always fetches fresh POI state from DB

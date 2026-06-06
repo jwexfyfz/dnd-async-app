@@ -56,6 +56,8 @@ export interface ItemDefinition {
   hidden?: boolean;
   reveal_check?: { skill: string; dc: number };
   value_gp?: number;
+  combat_usable?: boolean;
+  silent?: boolean;
 }
 
 export interface CharacterInventory {
@@ -119,6 +121,8 @@ export interface InitiativeEntry {
   status_effects: string[];
   priority_target?: string;
   priority_target_until_round?: number;
+  reactionUsed?: boolean;
+  resistances?: string[];
 }
 
 export interface TurnUsage {
@@ -135,6 +139,25 @@ export interface CombatState {
   currentTurnUsage: TurnUsage;
 }
 
+export interface CharacterStats {
+  currentHp: number;
+  maxHp: number;
+  ac: number;
+  level: number;
+  characterClass: string;
+  attackBonus: number;
+  initiativeMod: number;
+  baseStrength: number;
+  baseDexterity: number;
+  baseConstitution: number;
+  baseIntelligence: number;
+  baseWisdom: number;
+  baseCharisma: number;
+  skillsModifiers: Record<string, number>;
+  skillProficiencies: string[];
+  isHiding: boolean;
+}
+
 export interface ViewStatePayload {
   roomInstanceId: string;
   currentNarrative: NarrativeLog[];
@@ -147,4 +170,5 @@ export interface ViewStatePayload {
   characterInventory: CharacterInventory;
   openSpaceItems: ItemDefinition[];
   adjacentRoomPreviews: Record<string, AdjacentRoomPreview>;
+  characterStats: CharacterStats;
 }
