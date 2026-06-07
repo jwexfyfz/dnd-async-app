@@ -3,7 +3,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, useCallback, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import type { CombatState, CharacterStats, InitiativeEntry, CharacterInventory, ItemDefinition } from '@/types/v2-game';
-import { classEmoji } from '@/lib/class-emoji';
+import { classEmoji, classSprite } from '@/lib/class-emoji';
 import AppBar from '@/components/app-bar';
 import { ABILITY_DESCRIPTIONS, ABILITY_PASSIVE_NOTES, SKILL_ABILITY, SKILL_DESCRIPTIONS } from '@/lib/v2/skill-descriptions';
 
@@ -899,10 +899,11 @@ function PartyTab({ characterStats, gameState, onFeatureActivate }: {
       {/* PartyHeader */}
       <div className="flex items-center gap-3 px-4 py-3 border-b border-slate-200 bg-white flex-shrink-0 overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
         <div className="flex flex-col items-center gap-0.5 flex-shrink-0">
-          <div className="w-10 h-10 rounded-full bg-indigo-100 border-2 border-indigo-400 flex items-center justify-center text-xl">
-            {classEmoji(characterStats.characterClass)}
+          <div className="w-14 h-14 rounded-full bg-slate-100 border-2 border-indigo-300 overflow-hidden">
+            <img src={classSprite(characterStats.characterClass)} alt={characterStats.characterClass} className="w-full h-full object-cover" />
           </div>
-          <span className="text-xs text-slate-600 font-medium">{characterStats.characterClass}</span>
+          <span className="text-xs text-slate-800 font-semibold leading-tight">{characterStats.name}</span>
+          <span className="text-xs text-slate-500">{characterStats.characterClass}</span>
           <span className={`text-xs ${characterStats.currentHp / characterStats.maxHp < 0.3 ? 'text-red-500 font-semibold' : 'text-slate-400'}`}>
             {characterStats.currentHp}/{characterStats.maxHp} HP
           </span>
@@ -1697,18 +1698,19 @@ function ChatTab({ history, hasMore, loadingMore, loadMore, sending, error, inpu
 // ─── Initiative Strip ─────────────────────────────────────────────────────────
 
 const CLASS_FEATURES: Record<string, Array<{ id: string; label: string; description: string; cunning?: boolean }>> = {
-  Barbarian: [{ id: 'rage', label: '⚡ Rage', description: 'Bonus action: enter rage. +2 melee damage, advantage on STR checks/saves, resistance to bludgeoning/piercing/slashing damage for 1 minute.' }],
-  Bard: [{ id: 'bardic_inspiration', label: '⚡ Bardic Inspiration', description: 'Bonus action: give an ally within 60 ft a Bardic Inspiration die (d6 → d12 at higher levels) to add to one roll within 10 minutes.' }],
-  Cleric: [{ id: 'channel_divinity', label: '⚡ Channel Divinity', description: 'Channel divine power to turn undead or invoke your deity\'s domain ability. Once per short rest.' }],
-  Druid: [{ id: 'wild_shape', label: '⚡ Wild Shape', description: 'Action: transform into a beast you\'ve seen. Max CR scales with level. 2 uses/short rest. Duration = half your Druid level in hours.' }],
-  Fighter: [{ id: 'second_wind', label: '⚡ Second Wind', description: 'Bonus action: recover 1d10 + your Fighter level in hit points. Once per short rest.' }],
-  Monk: [{ id: 'ki', label: '⚡ Ki', description: 'Spend Ki points to fuel abilities: Flurry of Blows (2 unarmed strikes, bonus action), Patient Defense (Dodge, bonus action), Step of the Wind (Dash or Disengage, bonus action).' }],
+  Artificer: [{ id: 'infuse_item', label: '⚙️ Infuse Item', description: 'Infuse mundane items with magical properties during a long rest. Active infusions (2 at level 2, scaling up) persist until you die or re-prepare.' }],
+  Barbarian: [{ id: 'rage', label: '🪓 Rage', description: 'Bonus action: enter rage. +2 melee damage, advantage on STR checks/saves, resistance to bludgeoning/piercing/slashing damage for 1 minute.' }],
+  Bard: [{ id: 'bardic_inspiration', label: '🎵 Bardic Inspiration', description: 'Bonus action: give an ally within 60 ft a Bardic Inspiration die (d6 → d12 at higher levels) to add to one roll within 10 minutes.' }],
+  Cleric: [{ id: 'channel_divinity', label: '⛪ Channel Divinity', description: 'Channel divine power to turn undead or invoke your deity\'s domain ability. Once per short rest.' }],
+  Druid: [{ id: 'wild_shape', label: '🐺 Wild Shape', description: 'Action: transform into a beast you\'ve seen. Max CR scales with level. 2 uses/short rest. Duration = half your Druid level in hours.' }],
+  Fighter: [{ id: 'second_wind', label: '💨 Second Wind', description: 'Bonus action: recover 1d10 + your Fighter level in hit points. Once per short rest.' }],
+  Monk: [{ id: 'ki', label: '🌀 Ki', description: 'Spend Ki points to fuel abilities: Flurry of Blows (2 unarmed strikes, bonus action), Patient Defense (Dodge, bonus action), Step of the Wind (Dash or Disengage, bonus action).' }],
   Paladin: [{ id: 'divine_smite', label: '⚡ Divine Smite', description: 'When you hit with a melee attack, expend a spell slot to deal +2d8 radiant damage per slot level (max 5d8). +1d8 extra against undead or fiends.' }],
-  Ranger: [{ id: 'hunters_mark', label: "⚡ Hunter's Mark", description: "Bonus action: mark a creature. Deal +1d6 damage to it on each hit and gain advantage on Perception and Survival checks to find it. Concentration, up to 1 hour." }],
-  Rogue: [{ id: 'cunning_action', label: '⚡ Cunning Action', cunning: true, description: 'Bonus action to Dash, Disengage, or Hide — move fast or vanish without spending your main action.' }],
-  Sorcerer: [{ id: 'metamagic', label: '⚡ Metamagic', description: 'Spend Sorcery Points to modify spells: Quickened Spell (bonus action cast, 2 pts), Twinned Spell (second target, 1–9 pts), Subtle Spell (no components, 1 pt), and others.' }],
-  Warlock: [{ id: 'eldritch_blast', label: '⚡ Eldritch Blast', description: 'Your signature cantrip: 1d10 force damage at 120 ft. Extra beams at levels 5/11/17. Enhanced by Invocations like Agonizing Blast (+CHA mod) or Repelling Blast (push 10 ft).' }],
-  Wizard: [{ id: 'arcane_recovery', label: '⚡ Arcane Recovery', description: 'After a short rest, recover spell slot levels equal to half your Wizard level (min 1). Once per long rest.' }],
+  Ranger: [{ id: 'hunters_mark', label: "🏹 Hunter's Mark", description: "Bonus action: mark a creature. Deal +1d6 damage to it on each hit and gain advantage on Perception and Survival checks to find it. Concentration, up to 1 hour." }],
+  Rogue: [{ id: 'cunning_action', label: '🗡️ Cunning Action', cunning: true, description: 'Bonus action to Dash, Disengage, or Hide — move fast or vanish without spending your main action.' }],
+  Sorcerer: [{ id: 'metamagic', label: '🔥 Metamagic', description: 'Spend Sorcery Points to modify spells: Quickened Spell (bonus action cast, 2 pts), Twinned Spell (second target, 1–9 pts), Subtle Spell (no components, 1 pt), and others.' }],
+  Warlock: [{ id: 'eldritch_blast', label: '👁️ Eldritch Blast', description: 'Your signature cantrip: 1d10 force damage at 120 ft. Extra beams at levels 5/11/17. Enhanced by Invocations like Agonizing Blast (+CHA mod) or Repelling Blast (push 10 ft).' }],
+  Wizard: [{ id: 'arcane_recovery', label: '🔮 Arcane Recovery', description: 'After a short rest, recover spell slot levels equal to half your Wizard level (min 1). Once per long rest.' }],
 };
 
 function hpRingClass(hp: number, maxHp: number): string {
@@ -1753,8 +1755,11 @@ function InitiativeStrip({ initiativeOrder, activeActorId, characterId, characte
             className={`flex flex-col items-center gap-0.5 flex-shrink-0 transition-all ${entry.acted && !isActive ? 'opacity-50 scale-[0.85]' : ''}`}
           >
             <span className={`text-xs leading-none ${isActive ? 'text-white' : 'text-transparent'}`}>▼</span>
-            <div className={`w-10 h-10 rounded-full border-2 ${ringCls} flex items-center justify-center relative text-lg ${isSelected ? 'ring-2 ring-white ring-offset-1 ring-offset-red-700' : ''}`}>
-              <span>{isOwn ? classEmoji(characterClass) : '👹'}</span>
+            <div className={`w-10 h-10 rounded-full border-2 ${ringCls} relative overflow-hidden ${isSelected ? 'ring-2 ring-white ring-offset-1 ring-offset-red-700' : ''}`}>
+              {isOwn
+                ? <img src={classSprite(characterClass)} alt={characterClass} className="w-full h-full object-cover" />
+                : <span className="w-full h-full flex items-center justify-center text-lg">👹</span>
+              }
               {isDead && (
                 <span className="absolute inset-0 flex items-center justify-center bg-slate-200/80 rounded-full text-base">💀</span>
               )}

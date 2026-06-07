@@ -79,7 +79,7 @@ export async function GET(req: NextRequest) {
       const char = await prisma.character.findUnique({
         where: { id: characterId },
         select: {
-          inventory: true, currentHp: true, maxHp: true, level: true, characterClass: true,
+          name: true, inventory: true, currentHp: true, maxHp: true, level: true, characterClass: true,
           baseStrength: true, baseDexterity: true, baseConstitution: true, baseIntelligence: true,
           baseWisdom: true, baseCharisma: true, skillsModifiers: true, skillProficiencies: true, isHiding: true,
         },
@@ -94,6 +94,7 @@ export async function GET(req: NextRequest) {
           .filter((i): i is NonNullable<typeof i> => i != null)
           .reduce((acc, item) => acc + ((item.equip_bonus?.ac) ?? 0), 0);
         characterStats = {
+          name: char.name,
           currentHp: char.currentHp, maxHp: char.maxHp,
           ac: 10 + dexMod + armorBonus,
           level: char.level, characterClass: char.characterClass,

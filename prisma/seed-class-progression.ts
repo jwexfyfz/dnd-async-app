@@ -1273,9 +1273,37 @@ const WARLOCK: ClassSeed = {
   ],
 };
 
+// ─── Artificer ───────────────────────────────────────────────────────────────
+
+const ARTIFICER: ClassSeed = {
+  characterClass: "Artificer",
+  levels: [
+    { level: 1,  proficiencyBonus: prof(1),  resourcePoolMax: null,                   featuresUnlocked: ["magical-tinkering", "spellcasting"], features: [{ name: "Magical Tinkering", description: "Imbue a tiny nonmagical object with one minor magical property: emit light, emit a recorded message, emit an odor, or display a static image." }, { name: "Spellcasting", description: "INT spellcasting. Prepare INT mod + half Artificer level spells. Always have spells prepared from your specialist list." }] },
+    { level: 2,  proficiencyBonus: prof(2),  resourcePoolMax: 2,                      featuresUnlocked: ["infuse-item"], features: [{ name: "Infuse Item", description: "Learn 4 infusions; embed 2 in nonmagical items during a long rest. Infusions are permanent until you die or re-prepare. Gain more infusions as you level." }] },
+    { level: 3,  proficiencyBonus: prof(3),  resourcePoolMax: HALF_CASTER_POOL[3]!,   featuresUnlocked: ["artificer-specialist", "right-tool"], features: [{ name: "Artificer Specialist", description: "Choose Alchemist, Armorer, Artillerist, or Battle Smith. Grants specialist spells and features at 3, 5, 9, 15." }, { name: "The Right Tool for the Job", description: "Spend 1 hour and 10 gp of materials to conjure one set of artisan's tools in an unoccupied space within 5 ft." }] },
+    { level: 4,  proficiencyBonus: prof(4),  resourcePoolMax: HALF_CASTER_POOL[4]!,   featuresUnlocked: ["asi"], features: [{ name: "ASI", description: "+2 to one ability score, or +1 to two, or a feat." }] },
+    { level: 5,  proficiencyBonus: prof(5),  resourcePoolMax: HALF_CASTER_POOL[5]!,   featuresUnlocked: ["specialist-feature"], features: [{ name: "Specialist Feature", description: "Artificer Specialist feature at level 5." }] },
+    { level: 6,  proficiencyBonus: prof(6),  resourcePoolMax: HALF_CASTER_POOL[6]!,   featuresUnlocked: ["tool-expertise"], features: [{ name: "Tool Expertise", description: "Double proficiency bonus on any ability check using a tool you're proficient with." }] },
+    { level: 7,  proficiencyBonus: prof(7),  resourcePoolMax: HALF_CASTER_POOL[7]!,   featuresUnlocked: ["flash-of-genius"], features: [{ name: "Flash of Genius", description: "Reaction: add your INT modifier to one ability check or saving throw a creature within 30 ft just made. INT mod uses/long rest." }] },
+    { level: 8,  proficiencyBonus: prof(8),  resourcePoolMax: HALF_CASTER_POOL[8]!,   featuresUnlocked: ["asi"], features: [{ name: "ASI", description: "+2 to one ability score, or +1 to two, or a feat." }] },
+    { level: 9,  proficiencyBonus: prof(9),  resourcePoolMax: HALF_CASTER_POOL[9]!,   featuresUnlocked: ["specialist-feature"], features: [{ name: "Specialist Feature", description: "Artificer Specialist feature at level 9." }] },
+    { level: 10, proficiencyBonus: prof(10), resourcePoolMax: HALF_CASTER_POOL[10]!,  featuresUnlocked: ["magic-item-adept"], features: [{ name: "Magic Item Adept", description: "Attune to up to 4 magic items (instead of 3). Craft common and uncommon magic items in half the normal time and for half the gold cost." }] },
+    { level: 11, proficiencyBonus: prof(11), resourcePoolMax: HALF_CASTER_POOL[11]!,  featuresUnlocked: ["spell-storing-item"], features: [{ name: "Spell-Storing Item", description: "After a long rest, store one 1st- or 2nd-level artificer spell in a simple/martial weapon or spellcasting focus. A creature holding it can use an action to cast the spell (INT-based). 2× INT mod charges." }] },
+    { level: 12, proficiencyBonus: prof(12), resourcePoolMax: HALF_CASTER_POOL[12]!,  featuresUnlocked: ["asi"], features: [{ name: "ASI", description: "+2 to one ability score, or +1 to two, or a feat." }] },
+    { level: 13, proficiencyBonus: prof(13), resourcePoolMax: HALF_CASTER_POOL[13]!,  featuresUnlocked: [], features: [] },
+    { level: 14, proficiencyBonus: prof(14), resourcePoolMax: HALF_CASTER_POOL[14]!,  featuresUnlocked: ["magic-item-savant"], features: [{ name: "Magic Item Savant", description: "Attune to up to 5 magic items. Ignore class, race, spell, and level requirements on attuning to or using magic items." }] },
+    { level: 15, proficiencyBonus: prof(15), resourcePoolMax: HALF_CASTER_POOL[15]!,  featuresUnlocked: ["specialist-feature"], features: [{ name: "Specialist Feature", description: "Artificer Specialist feature at level 15." }] },
+    { level: 16, proficiencyBonus: prof(16), resourcePoolMax: HALF_CASTER_POOL[16]!,  featuresUnlocked: ["asi"], features: [{ name: "ASI", description: "+2 to one ability score, or +1 to two, or a feat." }] },
+    { level: 17, proficiencyBonus: prof(17), resourcePoolMax: HALF_CASTER_POOL[17]!,  featuresUnlocked: [], features: [] },
+    { level: 18, proficiencyBonus: prof(18), resourcePoolMax: HALF_CASTER_POOL[18]!,  featuresUnlocked: ["magic-item-master"], features: [{ name: "Magic Item Master", description: "Attune to up to 6 magic items at once." }] },
+    { level: 19, proficiencyBonus: prof(19), resourcePoolMax: HALF_CASTER_POOL[19]!,  featuresUnlocked: ["asi"], features: [{ name: "ASI", description: "+2 to one ability score, or +1 to two, or a feat." }] },
+    { level: 20, proficiencyBonus: prof(20), resourcePoolMax: HALF_CASTER_POOL[20]!,  featuresUnlocked: ["soul-of-artifice"], features: [{ name: "Soul of Artifice", description: "+1 to all saving throws per magic item you're attuned to. If reduced to 0 HP, use your reaction to end one of your artificer infusions and drop to 1 HP instead." }] },
+  ],
+};
+
 // ─── Registry — append new classes here ──────────────────────────────────────
 
-const CLASSES: ClassSeed[] = [BARBARIAN, BARD, DRUID, FIGHTER, MONK, PALADIN, RANGER, ROGUE, SORCERER, WARLOCK, WIZARD, CLERIC];
+const CLASSES: ClassSeed[] = [ARTIFICER, BARBARIAN, BARD, DRUID, FIGHTER, MONK, PALADIN, RANGER, ROGUE, SORCERER, WARLOCK, WIZARD, CLERIC];
 
 // ─── Seed engine ─────────────────────────────────────────────────────────────
 

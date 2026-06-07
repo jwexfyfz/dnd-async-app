@@ -145,6 +145,7 @@ export interface CombatState {
 }
 
 export interface CharacterStats {
+  name: string;
   currentHp: number;
   maxHp: number;
   ac: number;
