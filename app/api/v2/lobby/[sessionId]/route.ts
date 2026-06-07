@@ -27,6 +27,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ sess
         gameState: true,
         hostCharacterId: true,
         lobbyState: true,
+        lobbyVersion: true,
         dungeonTemplate: { select: { name: true } },
         roomInstances: {
           take: 1,
@@ -55,6 +56,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ sess
       gameState: 'lobby',
       members: session.lobbyState as LobbyMember[],
       hostCharacterId: session.hostCharacterId,
+      lobbyVersion: session.lobbyVersion,
       dungeonName: session.dungeonTemplate?.name ?? 'Unknown Dungeon',
       shareUrl: `${origin}/v2/lobby/${sessionId}`,
     });

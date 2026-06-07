@@ -492,6 +492,8 @@ function SetupContent() {
                 onCreated={async () => {
                   await loadCharacters();
                   setShowCharModal(false);
+                  const returnTo = searchParams.get('returnTo');
+                  if (returnTo) router.push(returnTo);
                 }}
               />
             </div>

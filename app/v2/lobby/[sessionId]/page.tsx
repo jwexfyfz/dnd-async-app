@@ -314,7 +314,7 @@ function LobbyContent() {
             <div className="text-center space-y-2">
               <p className="text-sm text-slate-600">You need a hero first</p>
               <button
-                onClick={() => router.push('/v2/setup')}
+                onClick={() => router.push(`/v2/setup?returnTo=/v2/lobby/${sessionId}`)}
                 className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700"
               >
                 Create a character

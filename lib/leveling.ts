@@ -16,10 +16,19 @@ import { abilityModifier, proficiencyBonus } from "./dice";
  * Fighter d10 avg 6 | Rogue d8 avg 5 | Cleric d8 avg 5 | Wizard d6 avg 4
  */
 export const HIT_DIE_BY_CLASS: Record<string, { die: number; avg: number }> = {
-  Fighter: { die: 10, avg: 6 },
-  Rogue:   { die: 8,  avg: 5 },
-  Cleric:  { die: 8,  avg: 5 },
-  Wizard:  { die: 6,  avg: 4 },
+  Artificer: { die: 8,  avg: 5 },
+  Barbarian: { die: 12, avg: 7 },
+  Bard:      { die: 8,  avg: 5 },
+  Cleric:    { die: 8,  avg: 5 },
+  Druid:     { die: 8,  avg: 5 },
+  Fighter:   { die: 10, avg: 6 },
+  Monk:      { die: 8,  avg: 5 },
+  Paladin:   { die: 10, avg: 6 },
+  Ranger:    { die: 10, avg: 6 },
+  Rogue:     { die: 8,  avg: 5 },
+  Sorcerer:  { die: 6,  avg: 4 },
+  Warlock:   { die: 8,  avg: 5 },
+  Wizard:    { die: 6,  avg: 4 },
 };
 
 // ─── maxHpAtLevel ─────────────────────────────────────────────────────────────

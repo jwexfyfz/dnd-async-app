@@ -70,31 +70,19 @@ export const SKILLS = SKILL_ABILITY_MAP;
  * creation. Source: D&D Basic Rules 2014.
  */
 export const CLASS_SKILL_POOL: Record<string, string[]> = {
-  Fighter: [
-    "Acrobatics",
-    "Animal Handling",
-    "Athletics",
-    "History",
-    "Insight",
-    "Intimidation",
-    "Perception",
-    "Survival",
-  ],
-  Rogue: [
-    "Acrobatics",
-    "Athletics",
-    "Deception",
-    "Insight",
-    "Intimidation",
-    "Investigation",
-    "Perception",
-    "Performance",
-    "Persuasion",
-    "Sleight of Hand",
-    "Stealth",
-  ],
-  Cleric: ["History", "Insight", "Medicine", "Persuasion", "Religion"],
-  Wizard: ["Arcana", "History", "Insight", "Investigation", "Medicine", "Religion"],
+  Artificer: ["Arcana", "History", "Investigation", "Medicine", "Nature", "Perception", "Sleight of Hand"],
+  Barbarian: ["Animal Handling", "Athletics", "Intimidation", "Nature", "Perception", "Survival"],
+  Bard:      ["Acrobatics", "Animal Handling", "Arcana", "Athletics", "Deception", "History", "Insight", "Intimidation", "Investigation", "Medicine", "Nature", "Perception", "Performance", "Persuasion", "Religion", "Sleight of Hand", "Stealth", "Survival"],
+  Cleric:    ["History", "Insight", "Medicine", "Persuasion", "Religion"],
+  Druid:     ["Arcana", "Animal Handling", "Insight", "Medicine", "Nature", "Perception", "Religion", "Survival"],
+  Fighter:   ["Acrobatics", "Animal Handling", "Athletics", "History", "Insight", "Intimidation", "Perception", "Survival"],
+  Monk:      ["Acrobatics", "Athletics", "History", "Insight", "Religion", "Stealth"],
+  Paladin:   ["Athletics", "Insight", "Intimidation", "Medicine", "Persuasion", "Religion"],
+  Ranger:    ["Animal Handling", "Athletics", "Insight", "Investigation", "Nature", "Perception", "Stealth", "Survival"],
+  Rogue:     ["Acrobatics", "Athletics", "Deception", "Insight", "Intimidation", "Investigation", "Perception", "Performance", "Persuasion", "Sleight of Hand", "Stealth"],
+  Sorcerer:  ["Arcana", "Deception", "Insight", "Intimidation", "Persuasion", "Religion"],
+  Warlock:   ["Arcana", "Deception", "History", "Intimidation", "Investigation", "Nature", "Religion"],
+  Wizard:    ["Arcana", "History", "Insight", "Investigation", "Medicine", "Religion"],
 };
 
 // ─── SKILL_PICK_COUNT ─────────────────────────────────────────────────────────
@@ -104,10 +92,19 @@ export const CLASS_SKILL_POOL: Record<string, string[]> = {
  * Source: D&D Basic Rules 2014.
  */
 export const SKILL_PICK_COUNT: Record<string, number> = {
-  Fighter: 2,
-  Rogue:   4,
-  Cleric:  2,
-  Wizard:  2,
+  Artificer: 2,
+  Barbarian: 2,
+  Bard:      3,
+  Cleric:    2,
+  Druid:     2,
+  Fighter:   2,
+  Monk:      2,
+  Paladin:   2,
+  Ranger:    3,
+  Rogue:     4,
+  Sorcerer:  2,
+  Warlock:   2,
+  Wizard:    2,
 };
 
 // ─── resolveSkillCheck ────────────────────────────────────────────────────────
