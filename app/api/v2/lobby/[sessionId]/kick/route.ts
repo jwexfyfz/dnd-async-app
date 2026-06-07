@@ -16,7 +16,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ s
   try {
     const session = await prisma.gameSession.findUnique({
       where: { id: sessionId },
-      select: { hostCharacterId: true, lobbyState: true, lobbyVersion: true },
+      select: { hostCharacterId: true, lobbyState: true, lobbyVersion: true, kickedCharacterIds: true },
     });
     if (!session) return NextResponse.json({ error: 'Session not found' }, { status: 404 });
 
@@ -33,11 +33,12 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ s
     }
 
     const remaining = members.filter(m => m.characterId !== targetCharacterId);
+    const kicked = (session.kickedCharacterIds as string[]).concat(targetCharacterId);
     await prisma.gameSession.update({
       where: { id: sessionId },
       data: {
-        lobbyState: remaining,
-        kickedCharacterIds: { push: targetCharacterId },
+        lobbyState: remaining as object[],
+        kickedCharacterIds: kicked,
         lobbyVersion: { increment: 1 },
       },
     });

@@ -96,6 +96,8 @@ export interface NarrativeLog {
   isMechanicalEvent: boolean;
   mechanicalSummary: unknown;
   createdAt: Date;
+  authorAvatarUrl?: string | null;
+  authorName?: string | null;
 }
 
 export interface PoiState {
@@ -128,6 +130,21 @@ export interface InitiativeEntry {
   reactionUsed?: boolean;
   resistances?: string[];
   passive_perception?: number;
+  isDormant?: boolean;
+}
+
+export interface PartyMemberInfo {
+  characterId: string;
+  characterName: string;
+  characterClass: string;
+  avatarUrl: string | null;
+  currentHp: number;
+  maxHp: number;
+  isDead: boolean;
+  isDormant: boolean;
+  isInSameRoom: boolean;
+  currentRoom: string;
+  lastSeenAt: Date | null;
 }
 
 export interface TurnUsage {
@@ -177,4 +194,5 @@ export interface ViewStatePayload {
   openSpaceItems: ItemDefinition[];
   adjacentRoomPreviews: Record<string, AdjacentRoomPreview>;
   characterStats: CharacterStats;
+  partyMembers: PartyMemberInfo[];
 }

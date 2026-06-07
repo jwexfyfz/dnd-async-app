@@ -118,7 +118,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ ses
 
     const updated = await prisma.gameSession.update({
       where: { id: sessionId, lobbyVersion: session.lobbyVersion },
-      data: { lobbyState: [...members, newMember], lobbyVersion: { increment: 1 } },
+      data: { lobbyState: [...members, newMember] as object[], lobbyVersion: { increment: 1 } },
       select: { lobbyState: true, lobbyVersion: true },
     });
 
@@ -161,7 +161,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ se
 
     await prisma.gameSession.update({
       where: { id: sessionId },
-      data: { lobbyState: updated },
+      data: { lobbyState: updated as object[] },
     });
 
     return NextResponse.json({ members: updated });
@@ -203,14 +203,14 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ s
       const newHost = remaining.find(m => m.status === 'ready') ?? remaining[0];
       await prisma.gameSession.update({
         where: { id: sessionId },
-        data: { lobbyState: remaining, hostCharacterId: newHost.characterId, lobbyVersion: { increment: 1 } },
+        data: { lobbyState: remaining as object[], hostCharacterId: newHost.characterId, lobbyVersion: { increment: 1 } },
       });
       return NextResponse.json({ members: remaining, newHostCharacterId: newHost.characterId });
     }
 
     await prisma.gameSession.update({
       where: { id: sessionId },
-      data: { lobbyState: remaining, lobbyVersion: { increment: 1 } },
+      data: { lobbyState: remaining as object[], lobbyVersion: { increment: 1 } },
     });
     return NextResponse.json({ members: remaining });
   } catch (err) {

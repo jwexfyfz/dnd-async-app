@@ -8,22 +8,22 @@ Covers: lobby phase, party tab, player avatars in chat, player names in narrativ
 
 Check off phases as they complete. If work stops mid-phase, mark the last completed step with `[x]` so the next session knows exactly where to resume.
 
-- [ ] **Phase A** — Schema migration
-- [ ] **Phase B** — Avatar persistence
-- [ ] **Phase C** — Session creation → lobby redirect
-- [ ] **Phase D** — Lobby API routes
-- [ ] **Phase E** — session-starter.ts
-- [ ] **Phase F** — Lobby page UI
-- [ ] **Phase G** — Party tab + ViewStatePayload + polling
-- [ ] **Phase H** — Player avatars in chat
-- [ ] **Phase I** — Player names in narrative
-- [ ] **Phase J** — Dormancy + in-combat skip
-- [ ] **Phase K** — Enemy HP persistence
-- [ ] **Phase L** — Mid-game host kick
-- [ ] **Phase M** — Combat turn indicator
-- [ ] **Phase N** — Session resume screen
-- [ ] **Phase O** — Multi-PC combat initialization
-- [ ] **Phase P** — Exploration action serialization
+- [x] **Phase A** — Schema migration
+- [x] **Phase B** — Avatar persistence
+- [x] **Phase C** — Session creation → lobby redirect
+- [x] **Phase D** — Lobby API routes
+- [x] **Phase E** — session-starter.ts
+- [x] **Phase F** — Lobby page UI
+- [x] **Phase G** — Party tab + ViewStatePayload + polling
+- [x] **Phase H** — Player avatars in chat
+- [x] **Phase I** — Player names in narrative
+- [x] **Phase J** — Dormancy + in-combat skip
+- [x] **Phase K** — Enemy HP persistence
+- [x] **Phase L** — Mid-game host kick
+- [x] **Phase M** — Combat turn indicator
+- [x] **Phase N** — Session resume screen
+- [x] **Phase O** — Multi-PC combat initialization
+- [x] **Phase P** — Exploration action serialization
 
 ---
 

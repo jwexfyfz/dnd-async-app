@@ -3,6 +3,8 @@ import { prisma } from '@/lib/prisma';
 import { abilityModifier } from '@/lib/dice';
 import { normalizeInventory } from '@/lib/v2/game-controller';
 
+const DORMANT_MS = 48 * 60 * 60 * 1000;
+
 export async function GET(req: NextRequest) {
   const roomInstanceId = req.nextUrl.searchParams.get('roomInstanceId');
   const characterId = req.nextUrl.searchParams.get('characterId');
@@ -13,7 +15,7 @@ export async function GET(req: NextRequest) {
     const roomInstance = await prisma.roomInstance.findUnique({
       where: { id: roomInstanceId },
       include: {
-        session: { select: { id: true, gameState: true, combatState: true } },
+        session: { select: { id: true } },
         template: { select: { name: true } },
         poiInstances: {
           select: { id: true, currentProperties: true, template: { select: { name: true, defaultProperties: true } } },
@@ -24,10 +26,44 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'Room not found' }, { status: 404 });
     }
 
-    const participants = await prisma.roomParticipant.findMany({
-      where: { roomInstanceId },
-      include: { character: { select: { id: true, name: true } } },
-    });
+    const sessionId = roomInstance.session.id;
+
+    const [participants, sessionPartyData, charRow, messageLogs] = await Promise.all([
+      prisma.roomParticipant.findMany({
+        where: { roomInstanceId },
+        include: { character: { select: { id: true, name: true } } },
+      }),
+      prisma.roomParticipant.findMany({
+        where: { roomInstance: { sessionId } },
+        include: {
+          character: {
+            select: {
+              id: true, name: true, characterClass: true, currentHp: true, maxHp: true, isDead: true,
+              user: { select: { avatarUrl: true, lastSeenAt: true } },
+            },
+          },
+          roomInstance: { select: { id: true, template: { select: { name: true } } } },
+        },
+        orderBy: { lastActiveAt: 'asc' },
+      }),
+      characterId ? prisma.character.findUnique({
+        where: { id: characterId },
+        select: {
+          name: true, inventory: true, currentHp: true, maxHp: true, level: true, characterClass: true,
+          baseStrength: true, baseDexterity: true, baseConstitution: true, baseIntelligence: true,
+          baseWisdom: true, baseCharisma: true, skillsModifiers: true, skillProficiencies: true, isHiding: true,
+        },
+      }) : Promise.resolve(null),
+      prisma.messageLog.findMany({
+        where: { roomInstanceId, isMechanicalEvent: false },
+        orderBy: { createdAt: 'desc' },
+        take: 5,
+        select: {
+          id: true, text: true, isMechanicalEvent: true, mechanicalSummary: true, createdAt: true,
+          character: { select: { name: true, user: { select: { avatarUrl: true } } } },
+        },
+      }),
+    ]);
 
     const poiIndex: Record<string, string> = {};
     const poiStates: Record<string, { examined: boolean; interacted: boolean; unlocked: boolean }> = {};
@@ -57,63 +93,80 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // Proximity POI and party members for the requesting character
     let characterProximityPoi: { id: string; name: string } | null = null;
-    const partyMembers: { id: string; name: string }[] = [];
     if (characterId) {
       const selfParticipant = participants.find(p => p.characterId === characterId);
       const cs = selfParticipant?.combatState as { proximity_target_id?: string } | null;
       if (cs?.proximity_target_id && poiIndex[cs.proximity_target_id]) {
         characterProximityPoi = { id: cs.proximity_target_id, name: poiIndex[cs.proximity_target_id] };
       }
-      for (const p of participants) {
-        if (p.characterId !== characterId) {
-          partyMembers.push({ id: p.characterId, name: p.character.name });
-        }
-      }
     }
 
     let characterStats = null;
     let characterInventory = null;
-    if (characterId) {
-      const char = await prisma.character.findUnique({
-        where: { id: characterId },
-        select: {
-          name: true, inventory: true, currentHp: true, maxHp: true, level: true, characterClass: true,
-          baseStrength: true, baseDexterity: true, baseConstitution: true, baseIntelligence: true,
-          baseWisdom: true, baseCharisma: true, skillsModifiers: true, skillProficiencies: true, isHiding: true,
-        },
-      });
-      if (char) {
-        const inv = normalizeInventory(char.inventory);
-        characterInventory = inv;
-        const dexMod = abilityModifier(char.baseDexterity);
-        const strMod = abilityModifier(char.baseStrength);
-        const profBonus = char.level >= 5 ? 3 : 2;
-        const armorBonus = Object.values(inv.equipped)
-          .filter((i): i is NonNullable<typeof i> => i != null)
-          .reduce((acc, item) => acc + ((item.equip_bonus?.ac) ?? 0), 0);
-        characterStats = {
-          name: char.name,
-          currentHp: char.currentHp, maxHp: char.maxHp,
-          ac: 10 + dexMod + armorBonus,
-          level: char.level, characterClass: char.characterClass,
-          attackBonus: strMod + profBonus, initiativeMod: dexMod,
-          baseStrength: char.baseStrength, baseDexterity: char.baseDexterity,
-          baseConstitution: char.baseConstitution, baseIntelligence: char.baseIntelligence,
-          baseWisdom: char.baseWisdom, baseCharisma: char.baseCharisma,
-          skillsModifiers: (char.skillsModifiers as Record<string, number>) ?? {},
-          skillProficiencies: char.skillProficiencies ?? [],
-          isHiding: char.isHiding,
-        };
-      }
+    if (charRow) {
+      const inv = normalizeInventory(charRow.inventory);
+      characterInventory = inv;
+      const dexMod = abilityModifier(charRow.baseDexterity);
+      const strMod = abilityModifier(charRow.baseStrength);
+      const profBonus = charRow.level >= 5 ? 3 : 2;
+      const armorBonus = Object.values(inv.equipped)
+        .filter((i): i is NonNullable<typeof i> => i != null)
+        .reduce((acc, item) => acc + ((item.equip_bonus?.ac) ?? 0), 0);
+      characterStats = {
+        name: charRow.name,
+        currentHp: charRow.currentHp, maxHp: charRow.maxHp,
+        ac: 10 + dexMod + armorBonus,
+        level: charRow.level, characterClass: charRow.characterClass,
+        attackBonus: strMod + profBonus, initiativeMod: dexMod,
+        baseStrength: charRow.baseStrength, baseDexterity: charRow.baseDexterity,
+        baseConstitution: charRow.baseConstitution, baseIntelligence: charRow.baseIntelligence,
+        baseWisdom: charRow.baseWisdom, baseCharisma: charRow.baseCharisma,
+        skillsModifiers: (charRow.skillsModifiers as Record<string, number>) ?? {},
+        skillProficiencies: charRow.skillProficiencies ?? [],
+        isHiding: charRow.isHiding,
+      };
     }
 
+    // Session-wide partyMembers (deduped, full PartyMemberInfo)
+    const seenIds = new Set<string>();
+    const partyMembers = [];
+    for (const rp of sessionPartyData) {
+      if (seenIds.has(rp.character.id)) continue;
+      seenIds.add(rp.character.id);
+      partyMembers.push({
+        characterId: rp.character.id,
+        characterName: rp.character.name,
+        characterClass: rp.character.characterClass,
+        avatarUrl: rp.character.user.avatarUrl,
+        currentHp: rp.character.currentHp,
+        maxHp: rp.character.maxHp,
+        isDead: rp.character.isDead,
+        isDormant: Date.now() - rp.lastActiveAt.getTime() > DORMANT_MS,
+        isInSameRoom: rp.roomInstance.id === roomInstanceId,
+        currentRoom: rp.roomInstance.template.name,
+        lastSeenAt: rp.character.user.lastSeenAt,
+      });
+    }
+
+    // Recent narrative (chronological) with author avatars
+    const currentNarrative = messageLogs.reverse().map(n => ({
+      id: n.id,
+      text: n.text,
+      isMechanicalEvent: n.isMechanicalEvent,
+      mechanicalSummary: n.mechanicalSummary,
+      createdAt: n.createdAt,
+      authorName: n.character?.name ?? null,
+      authorAvatarUrl: n.character?.user?.avatarUrl && (n.character.user.avatarUrl as string).startsWith('https://')
+        ? n.character.user.avatarUrl
+        : null,
+    }));
+
     return NextResponse.json({
-      activeState: roomInstance.session.gameState,
-      gameState: roomInstance.session.gameState,
-      combatState: roomInstance.session.combatState ?? null,
-      sessionId: roomInstance.session.id,
+      activeState: roomInstance.gameState,
+      gameState: roomInstance.gameState,
+      combatState: roomInstance.combatState ?? null,
+      sessionId,
       roomName: roomInstance.template.name,
       poiIndex,
       poiStates,
@@ -122,6 +175,7 @@ export async function GET(req: NextRequest) {
       characterInventory,
       characterProximityPoi,
       partyMembers,
+      currentNarrative,
     });
   } catch {
     return NextResponse.json({ error: 'Failed to fetch room state' }, { status: 500 });

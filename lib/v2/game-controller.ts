@@ -438,14 +438,18 @@ function buildNarrativeSystemPrompt(
   mechanicalFactBlock: string,
   itemsBlock: string,
   storyFlags: Record<string, unknown>,
+  partyNames?: string[],
 ): string {
   const flagEntries = Object.entries(storyFlags);
   const flagsBlock = flagEntries.length > 0
     ? flagEntries.map(([k, v]) => `  ${k}: ${v}`).join('\n')
     : '  (none set)';
+  const partyLine = partyNames && partyNames.length > 1
+    ? `\nPARTY MEMBERS IN THIS ROOM: ${partyNames.join(', ')}\n`
+    : '';
 
   return `You are a realistic and immersive Dungeon Master narrating an asynchronous text-based D&D adventure.
-
+${partyLine}
 ROOM CONTEXT:
 Name: ${roomName}
 Description: ${roomDescription}
@@ -475,7 +479,7 @@ const roomInstanceQuery = (roomInstanceId: string) =>
     where: { id: roomInstanceId },
     include: {
       template: true,
-      session: { select: { id: true, gameState: true, storyFlags: true, combatState: true } },
+      session: { select: { id: true, gameState: true, storyFlags: true, kickedCharacterIds: true } },
       poiInstances: { include: { template: true } },
       participants: { include: { character: { select: { id: true, name: true } } } },
     },
@@ -733,29 +737,46 @@ interface CombatPoiContext extends PoiContext {
 }
 
 export async function enterCombat(
-  characterId: string,
-  character: { id: string; name: string; baseDexterity: number; currentHp: number; maxHp: number },
   roomInstance: { id: string; poiInstances: Array<{ id: string; poiTemplateId: string; currentProperties: unknown; template: { defaultProperties: unknown; name: string } }> },
-  sessionId: string,
 ): Promise<CombatState> {
-  // Collect alert enemies
-  const alertEnemies: Array<{ poiInstanceId: string; name: string; combatStats: PoiCombatStats; currentHp: number; ac: number }> = [];
+  const DORMANT_MS = 48 * 60 * 60 * 1000;
 
+  // Already-in-combat guard
+  const roomRow = await prisma.roomInstance.findUnique({ where: { id: roomInstance.id }, select: { gameState: true, combatState: true } });
+  if (roomRow?.gameState === 'combat' && roomRow.combatState) {
+    return roomRow.combatState as unknown as CombatState;
+  }
+
+  // Load all room participants with character stats + lastActiveAt
+  const roomParticipants = await prisma.roomParticipant.findMany({
+    where: { roomInstanceId: roomInstance.id },
+    include: {
+      character: {
+        select: { id: true, name: true, baseDexterity: true, currentHp: true, maxHp: true },
+      },
+    },
+  });
+
+  // Collect alert enemies (skip already-dead ones)
+  const alertEnemies: Array<{ poiInstanceId: string; name: string; combatStats: PoiCombatStats; currentHp: number; ac: number }> = [];
   for (const poi of roomInstance.poiInstances) {
     const dp = poi.template.defaultProperties as Record<string, unknown>;
     const cp = poi.currentProperties as Record<string, unknown>;
-    const awareness = cp.awareness_state as string | undefined;
-    if (awareness !== 'alert') continue;
+    if (cp.awareness_state !== 'alert') continue;
     const combatStats = (dp.combat_stats ?? {}) as PoiCombatStats;
     const maxHp = combatStats.max_hp ?? 10;
     const currentHp = typeof cp.current_hp === 'number' ? cp.current_hp : maxHp;
-    const ac = combatStats.ac ?? 10;
-    alertEnemies.push({ poiInstanceId: poi.id, name: poi.template.name, combatStats, currentHp, ac });
+    if (currentHp <= 0) continue;
+    alertEnemies.push({ poiInstanceId: poi.id, name: poi.template.name, combatStats, currentHp, ac: combatStats.ac ?? 10 });
   }
 
-  // Build actors for initiative roll
+  // Build actors for initiative
   const actors = [
-    { actorId: characterId, actorType: 'CHARACTER' as const, dexterity: character.baseDexterity },
+    ...roomParticipants.map(rp => ({
+      actorId: rp.characterId,
+      actorType: 'CHARACTER' as const,
+      dexterity: rp.character.baseDexterity,
+    })),
     ...alertEnemies.map(e => ({
       actorId: e.poiInstanceId,
       actorType: 'ENEMY' as const,
@@ -764,41 +785,31 @@ export async function enterCombat(
   ];
 
   const slots = rollInitiative(actors);
-  const enemyCount = alertEnemies.length;
 
-  console.log(`[stage3:combat] entering combat — room=${roomInstance.id} enemies=${enemyCount}`);
-  console.log(
-    `[stage3:initiative] order=[${slots.map(s => {
-      const name = s.actorId === characterId ? character.name : (alertEnemies.find(e => e.poiInstanceId === s.actorId)?.name ?? s.actorId.slice(0, 8));
-      return `${name}:${s.initiative}`;
-    }).join(' → ')}]`,
-  );
-
-  // Check for unaware enemies in the room (surprised)
+  // Check unaware enemies (surprised)
   const unawarePoiIds = new Set(
     roomInstance.poiInstances
-      .filter(pi => {
-        const cp = pi.currentProperties as Record<string, unknown>;
-        return cp.awareness_state === 'unaware';
-      })
+      .filter(pi => (pi.currentProperties as Record<string, unknown>).awareness_state === 'unaware')
       .map(pi => pi.id),
   );
 
-  // Build initiative order
+  // Build initiative order with isDormant stamping
   const initiativeOrder: InitiativeEntry[] = slots.map(slot => {
-    if (slot.actorId === characterId) {
+    const rp = roomParticipants.find(p => p.characterId === slot.actorId);
+    if (rp) {
       return {
-        id: characterId,
+        id: rp.characterId,
         type: 'character',
-        name: character.name,
+        name: rp.character.name,
         initiative: slot.initiative,
-        hp: character.currentHp,
-        maxHp: character.maxHp,
-        ac: 10 + abilityModifier(character.baseDexterity),
+        hp: rp.character.currentHp,
+        maxHp: rp.character.maxHp,
+        ac: 10 + abilityModifier(rp.character.baseDexterity),
         surprised: false,
         acted: false,
         proximity: 'close',
         status_effects: [],
+        isDormant: Date.now() - rp.lastActiveAt.getTime() > DORMANT_MS,
       };
     }
     const enemy = alertEnemies.find(e => e.poiInstanceId === slot.actorId)!;
@@ -819,29 +830,31 @@ export async function enterCombat(
     };
   });
 
+  // First valid (non-dormant, non-dead) actor goes first
+  const firstValid = initiativeOrder.find(e => !e.isDormant && !(e.type === 'enemy' && e.hp <= 0));
   const combatState: CombatState = {
     round: 1,
     initiativeOrder,
-    activeActorId: initiativeOrder[0].id,
+    activeActorId: firstValid?.id ?? initiativeOrder[0]?.id ?? '',
     currentTurnUsage: { actionUsed: false, bonusActionUsed: false, movementUsed: false, reactionUsed: false },
   };
 
-  await prisma.gameSession.update({
-    where: { id: sessionId },
+  await prisma.roomInstance.update({
+    where: { id: roomInstance.id },
     data: { gameState: 'combat', combatState: combatState as object },
   });
 
-  console.log(
-    `[stage3:initiative] player=${slots.find(s => s.actorId === characterId)?.initiative} enemies=${alertEnemies.map(e => `${e.name}:${slots.find(s => s.actorId === e.poiInstanceId)?.initiative}`).join(', ')}`,
-  );
+  console.log(`[stage3:combat] entering combat — room=${roomInstance.id} pcs=${roomParticipants.length} enemies=${alertEnemies.length}`);
   console.log(`[stage3:initiative] order=[${initiativeOrder.map(e => e.name).join(' → ')}]`);
 
   return combatState;
 }
 
-export function exitCombat(session: { gameState: string; combatState: unknown }): void {
-  session.gameState = 'exploration';
-  session.combatState = null;
+export async function exitCombat(roomInstanceId: string): Promise<void> {
+  await prisma.roomInstance.update({
+    where: { id: roomInstanceId },
+    data: { gameState: 'exploration', combatState: Prisma.JsonNull },
+  });
   console.log('[stage3:combat] combat ended — all enemies dead');
 }
 
@@ -1055,13 +1068,20 @@ export function advanceTurn(cs: CombatState): CombatState {
   const currentIdx = order.findIndex(e => e.id === cs.activeActorId);
   const updated = order.map((e, i) => i === currentIdx ? { ...e, acted: true } : e);
 
-  const nextIdx = updated.findIndex((e, i) => i > currentIdx && !e.acted);
+  const isSkippable = (e: (typeof updated)[number]) => e.isDormant || (e.type === 'enemy' && e.hp <= 0);
+
+  const nextIdx = updated.findIndex((e, i) => i > currentIdx && !e.acted && !isSkippable(e));
   if (nextIdx !== -1) {
     return { ...cs, initiativeOrder: updated, activeActorId: updated[nextIdx].id, currentTurnUsage: { actionUsed: false, bonusActionUsed: false, movementUsed: false, reactionUsed: false } };
   }
-  // New round
+  // New round — reset acted flags but keep skipping dormant/dead
   const reset = updated.map(e => ({ ...e, acted: false }));
-  return { ...cs, round: cs.round + 1, initiativeOrder: reset, activeActorId: reset[0].id, currentTurnUsage: { actionUsed: false, bonusActionUsed: false, movementUsed: false, reactionUsed: false } };
+  const firstValid = reset.findIndex(e => !isSkippable(e));
+  if (firstValid === -1) {
+    // All dormant or dead — end combat or just return unchanged to avoid loop
+    return { ...cs, initiativeOrder: reset, currentTurnUsage: { actionUsed: false, bonusActionUsed: false, movementUsed: false, reactionUsed: false } };
+  }
+  return { ...cs, round: cs.round + 1, initiativeOrder: reset, activeActorId: reset[firstValid].id, currentTurnUsage: { actionUsed: false, bonusActionUsed: false, movementUsed: false, reactionUsed: false } };
 }
 
 export function checkCombatEnd(cs: CombatState): boolean {
@@ -2958,6 +2978,7 @@ async function generateAndPersistNarrative(
   appliedActions: AppliedAction[],
   sessionId: string,
   extraFacts?: string[],
+  roomParticipantNames?: string[],
 ): Promise<{ text: string; persisted: boolean }> {
   const [recentLogs, freshPois, sessionRow] = await Promise.all([
     prisma.messageLog.findMany({
@@ -3049,7 +3070,7 @@ async function generateAndPersistNarrative(
   const narrativeResponse = await anthropic.messages.create({
     model: 'claude-haiku-4-5-20251001',
     max_tokens: 1024,
-    system: buildNarrativeSystemPrompt(roomName, roomDescription, finalFactBlock, itemsBlock, storyFlags),
+    system: buildNarrativeSystemPrompt(roomName, roomDescription, finalFactBlock, itemsBlock, storyFlags, roomParticipantNames),
     messages: [
       {
         role: 'user',
@@ -3097,12 +3118,15 @@ async function buildViewState(
   characterProximityTargetId: string | null,
   fallbackNarrative?: string,
 ): Promise<ViewStatePayload> {
-  const [recentNarrative, participants, charRow, poiInstances, sessionRow] = await Promise.all([
+  const [recentNarrative, participants, charRow, poiInstances, roomRow, sessionPartyData] = await Promise.all([
     prisma.messageLog.findMany({
       where: { roomInstanceId, isMechanicalEvent: false },
       orderBy: { createdAt: 'desc' },
       take: 5,
-      select: { id: true, text: true, isMechanicalEvent: true, mechanicalSummary: true, createdAt: true },
+      select: {
+        id: true, text: true, isMechanicalEvent: true, mechanicalSummary: true, createdAt: true,
+        character: { select: { name: true, user: { select: { avatarUrl: true } } } },
+      },
     }),
     prisma.roomParticipant.findMany({
       where: { roomInstanceId },
@@ -3121,9 +3145,22 @@ async function buildViewState(
       where: { roomInstanceId },
       include: { template: true },
     }),
-    prisma.gameSession.findFirst({
-      where: { roomInstances: { some: { id: roomInstanceId } } },
-      select: { combatState: true, gameState: true },
+    prisma.roomInstance.findUnique({
+      where: { id: roomInstanceId },
+      select: { gameState: true, combatState: true },
+    }),
+    prisma.roomParticipant.findMany({
+      where: { roomInstance: { sessionId } },
+      include: {
+        character: {
+          select: {
+            id: true, name: true, characterClass: true, currentHp: true, maxHp: true, isDead: true,
+            user: { select: { avatarUrl: true, lastSeenAt: true } },
+          },
+        },
+        roomInstance: { select: { id: true, template: { select: { name: true } } } },
+      },
+      orderBy: { lastActiveAt: 'asc' },
     }),
   ]);
 
@@ -3243,7 +3280,13 @@ async function buildViewState(
     };
   }
 
-  const orderedNarrative = recentNarrative.reverse();
+  const orderedNarrative = recentNarrative.reverse().map(n => ({
+    ...n,
+    authorName: n.character?.name ?? null,
+    authorAvatarUrl: n.character?.user?.avatarUrl && (n.character.user.avatarUrl as string).startsWith('https://')
+      ? n.character.user.avatarUrl as string
+      : null,
+  }));
   if (fallbackNarrative && !orderedNarrative.some(n => n.text === fallbackNarrative)) {
     orderedNarrative.push({
       id: 'injected-current',
@@ -3251,16 +3294,17 @@ async function buildViewState(
       isMechanicalEvent: false,
       mechanicalSummary: null,
       createdAt: new Date(),
+      character: null,
+      authorName: null,
+      authorAvatarUrl: null,
     });
   }
 
-  const resolvedGameState = (sessionRow?.gameState ?? gameState) as 'exploration' | 'combat';
-  const rawCombatState = sessionRow?.combatState
-    ? (sessionRow.combatState as unknown as import('@/types/v2-game').CombatState)
+  const resolvedGameState = (roomRow?.gameState ?? gameState) as 'exploration' | 'combat';
+  const rawCombatState = roomRow?.combatState
+    ? (roomRow.combatState as unknown as import('@/types/v2-game').CombatState)
     : null;
   // Sync authoritative character HP into the player's initiative entry.
-  // The DB writes to character.currentHp but may not flush back into combatState.initiativeOrder
-  // (e.g. when enemies deal damage during end_turn). Read-time sync keeps the strip accurate.
   const resolvedCombatState = rawCombatState
     ? {
         ...rawCombatState,
@@ -3269,6 +3313,29 @@ async function buildViewState(
         ),
       }
     : null;
+
+  // Build partyMembers (deduped by characterId, keeping most recent room)
+  const DORMANT_MS = 48 * 60 * 60 * 1000;
+  const seenPartyCharIds = new Set<string>();
+  const partyMembers: import('@/types/v2-game').PartyMemberInfo[] = [];
+  for (const rp of sessionPartyData) {
+    if (seenPartyCharIds.has(rp.character.id)) continue;
+    seenPartyCharIds.add(rp.character.id);
+    const lastActive = rp.lastActiveAt;
+    partyMembers.push({
+      characterId: rp.character.id,
+      characterName: rp.character.name,
+      characterClass: rp.character.characterClass,
+      avatarUrl: rp.character.user.avatarUrl,
+      currentHp: rp.character.currentHp,
+      maxHp: rp.character.maxHp,
+      isDead: rp.character.isDead,
+      isDormant: Date.now() - lastActive.getTime() > DORMANT_MS,
+      isInSameRoom: rp.roomInstance.id === roomInstanceId,
+      currentRoom: rp.roomInstance.template.name,
+      lastSeenAt: rp.character.user.lastSeenAt,
+    });
+  }
 
   const profBonus = charRow.level >= 5 ? 3 : charRow.level >= 3 ? 2 : 2;
   const dexMod = abilityModifier(charRow.baseDexterity);
@@ -3309,6 +3376,7 @@ async function buildViewState(
       skillProficiencies: charRow.skillProficiencies ?? [],
       isHiding: charRow.isHiding,
     },
+    partyMembers,
   };
 }
 
@@ -3444,10 +3512,25 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
       },
     });
 
+    // Gates: lobby, dead character, kicked
+    if (roomInstance.session.gameState === 'lobby') {
+      throw Object.assign(new Error('Session has not started yet'), { status: 403 });
+    }
+    const charForGate = await prisma.character.findUnique({ where: { id: characterId }, select: { isDead: true } });
+    if (charForGate?.isDead) throw Object.assign(new Error('Dead characters cannot act'), { status: 403 });
+    const kickedIds = (roomInstance.session.kickedCharacterIds ?? []) as string[];
+    if (kickedIds.includes(characterId)) throw Object.assign(new Error('You have been removed from this session'), { status: 403 });
+
+    // Read combat state from roomInstance
+    const riRow = await prisma.roomInstance.findUnique({
+      where: { id: roomInstanceId },
+      select: { gameState: true, combatState: true, processingAction: true },
+    });
+
     // Early-exit: end_turn bypasses intent parsing — just advance turn and run enemies
     if (action_hint === 'end_turn') {
-      const sessionGs = roomInstance.session.gameState;
-      const sessionCs = roomInstance.session.combatState;
+      const sessionGs = riRow?.gameState ?? 'exploration';
+      const sessionCs = riRow?.combatState;
       if (sessionGs !== 'combat' || !sessionCs) {
         return buildViewState(roomInstanceId, sessionGs as string, characterId, roomInstance.session.id, currentProximityPoiId);
       }
@@ -3493,8 +3576,8 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
         await prisma.character.update({ where: { id: characterId }, data: { currentHp: newHp } });
       }
 
-      await prisma.gameSession.update({
-        where: { id: roomInstance.session.id },
+      await prisma.roomInstance.update({
+        where: { id: roomInstanceId },
         data: { combatState: workingCs as object },
       });
 
@@ -3508,6 +3591,7 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
         [],
         roomInstance.session.id,
         allEnemyFacts.length > 0 ? allEnemyFacts : undefined,
+        roomInstance.participants.map(p => p.character.name),
       );
 
       for (const rollData of pendingRollData) {
@@ -3524,6 +3608,23 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
 
       return buildViewState(roomInstanceId, 'combat', characterId, roomInstance.session.id, currentProximityPoiId);
     }
+
+    // Phase P: exploration action lock — first-in wins, second caller gets 409
+    const isExplorationAction = (riRow?.gameState ?? 'exploration') !== 'combat';
+    if (isExplorationAction) {
+      const lockResult = await prisma.roomInstance.updateMany({
+        where: { id: roomInstanceId, processingAction: false },
+        data: { processingAction: true },
+      });
+      if (lockResult.count === 0) {
+        throw Object.assign(
+          new Error('Another action is being processed — please wait a moment and try again'),
+          { status: 409 },
+        );
+      }
+    }
+
+    try {
 
     // If character is standing at a visible exit, fetch adjacent room POIs so
     // Haiku can reference them by real instance ID (cross-room actions).
@@ -3750,9 +3851,8 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
     }
 
     // Combat turn gate: if in combat and it's not the player's turn, reject
-    const sessionForGate = roomInstance.session;
-    if (sessionForGate.gameState === 'combat' && sessionForGate.combatState) {
-      const cs = sessionForGate.combatState as unknown as CombatState;
+    if (riRow?.gameState === 'combat' && riRow.combatState) {
+      const cs = riRow.combatState as unknown as CombatState;
       console.log(`[stage3:turn] actor=${cs.activeActorId} player=${characterId} match=${cs.activeActorId === characterId}`);
       if (cs.activeActorId !== characterId) {
         throw Object.assign(new Error("It's not your turn"), { status: 409 });
@@ -3760,12 +3860,12 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
     }
 
     // Combat action resolution (Phase 3 + 4): resolve in-combat actions, then auto-resolve enemy turns
-    const inCombat = sessionForGate.gameState === 'combat' && !!sessionForGate.combatState;
+    const inCombat = riRow?.gameState === 'combat' && !!riRow.combatState;
     const combatActionTypes = new Set(['attack', 'dodge', 'dash', 'disengage', 'hide', 'provoke', 'change_proximity', 'death_save', 'use_item', 'throw_item']);
     const allCombatFacts: string[] = [];
     let hadSilentKill = false; // Phase 13: suppress loud propagation for silent kills
     if (inCombat && parsedActions.length > 0) {
-      const cs = sessionForGate.combatState as unknown as CombatState;
+      const cs = riRow!.combatState as unknown as CombatState;
       const usage = cs.currentTurnUsage;
       const firstType = parsedActions[0].action_type;
       if (firstType === 'change_proximity' && usage.movementUsed) {
@@ -3782,7 +3882,7 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
       }
     }
     if (inCombat && parsedActions.length > 0 && combatActionTypes.has(parsedActions[0].action_type)) {
-      const cs = sessionForGate.combatState as unknown as CombatState;
+      const cs = riRow!.combatState as unknown as CombatState;
       const mainHand = characterInventory.equipped.main_hand;
       const equippedWeapon = mainHand ? { damageDice: '1d6', weaponType: 'melee' } : null;
       const combatResult = resolveCombatAction(
@@ -3836,7 +3936,7 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
       hadSilentKill = combatResult.silentKillIds.size > 0;
 
       if (combatResult.combatEnded) {
-        await prisma.gameSession.update({ where: { id: roomInstance.session.id }, data: { gameState: 'exploration', combatState: Prisma.JsonNull } });
+        await prisma.roomInstance.update({ where: { id: roomInstanceId }, data: { gameState: 'exploration', combatState: Prisma.JsonNull } });
         console.log('[stage3:combat] combat ended — all enemies dead');
       } else {
         // Player's turn remains active — enemies act when player ends turn
@@ -3845,7 +3945,7 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
         const finalUpdatedCs = isBonusAction
           ? { ...combatResult.updatedCombatState, currentTurnUsage: { ...combatResult.updatedCombatState.currentTurnUsage, bonusActionUsed: true } }
           : combatResult.updatedCombatState;
-        await prisma.gameSession.update({ where: { id: roomInstance.session.id }, data: { combatState: finalUpdatedCs as object } });
+        await prisma.roomInstance.update({ where: { id: roomInstanceId }, data: { combatState: finalUpdatedCs as object } });
 
         // Phase 13: body discovery — unaware enemies check for newly dead allies
         const newDeadCount = combatResult.deadEnemyPoiIds.length;
@@ -3903,7 +4003,7 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
 
     // Phase 5: opportunity attacks fire when player flees (move_to_room in combat)
     if (inCombat && parsedActions[0]?.action_type === 'move_to_room') {
-      const cs = sessionForGate.combatState as unknown as CombatState;
+      const cs = riRow!.combatState as unknown as CombatState;
       const oppResult = resolveOpportunityAttacks(cs, characterId, character.name, roomInstance.poiInstances);
       allCombatFacts.push(...oppResult.facts);
       if (oppResult.hpDamage > 0) {
@@ -3911,7 +4011,7 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
         await prisma.character.update({ where: { id: characterId }, data: { currentHp: newHp } });
       }
       if (oppResult.hpDamage > 0 || oppResult.facts.length > 0) {
-        await prisma.gameSession.update({ where: { id: roomInstance.session.id }, data: { combatState: oppResult.updatedCombatState as object } });
+        await prisma.roomInstance.update({ where: { id: roomInstanceId }, data: { combatState: oppResult.updatedCombatState as object } });
       }
     }
 
@@ -4005,7 +4105,7 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
     }
 
     // Combat entry: check if any parsed action (or alert enemy) triggers combat
-    const currentSessionGameState = roomInstance.session.gameState;
+    const currentSessionGameState = riRow?.gameState ?? 'exploration';
     if (currentSessionGameState !== 'combat' && parsedActions.length > 0) {
       const firstAction = parsedActions[0];
       const storyFlags = (roomInstance.session.storyFlags as Record<string, unknown>) ?? {};
@@ -4020,12 +4120,7 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
         const activeRoomInstance = newRoomInstanceId
           ? await prisma.roomInstance.findUniqueOrThrow({ where: { id: activeRoomId }, include: { poiInstances: { include: { template: true } } } })
           : roomInstance;
-        await enterCombat(
-          characterId,
-          { id: character.id, name: character.name, baseDexterity: character.baseDexterity, currentHp: character.currentHp, maxHp: character.maxHp },
-          activeRoomInstance,
-          roomInstance.session.id,
-        );
+        await enterCombat(activeRoomInstance);
       }
     }
 
@@ -4033,7 +4128,7 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
     let activeRoomInstanceId = roomInstanceId;
     let activeRoomName = roomInstance.template.name;
     let activeRoomDescription = roomInstance.template.baseDescription;
-    let activeGameState = roomInstance.session.gameState;
+    let activeGameState = riRow?.gameState ?? 'exploration';
     let activeCharacterProximityTargetId: string | null = null;
 
     // Read current participant proximity for LoS filter
@@ -4048,14 +4143,11 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
       activeCharacterProximityTargetId = null; // just arrived, in open space
       const newRoom = await prisma.roomInstance.findUniqueOrThrow({
         where: { id: newRoomInstanceId },
-        include: {
-          template: true,
-          session: { select: { gameState: true } },
-        },
+        select: { gameState: true, template: { select: { name: true, baseDescription: true } } },
       });
       activeRoomName = newRoom.template.name;
       activeRoomDescription = newRoom.template.baseDescription;
-      activeGameState = newRoom.session.gameState;
+      activeGameState = newRoom.gameState;
     }
 
     // Stage 4
@@ -4069,6 +4161,7 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
         appliedActions,
         roomInstance.session.id,
         allCombatFacts.length > 0 ? allCombatFacts : undefined,
+        roomInstance.participants.map(p => p.character.name),
       );
 
     // Stage 5 — always fetches fresh POI state from DB
@@ -4082,5 +4175,13 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
     );
 
     return viewState;
+    } finally {
+      if (isExplorationAction) {
+        await prisma.roomInstance.update({
+          where: { id: roomInstanceId },
+          data: { processingAction: false },
+        }).catch(() => {});
+      }
+    }
   }
 }

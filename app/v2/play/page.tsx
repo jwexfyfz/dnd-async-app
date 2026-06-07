@@ -2,7 +2,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState, useCallback, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
-import type { CombatState, CharacterStats, InitiativeEntry, CharacterInventory, ItemDefinition } from '@/types/v2-game';
+import type { CombatState, CharacterStats, InitiativeEntry, CharacterInventory, ItemDefinition, PartyMemberInfo } from '@/types/v2-game';
 import { classEmoji, classSprite } from '@/lib/class-emoji';
 import AppBar from '@/components/app-bar';
 import { ABILITY_DESCRIPTIONS, ABILITY_PASSIVE_NOTES, SKILL_ABILITY, SKILL_DESCRIPTIONS } from '@/lib/v2/skill-descriptions';
@@ -886,18 +886,22 @@ function CharacterSheet({ stats, isCombat, isOwn, onFeatureActivate }: {
   );
 }
 
-function PartyTab({ characterStats, gameState, onFeatureActivate }: {
+function PartyTab({ characterStats, gameState, onFeatureActivate, partyMembers, characterId }: {
   characterStats: CharacterStats | null;
   gameState: 'exploration' | 'combat';
   onFeatureActivate: (label: string) => void;
+  partyMembers: PartyMemberInfo[];
+  characterId: string;
 }) {
   if (!characterStats) {
     return <div className="flex-1 flex items-center justify-center text-slate-400 text-sm">Loading…</div>;
   }
+  const others = partyMembers.filter(m => m.characterId !== characterId);
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
-      {/* PartyHeader */}
+      {/* Party roster strip */}
       <div className="flex items-center gap-3 px-4 py-3 border-b border-slate-200 bg-white flex-shrink-0 overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
+        {/* Self */}
         <div className="flex flex-col items-center gap-0.5 flex-shrink-0">
           <div className="w-14 h-14 rounded-full bg-slate-100 border-2 border-indigo-300 overflow-hidden">
             <img src={classSprite(characterStats.characterClass)} alt={characterStats.characterClass} className="w-full h-full object-cover" />
@@ -908,6 +912,24 @@ function PartyTab({ characterStats, gameState, onFeatureActivate }: {
             {characterStats.currentHp}/{characterStats.maxHp} HP
           </span>
         </div>
+        {/* Others */}
+        {others.map(m => (
+          <div key={m.characterId} className="flex flex-col items-center gap-0.5 flex-shrink-0">
+            <div className={`w-14 h-14 rounded-full overflow-hidden border-2 ${m.isDead ? 'border-slate-300 opacity-50' : m.isDormant ? 'border-yellow-300' : 'border-slate-200'}`}>
+              {m.avatarUrl
+                ? <img src={m.avatarUrl} alt={m.characterName} className="w-full h-full object-cover" />
+                : <div className="w-full h-full bg-slate-100 flex items-center justify-center text-2xl">{classEmoji(m.characterClass)}</div>}
+            </div>
+            <span className="text-xs text-slate-800 font-semibold leading-tight max-w-[60px] truncate">{m.characterName}</span>
+            <span className="text-xs text-slate-500">{m.characterClass}</span>
+            <span className={`text-xs ${m.currentHp / m.maxHp < 0.3 ? 'text-red-500 font-semibold' : 'text-slate-400'}`}>
+              {m.currentHp}/{m.maxHp} HP
+            </span>
+            {m.isDead && <span className="text-[10px] text-slate-400">☠ Dead</span>}
+            {m.isDormant && !m.isDead && <span className="text-[10px] text-yellow-600">Away</span>}
+            {!m.isInSameRoom && <span className="text-[10px] text-slate-400 truncate max-w-[60px]">{m.currentRoom}</span>}
+          </div>
+        ))}
       </div>
       <CharacterSheet
         stats={characterStats}
@@ -1553,7 +1575,7 @@ function ActionChips({ characterStats, characterInventory, combatState, chip, se
 
 // ─── Chat Tab ─────────────────────────────────────────────────────────────────
 
-function ChatTab({ history, hasMore, loadingMore, loadMore, sending, error, input, setInput, sendAction, handleKeyDown, chip, setChip, gameState, combatState, characterStats, characterInventory, chatEndRef, chatContainerRef, showResumeCard, roomName, characterId, onEndTurn }: {
+function ChatTab({ history, hasMore, loadingMore, loadMore, sending, error, input, setInput, sendAction, handleKeyDown, chip, setChip, gameState, combatState, characterStats, characterInventory, chatEndRef, chatContainerRef, showResumeCard, onDismissResume, roomName, characterId, partyMembers, onEndTurn }: {
   history: HistoryEntry[];
   hasMore: boolean;
   loadingMore: boolean;
@@ -1573,8 +1595,10 @@ function ChatTab({ history, hasMore, loadingMore, loadMore, sending, error, inpu
   chatEndRef: React.RefObject<HTMLDivElement | null>;
   chatContainerRef: React.RefObject<HTMLDivElement | null>;
   showResumeCard: boolean;
+  onDismissResume: () => void;
   roomName: string;
   characterId: string;
+  partyMembers: PartyMemberInfo[];
   onEndTurn: () => void;
 }) {
   const [showItemSheet, setShowItemSheet] = useState(false);
@@ -1621,8 +1645,16 @@ function ChatTab({ history, hasMore, loadingMore, loadMore, sending, error, inpu
         {history.map(entry => (
           <ChatMessage key={entry.id} entry={entry} characterId={characterId} />
         ))}
+        {showResumeCard && gameState === 'exploration' && (
+          <ExplorationResumeCard
+            roomName={roomName}
+            partyMembers={partyMembers}
+            lastDmMessage={history.filter(e => !e.mechanicalSummary || (e.mechanicalSummary as { type?: string }).type !== 'player_action').at(-1)?.text ?? null}
+            onDismiss={onDismissResume}
+          />
+        )}
         {showResumeCard && gameState === 'combat' && combatState && (
-          <CombatResumeCard combatState={combatState} roomName={roomName} characterId={characterId} />
+          <CombatResumeCard combatState={combatState} roomName={roomName} characterId={characterId} onDismiss={onDismissResume} />
         )}
         {sending && (
           <div className="flex justify-start my-2">
@@ -1650,45 +1682,58 @@ function ChatTab({ history, hasMore, loadingMore, loadMore, sending, error, inpu
       )}
 
       <div className="px-4 pt-2 pb-3 bg-white border-t border-slate-200 flex-shrink-0">
-        {chip && (
-          <div className="flex mb-2">
-            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-indigo-100 text-indigo-700 rounded-full text-xs font-semibold">
-              {chip}
-              <button
-                onClick={() => setChip(null)}
-                className="text-indigo-400 hover:text-indigo-600 leading-none ml-0.5"
-                aria-label="Remove chip"
-              >
-                ×
-              </button>
-            </span>
-          </div>
-        )}
         {(() => {
-          const allActionsUsed = gameState === 'combat' &&
-            (combatState?.currentTurnUsage.actionUsed ?? false) &&
-            (combatState?.currentTurnUsage.bonusActionUsed ?? false) &&
-            (combatState?.currentTurnUsage.movementUsed ?? false);
-          return (
-            <div className="flex gap-2">
-              <textarea
-                value={input}
-                onChange={e => setInput(e.target.value)}
-                onKeyDown={handleKeyDown}
-                rows={2}
-                placeholder={allActionsUsed ? 'All actions used — press End Turn' : 'What do you do? (Enter to send)'}
-                className={`flex-1 resize-none border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 ${allActionsUsed ? 'border-slate-200 bg-slate-50 text-slate-400 cursor-not-allowed' : 'border-slate-300'}`}
-                disabled={sending || allActionsUsed}
-              />
-              <button
-                onClick={sendAction}
-                disabled={sending || !input.trim() || allActionsUsed}
-                className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-40"
-              >
-                Send
-              </button>
-            </div>
-          );
+          const isMyTurn = gameState !== 'combat' || !combatState || combatState.activeActorId === characterId;
+          if (!isMyTurn) {
+            const activeActor = combatState?.initiativeOrder.find(e => e.id === combatState.activeActorId);
+            const actorName = activeActor?.name ?? 'Someone';
+            return (
+              <div className="flex items-center justify-center gap-2 py-3 px-4 bg-slate-100 rounded-xl text-slate-500 text-sm">
+                <span className="animate-pulse">⏳</span>
+                <span>Waiting for <span className="font-semibold text-slate-700">{actorName}</span>…</span>
+              </div>
+            );
+          }
+          if (chip) {
+            return (
+              <>
+                <div className="flex mb-2">
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-indigo-100 text-indigo-700 rounded-full text-xs font-semibold">
+                    {chip}
+                    <button onClick={() => setChip(null)} className="text-indigo-400 hover:text-indigo-600 leading-none ml-0.5" aria-label="Remove chip">×</button>
+                  </span>
+                </div>
+                {renderChatInput()}
+              </>
+            );
+          }
+          return renderChatInput();
+          function renderChatInput() {
+            const allActionsUsed = gameState === 'combat' &&
+              (combatState?.currentTurnUsage.actionUsed ?? false) &&
+              (combatState?.currentTurnUsage.bonusActionUsed ?? false) &&
+              (combatState?.currentTurnUsage.movementUsed ?? false);
+            return (
+              <div className="flex gap-2">
+                <textarea
+                  value={input}
+                  onChange={e => setInput(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  rows={2}
+                  placeholder={allActionsUsed ? 'All actions used — press End Turn' : 'What do you do? (Enter to send)'}
+                  className={`flex-1 resize-none border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 ${allActionsUsed ? 'border-slate-200 bg-slate-50 text-slate-400 cursor-not-allowed' : 'border-slate-300'}`}
+                  disabled={sending || allActionsUsed}
+                />
+                <button
+                  onClick={sendAction}
+                  disabled={sending || !input.trim() || allActionsUsed}
+                  className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-40"
+                >
+                  Send
+                </button>
+              </div>
+            );
+          }
         })()}
       </div>
     </>
@@ -1847,6 +1892,8 @@ interface HistoryEntry {
   isMechanicalEvent: boolean;
   mechanicalSummary: Record<string, unknown> | null;
   createdAt: string;
+  authorAvatarUrl?: string | null;
+  authorName?: string | null;
 }
 
 interface RollResult {
@@ -1986,10 +2033,51 @@ function CombatBanner({ type, round, initiativeSnapshot, characterId }: {
   );
 }
 
-function CombatResumeCard({ combatState, roomName, characterId }: {
+function lastSeenText(d: Date | string | null | undefined): string {
+  if (!d) return 'Never';
+  const ms = Math.max(0, Date.now() - new Date(d).getTime());
+  if (ms < 5 * 60 * 1000) return 'Online now';
+  if (ms < 60 * 60 * 1000) return `${Math.floor(ms / 60000)}m ago`;
+  if (ms < 24 * 60 * 60 * 1000) return `${Math.floor(ms / 3600000)}h ago`;
+  return `${Math.floor(ms / 86400000)} day${Math.floor(ms / 86400000) === 1 ? '' : 's'} ago`;
+}
+
+function ExplorationResumeCard({ roomName, partyMembers, lastDmMessage, onDismiss }: {
+  roomName: string;
+  partyMembers: PartyMemberInfo[];
+  lastDmMessage: string | null;
+  onDismiss: () => void;
+}) {
+  return (
+    <div className="my-3 mx-1 rounded-lg border border-teal-200 bg-teal-50 overflow-hidden text-xs">
+      <div className="px-3 py-2 bg-teal-100 border-b border-teal-200 font-medium text-teal-700">
+        Exploring · {roomName}
+      </div>
+      {partyMembers.length > 0 && (
+        <div className="px-3 py-2 space-y-1 border-b border-teal-100">
+          {partyMembers.map(m => (
+            <div key={m.characterId} className="flex items-center justify-between text-teal-700">
+              <span className="font-medium">{m.characterName}{m.isDead ? ' †' : m.isDormant ? ' (away)' : ''}</span>
+              <span className="text-teal-500">{lastSeenText(m.lastSeenAt)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {lastDmMessage && (
+        <div className="px-3 py-2 border-b border-teal-100 text-teal-600 italic line-clamp-2">{lastDmMessage}</div>
+      )}
+      <div className="px-3 py-2 flex justify-center">
+        <button onClick={onDismiss} className="text-teal-600 font-medium hover:text-teal-800 transition-colors">Resume Adventure →</button>
+      </div>
+    </div>
+  );
+}
+
+function CombatResumeCard({ combatState, roomName, characterId, onDismiss }: {
   combatState: CombatState;
   roomName: string;
   characterId: string;
+  onDismiss?: () => void;
 }) {
   const living = combatState.initiativeOrder.filter(e => e.hp > 0);
   return (
@@ -2015,8 +2103,11 @@ function CombatResumeCard({ combatState, roomName, characterId }: {
           );
         })}
       </div>
-      <div className="px-3 py-1.5 border-t border-slate-200 text-slate-400 text-center">
-        Scroll up to see how this fight started.
+      <div className="px-3 py-1.5 border-t border-slate-200 text-center">
+        {onDismiss
+          ? <button onClick={onDismiss} className="text-indigo-600 font-medium hover:text-indigo-800 transition-colors">Resume →</button>
+          : <span className="text-slate-400">Scroll up to see how this fight started.</span>
+        }
       </div>
     </div>
   );
@@ -2060,9 +2151,16 @@ function ChatMessage({ entry, characterId }: { entry: HistoryEntry; characterId?
     return <CombatBanner type="combat_end" />;
   }
 
-  // DM narrative
+  // DM narrative or player narrative
+  const avatarUrl = entry.authorAvatarUrl;
+  const authorName = entry.authorName;
   return (
-    <div className="flex justify-start my-2">
+    <div className="flex justify-start my-2 gap-2">
+      <div className="flex-shrink-0 w-6 h-6 rounded-full overflow-hidden flex items-center justify-center bg-slate-100 text-xs mt-1">
+        {avatarUrl
+          ? <img src={avatarUrl} alt={authorName ?? 'DM'} width={24} height={24} className="w-full h-full object-cover" />
+          : <span>🎲</span>}
+      </div>
       <div className="max-w-sm px-4 py-3 bg-white border border-slate-200 rounded-2xl rounded-bl-sm text-sm text-slate-700 leading-relaxed">
         {entry.text}
       </div>
@@ -2091,7 +2189,7 @@ function PlayContent() {
   const [characterStats, setCharacterStats] = useState<CharacterStats | null>(null);
   const [characterInventory, setCharacterInventory] = useState<CharacterInventory | null>(null);
   const [proximityPoi, setProximityPoi] = useState<{ id: string; name: string } | null>(null);
-  const [partyMembers, setPartyMembers] = useState<{ id: string; name: string }[]>([]);
+  const [partyMembers, setPartyMembers] = useState<PartyMemberInfo[]>([]);
   const [availablePois, setAvailablePois] = useState<{ id: string; name: string }[]>([]);
   const [chip, setChip] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<ActiveTab>('chat');
@@ -2101,6 +2199,11 @@ function PlayContent() {
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const suppressScrollRef = useRef(false);
   const prevScrollHeightRef = useRef(0);
+
+  // Ping lastSeenAt on mount
+  useEffect(() => {
+    fetch('/api/v2/user/ping', { method: 'POST' }).catch(() => {});
+  }, []);
 
   // Resolve current room from session, then load initial history
   useEffect(() => {
@@ -2145,6 +2248,37 @@ function PlayContent() {
         setAvailablePois(Object.entries((state.poiIndex as Record<string,string>) ?? {}).map(([id, name]) => ({ id, name })));
       });
   }, [sessionId, characterId]);
+
+  // Poll room state every 3s — skip when it's my combat turn (I'm the one acting)
+  useEffect(() => {
+    if (!activeRoomInstanceId || !characterId) return;
+    const isMyTurn = combatState?.activeActorId === characterId;
+    if (isMyTurn) return;
+    const poll = async () => {
+      try {
+        const res = await fetch(`/api/v2/room/state?roomInstanceId=${activeRoomInstanceId}&characterId=${characterId}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.gameState) setGameState(data.gameState as 'exploration' | 'combat');
+        setCombatState(data.combatState ?? null);
+        if (data.characterStats) setCharacterStats(data.characterStats);
+        if (data.characterInventory) setCharacterInventory(data.characterInventory);
+        setProximityPoi(data.characterProximityPoi ?? null);
+        if (data.partyMembers) setPartyMembers(data.partyMembers);
+        if (data.poiIndex) setAvailablePois(Object.entries(data.poiIndex as Record<string, string>).map(([id, name]) => ({ id, name })));
+        if (data.currentNarrative) {
+          const incoming = data.currentNarrative as HistoryEntry[];
+          setHistory(prev => {
+            const existingIds = new Set(prev.map(e => e.id));
+            const fresh = incoming.filter(e => !existingIds.has(e.id));
+            return fresh.length > 0 ? [...prev, ...fresh] : prev;
+          });
+        }
+      } catch { /* silent */ }
+    };
+    const id = setInterval(poll, 3000);
+    return () => clearInterval(id);
+  }, [activeRoomInstanceId, characterId, combatState?.activeActorId]);
 
   // After load-more prepends: restore scroll position so viewport doesn't jump.
   // useLayoutEffect fires before paint — adjusts scrollTop while suppressScrollRef is still true.
@@ -2388,8 +2522,10 @@ function PlayContent() {
             chatEndRef={chatEndRef}
             chatContainerRef={chatContainerRef}
             showResumeCard={showResumeCard}
+            onDismissResume={() => setShowResumeCard(false)}
             roomName={roomName}
             characterId={characterId!}
+            partyMembers={partyMembers}
             onEndTurn={handleEndTurn}
           />
         )}
@@ -2401,7 +2537,7 @@ function PlayContent() {
             onCombatUse={handleCombatUseItem}
             proximityPoi={proximityPoi}
             availablePois={availablePois}
-            partyMembers={partyMembers}
+            partyMembers={partyMembers.map(m => ({ id: m.characterId, name: m.characterName }))}
             combatState={combatState}
           />
         )}
@@ -2410,6 +2546,8 @@ function PlayContent() {
             characterStats={characterStats}
             gameState={gameState}
             onFeatureActivate={handleFeatureActivate}
+            partyMembers={partyMembers}
+            characterId={characterId!}
           />
         )}
         {activeTab === 'map' && activeRoomInstanceId && (
