@@ -40,6 +40,25 @@ function prof(level: number): number {
   return 6;
 }
 
+// Full-caster spell slot totals per level
+const CASTER_POOL: Record<number, number> = {
+  1: 2, 2: 3, 3: 6, 4: 7, 5: 9, 6: 10, 7: 11, 8: 12,
+  9: 14, 10: 15, 11: 16, 12: 16, 13: 17, 14: 17, 15: 18,
+  16: 18, 17: 19, 18: 20, 19: 21, 20: 22,
+};
+
+// Half-caster spell slot totals per level (Paladin, Ranger)
+const HALF_CASTER_POOL: Record<number, number | null> = {
+  1: null, 2: 2, 3: 3, 4: 3, 5: 6, 6: 6, 7: 7, 8: 7, 9: 9, 10: 9,
+  11: 10, 12: 10, 13: 11, 14: 11, 15: 12, 16: 12, 17: 14, 18: 14, 19: 15, 20: 15,
+};
+
+// Warlock pact magic slots per level (recharge on short rest)
+const WARLOCK_POOL: Record<number, number> = {
+  1: 1, 2: 2, 3: 2, 4: 2, 5: 2, 6: 2, 7: 2, 8: 2, 9: 2, 10: 2,
+  11: 3, 12: 3, 13: 3, 14: 3, 15: 3, 16: 3, 17: 4, 18: 4, 19: 4, 20: 4,
+};
+
 // ─── Barbarian ───────────────────────────────────────────────────────────────
 
 const BARBARIAN: ClassSeed = {
@@ -1086,9 +1105,177 @@ const CLERIC: ClassSeed = {
 };
 
 
+// ─── Druid ───────────────────────────────────────────────────────────────────
+
+const DRUID: ClassSeed = {
+  characterClass: "Druid",
+  levels: [
+    { level: 1,  proficiencyBonus: prof(1),  resourcePoolMax: CASTER_POOL[1],  featuresUnlocked: ["spellcasting", "druidic"], features: [{ name: "Spellcasting", description: "WIS spellcasting. Prepare WIS mod + Druid level spells per long rest from the Druid list." }, { name: "Druidic", description: "Know the secret Druidic language and can leave hidden messages only other Druids can read." }] },
+    { level: 2,  proficiencyBonus: prof(2),  resourcePoolMax: CASTER_POOL[2],  featuresUnlocked: ["wild-shape", "druid-circle"], features: [{ name: "Wild Shape", description: "Action: transform into a beast CR ≤ 1/4 (no fly/swim). 2 uses/short rest. Duration = half Druid level in hours." }, { name: "Druid Circle", description: "Choose Circle subclass (Land, Moon, etc). Features at 2, 6, 10, 14." }] },
+    { level: 3,  proficiencyBonus: prof(3),  resourcePoolMax: CASTER_POOL[3],  featuresUnlocked: [], features: [] },
+    { level: 4,  proficiencyBonus: prof(4),  resourcePoolMax: CASTER_POOL[4],  featuresUnlocked: ["wild-shape-cr12", "asi"], features: [{ name: "Wild Shape Improvement", description: "Wild Shape can now assume beasts with swim speed and CR ≤ 1/2." }, { name: "ASI", description: "+2 to one ability score, or +1 to two, or a feat." }] },
+    { level: 5,  proficiencyBonus: prof(5),  resourcePoolMax: CASTER_POOL[5],  featuresUnlocked: [], features: [] },
+    { level: 6,  proficiencyBonus: prof(6),  resourcePoolMax: CASTER_POOL[6],  featuresUnlocked: ["circle-feature"], features: [{ name: "Circle Feature", description: "Druid Circle subclass feature." }] },
+    { level: 7,  proficiencyBonus: prof(7),  resourcePoolMax: CASTER_POOL[7],  featuresUnlocked: [], features: [] },
+    { level: 8,  proficiencyBonus: prof(8),  resourcePoolMax: CASTER_POOL[8],  featuresUnlocked: ["wild-shape-cr1", "asi"], features: [{ name: "Wild Shape Improvement", description: "Wild Shape can now assume beasts with fly speed and CR ≤ 1." }, { name: "ASI", description: "+2 to one ability score, or +1 to two, or a feat." }] },
+    { level: 9,  proficiencyBonus: prof(9),  resourcePoolMax: CASTER_POOL[9],  featuresUnlocked: [], features: [] },
+    { level: 10, proficiencyBonus: prof(10), resourcePoolMax: CASTER_POOL[10], featuresUnlocked: ["circle-feature"], features: [{ name: "Circle Feature", description: "Druid Circle subclass feature." }] },
+    { level: 11, proficiencyBonus: prof(11), resourcePoolMax: CASTER_POOL[11], featuresUnlocked: [], features: [] },
+    { level: 12, proficiencyBonus: prof(12), resourcePoolMax: CASTER_POOL[12], featuresUnlocked: ["asi"], features: [{ name: "ASI", description: "+2 to one ability score, or +1 to two, or a feat." }] },
+    { level: 13, proficiencyBonus: prof(13), resourcePoolMax: CASTER_POOL[13], featuresUnlocked: [], features: [] },
+    { level: 14, proficiencyBonus: prof(14), resourcePoolMax: CASTER_POOL[14], featuresUnlocked: ["circle-feature"], features: [{ name: "Circle Feature", description: "Druid Circle subclass feature." }] },
+    { level: 15, proficiencyBonus: prof(15), resourcePoolMax: CASTER_POOL[15], featuresUnlocked: [], features: [] },
+    { level: 16, proficiencyBonus: prof(16), resourcePoolMax: CASTER_POOL[16], featuresUnlocked: ["asi"], features: [{ name: "ASI", description: "+2 to one ability score, or +1 to two, or a feat." }] },
+    { level: 17, proficiencyBonus: prof(17), resourcePoolMax: CASTER_POOL[17], featuresUnlocked: [], features: [] },
+    { level: 18, proficiencyBonus: prof(18), resourcePoolMax: CASTER_POOL[18], featuresUnlocked: ["timeless-body", "beast-spells"], features: [{ name: "Timeless Body", description: "No longer suffer age-related ability score penalties and cannot be magically aged." }, { name: "Beast Spells", description: "Cast Druid spells in Wild Shape form using verbal and somatic components." }] },
+    { level: 19, proficiencyBonus: prof(19), resourcePoolMax: CASTER_POOL[19], featuresUnlocked: ["asi"], features: [{ name: "ASI", description: "+2 to one ability score, or +1 to two, or a feat." }] },
+    { level: 20, proficiencyBonus: prof(20), resourcePoolMax: CASTER_POOL[20], featuresUnlocked: ["archdruid"], features: [{ name: "Archdruid", description: "Unlimited Wild Shape uses. Ignore verbal and somatic components of Druid spells while transformed." }] },
+  ],
+};
+
+// ─── Monk ────────────────────────────────────────────────────────────────────
+
+const MONK: ClassSeed = {
+  characterClass: "Monk",
+  levels: [
+    { level: 1,  proficiencyBonus: prof(1),  resourcePoolMax: null, featuresUnlocked: ["unarmored-defense", "martial-arts"], features: [{ name: "Unarmored Defense", description: "AC = 10 + DEX mod + WIS mod when wearing no armor and no shield." }, { name: "Martial Arts", description: "Use DEX for unarmed/monk weapon attacks. Unarmed strike deals 1d4 (scales with level). Bonus unarmed strike after the Attack action." }] },
+    { level: 2,  proficiencyBonus: prof(2),  resourcePoolMax: 2,    featuresUnlocked: ["ki", "unarmored-movement"], features: [{ name: "Ki", description: "2 Ki points/short rest. Flurry of Blows (2 unarmed strikes, bonus action), Patient Defense (Dodge, bonus action), Step of the Wind (Dash or Disengage, bonus action)." }, { name: "Unarmored Movement", description: "+10 ft speed when not wearing armor or shield. Improves at higher levels." }] },
+    { level: 3,  proficiencyBonus: prof(3),  resourcePoolMax: 3,    featuresUnlocked: ["monastic-tradition", "deflect-missiles"], features: [{ name: "Monastic Tradition", description: "Choose subclass (Open Hand, Shadow, Four Elements, etc). Features at 3, 6, 11, 17." }, { name: "Deflect Missiles", description: "Reaction: reduce ranged weapon damage by 1d10 + DEX + Monk level. If reduced to 0, catch and throw it back for 1 Ki." }] },
+    { level: 4,  proficiencyBonus: prof(4),  resourcePoolMax: 4,    featuresUnlocked: ["slow-fall", "asi"], features: [{ name: "Slow Fall", description: "Reaction: reduce falling damage by 5× Monk level." }, { name: "ASI", description: "+2 to one ability score, or +1 to two, or a feat." }] },
+    { level: 5,  proficiencyBonus: prof(5),  resourcePoolMax: 5,    featuresUnlocked: ["extra-attack", "stunning-strike"], features: [{ name: "Extra Attack", description: "Attack twice when taking the Attack action." }, { name: "Stunning Strike", description: "After hitting, spend 1 Ki: target makes CON save (DC 8 + prof + WIS) or is stunned until end of your next turn." }] },
+    { level: 6,  proficiencyBonus: prof(6),  resourcePoolMax: 6,    featuresUnlocked: ["ki-empowered-strikes", "tradition-feature"], features: [{ name: "Ki-Empowered Strikes", description: "Unarmed strikes count as magical for overcoming resistance and immunity." }, { name: "Monastic Tradition Feature", description: "Subclass feature at level 6." }] },
+    { level: 7,  proficiencyBonus: prof(7),  resourcePoolMax: 7,    featuresUnlocked: ["evasion", "stillness-of-mind"], features: [{ name: "Evasion", description: "On DEX saves: no damage on success, half on failure." }, { name: "Stillness of Mind", description: "Use your action to end one charmed or frightened effect on yourself." }] },
+    { level: 8,  proficiencyBonus: prof(8),  resourcePoolMax: 8,    featuresUnlocked: ["asi"], features: [{ name: "ASI", description: "+2 to one ability score, or +1 to two, or a feat." }] },
+    { level: 9,  proficiencyBonus: prof(9),  resourcePoolMax: 9,    featuresUnlocked: ["unarmored-movement-improvement"], features: [{ name: "Unarmored Movement Improvement", description: "Move along vertical surfaces and across liquids without falling during your turn." }] },
+    { level: 10, proficiencyBonus: prof(10), resourcePoolMax: 10,   featuresUnlocked: ["purity-of-body", "tradition-feature"], features: [{ name: "Purity of Body", description: "Immune to disease and poison." }, { name: "Monastic Tradition Feature", description: "Subclass feature at level 10." }] },
+    { level: 11, proficiencyBonus: prof(11), resourcePoolMax: 11,   featuresUnlocked: ["tongue-of-sun-and-moon"], features: [{ name: "Tongue of the Sun and Moon", description: "Understand all spoken languages. Any creature that understands a language can understand you." }] },
+    { level: 12, proficiencyBonus: prof(12), resourcePoolMax: 12,   featuresUnlocked: ["asi"], features: [{ name: "ASI", description: "+2 to one ability score, or +1 to two, or a feat." }] },
+    { level: 13, proficiencyBonus: prof(13), resourcePoolMax: 13,   featuresUnlocked: ["diamond-soul"], features: [{ name: "Diamond Soul", description: "Proficiency in all saving throws. Spend 1 Ki to reroll a failed save." }] },
+    { level: 14, proficiencyBonus: prof(14), resourcePoolMax: 14,   featuresUnlocked: ["timeless-body"], features: [{ name: "Timeless Body", description: "No longer need food or water, and suffer no aging penalties." }] },
+    { level: 15, proficiencyBonus: prof(15), resourcePoolMax: 15,   featuresUnlocked: ["empty-body"], features: [{ name: "Empty Body", description: "4 Ki: become invisible 1 minute with resistance to all damage except force. 8 Ki: cast Astral Projection on yourself." }] },
+    { level: 16, proficiencyBonus: prof(16), resourcePoolMax: 16,   featuresUnlocked: ["asi"], features: [{ name: "ASI", description: "+2 to one ability score, or +1 to two, or a feat." }] },
+    { level: 17, proficiencyBonus: prof(17), resourcePoolMax: 17,   featuresUnlocked: ["tradition-feature"], features: [{ name: "Monastic Tradition Feature", description: "Subclass capstone feature at level 17." }] },
+    { level: 18, proficiencyBonus: prof(18), resourcePoolMax: 18,   featuresUnlocked: [], features: [] },
+    { level: 19, proficiencyBonus: prof(19), resourcePoolMax: 19,   featuresUnlocked: ["asi"], features: [{ name: "ASI", description: "+2 to one ability score, or +1 to two, or a feat." }] },
+    { level: 20, proficiencyBonus: prof(20), resourcePoolMax: 20,   featuresUnlocked: ["perfect-self"], features: [{ name: "Perfect Self", description: "Regain 4 Ki points when you roll initiative and have no Ki remaining." }] },
+  ],
+};
+
+// ─── Paladin ─────────────────────────────────────────────────────────────────
+
+const PALADIN: ClassSeed = {
+  characterClass: "Paladin",
+  levels: [
+    { level: 1,  proficiencyBonus: prof(1),  resourcePoolMax: 5,                     featuresUnlocked: ["divine-sense", "lay-on-hands"], features: [{ name: "Divine Sense", description: "Action: detect celestials, fiends, and undead within 60 ft until end of next turn. 1 + CHA mod uses/long rest." }, { name: "Lay on Hands", description: "Pool of 5× Paladin level HP. Touch to restore HP, or spend 5 HP to cure a disease or neutralize a poison." }] },
+    { level: 2,  proficiencyBonus: prof(2),  resourcePoolMax: 10,                    featuresUnlocked: ["fighting-style", "spellcasting", "divine-smite"], features: [{ name: "Fighting Style", description: "Choose Defense (+1 AC), Dueling (+2 one-hand damage), Great Weapon Fighting, or Protection." }, { name: "Spellcasting", description: "CHA spellcasting. Prepare CHA mod + half Paladin level spells. Spell slots per the half-caster table." }, { name: "Divine Smite", description: "When you hit with a melee attack, expend a spell slot to deal +2d8 radiant damage per slot level (max 5d8). +1d8 vs undead/fiends." }] },
+    { level: 3,  proficiencyBonus: prof(3),  resourcePoolMax: 15,                    featuresUnlocked: ["sacred-oath", "divine-health"], features: [{ name: "Sacred Oath", description: "Choose your Oath (Devotion, Ancients, Vengeance, etc). Grants oath spells, Channel Divinity, and features at 3, 7, 15, 20." }, { name: "Divine Health", description: "Immune to disease." }] },
+    { level: 4,  proficiencyBonus: prof(4),  resourcePoolMax: 20,                    featuresUnlocked: ["asi"], features: [{ name: "ASI", description: "+2 to one ability score, or +1 to two, or a feat." }] },
+    { level: 5,  proficiencyBonus: prof(5),  resourcePoolMax: 25,                    featuresUnlocked: ["extra-attack"], features: [{ name: "Extra Attack", description: "Attack twice when taking the Attack action." }] },
+    { level: 6,  proficiencyBonus: prof(6),  resourcePoolMax: 30,                    featuresUnlocked: ["aura-of-protection"], features: [{ name: "Aura of Protection", description: "Allies within 10 ft add your CHA modifier to all saving throws while you're conscious." }] },
+    { level: 7,  proficiencyBonus: prof(7),  resourcePoolMax: 35,                    featuresUnlocked: ["sacred-oath-feature"], features: [{ name: "Sacred Oath Feature", description: "Subclass feature at level 7." }] },
+    { level: 8,  proficiencyBonus: prof(8),  resourcePoolMax: 40,                    featuresUnlocked: ["asi"], features: [{ name: "ASI", description: "+2 to one ability score, or +1 to two, or a feat." }] },
+    { level: 9,  proficiencyBonus: prof(9),  resourcePoolMax: 45,                    featuresUnlocked: [], features: [] },
+    { level: 10, proficiencyBonus: prof(10), resourcePoolMax: 50,                    featuresUnlocked: ["aura-of-courage"], features: [{ name: "Aura of Courage", description: "Allies within 10 ft cannot be frightened while you are conscious." }] },
+    { level: 11, proficiencyBonus: prof(11), resourcePoolMax: 55,                    featuresUnlocked: ["improved-divine-smite"], features: [{ name: "Improved Divine Smite", description: "All melee weapon hits deal +1d8 radiant damage automatically, stacking with Divine Smite." }] },
+    { level: 12, proficiencyBonus: prof(12), resourcePoolMax: 60,                    featuresUnlocked: ["asi"], features: [{ name: "ASI", description: "+2 to one ability score, or +1 to two, or a feat." }] },
+    { level: 13, proficiencyBonus: prof(13), resourcePoolMax: 65,                    featuresUnlocked: [], features: [] },
+    { level: 14, proficiencyBonus: prof(14), resourcePoolMax: 70,                    featuresUnlocked: ["cleansing-touch"], features: [{ name: "Cleansing Touch", description: "Action: end one spell effect on yourself or a willing creature you touch. CHA mod uses/long rest." }] },
+    { level: 15, proficiencyBonus: prof(15), resourcePoolMax: 75,                    featuresUnlocked: ["sacred-oath-feature"], features: [{ name: "Sacred Oath Feature", description: "Subclass feature at level 15." }] },
+    { level: 16, proficiencyBonus: prof(16), resourcePoolMax: 80,                    featuresUnlocked: ["asi"], features: [{ name: "ASI", description: "+2 to one ability score, or +1 to two, or a feat." }] },
+    { level: 17, proficiencyBonus: prof(17), resourcePoolMax: 85,                    featuresUnlocked: [], features: [] },
+    { level: 18, proficiencyBonus: prof(18), resourcePoolMax: 90,                    featuresUnlocked: ["aura-improvement"], features: [{ name: "Aura Improvement", description: "Aura of Protection and Aura of Courage now extend to 30 ft." }] },
+    { level: 19, proficiencyBonus: prof(19), resourcePoolMax: 95,                    featuresUnlocked: ["asi"], features: [{ name: "ASI", description: "+2 to one ability score, or +1 to two, or a feat." }] },
+    { level: 20, proficiencyBonus: prof(20), resourcePoolMax: 100,                   featuresUnlocked: ["sacred-oath-capstone"], features: [{ name: "Sacred Oath Capstone", description: "Each Oath grants a unique level-20 transformation or ability, such as becoming a holy avenger or avatar of nature." }] },
+  ],
+};
+
+// ─── Ranger ──────────────────────────────────────────────────────────────────
+
+const RANGER: ClassSeed = {
+  characterClass: "Ranger",
+  levels: [
+    { level: 1,  proficiencyBonus: prof(1),  resourcePoolMax: HALF_CASTER_POOL[1],  featuresUnlocked: ["favored-enemy", "natural-explorer"], features: [{ name: "Favored Enemy", description: "Choose a creature type. Advantage on Survival to track them and INT checks to recall lore about them." }, { name: "Natural Explorer", description: "Choose a favored terrain. Benefits include ignoring difficult terrain penalties and doubling proficiency on terrain-related INT/WIS checks." }] },
+    { level: 2,  proficiencyBonus: prof(2),  resourcePoolMax: HALF_CASTER_POOL[2],  featuresUnlocked: ["fighting-style", "spellcasting"], features: [{ name: "Fighting Style", description: "Choose Archery (+2 ranged attack), Defense (+1 AC), Dueling, or Two-Weapon Fighting." }, { name: "Spellcasting", description: "WIS spellcasting. Know 2 spells at level 2. Spell slots based on half Ranger level." }] },
+    { level: 3,  proficiencyBonus: prof(3),  resourcePoolMax: HALF_CASTER_POOL[3],  featuresUnlocked: ["ranger-archetype", "primeval-awareness"], features: [{ name: "Ranger Archetype", description: "Choose Hunter, Beast Master, Gloom Stalker, etc. Features at 3, 7, 11, 15." }, { name: "Primeval Awareness", description: "Expend a spell slot to sense favored enemies within 1 mile (6 miles in favored terrain). Duration 1 min/slot level." }] },
+    { level: 4,  proficiencyBonus: prof(4),  resourcePoolMax: HALF_CASTER_POOL[4],  featuresUnlocked: ["asi"], features: [{ name: "ASI", description: "+2 to one ability score, or +1 to two, or a feat." }] },
+    { level: 5,  proficiencyBonus: prof(5),  resourcePoolMax: HALF_CASTER_POOL[5],  featuresUnlocked: ["extra-attack"], features: [{ name: "Extra Attack", description: "Attack twice when taking the Attack action." }] },
+    { level: 6,  proficiencyBonus: prof(6),  resourcePoolMax: HALF_CASTER_POOL[6],  featuresUnlocked: ["favored-enemy-2", "natural-explorer-2"], features: [{ name: "Favored Enemy", description: "Choose a second favored enemy type and learn one language it speaks." }, { name: "Natural Explorer", description: "Choose a second favored terrain type." }] },
+    { level: 7,  proficiencyBonus: prof(7),  resourcePoolMax: HALF_CASTER_POOL[7],  featuresUnlocked: ["archetype-feature"], features: [{ name: "Ranger Archetype Feature", description: "Subclass feature at level 7." }] },
+    { level: 8,  proficiencyBonus: prof(8),  resourcePoolMax: HALF_CASTER_POOL[8],  featuresUnlocked: ["lands-stride", "asi"], features: [{ name: "Land's Stride", description: "Nonmagical difficult terrain costs no extra movement. Advantage on saves vs magically created plants." }, { name: "ASI", description: "+2 to one ability score, or +1 to two, or a feat." }] },
+    { level: 9,  proficiencyBonus: prof(9),  resourcePoolMax: HALF_CASTER_POOL[9],  featuresUnlocked: [], features: [] },
+    { level: 10, proficiencyBonus: prof(10), resourcePoolMax: HALF_CASTER_POOL[10], featuresUnlocked: ["hide-in-plain-sight", "natural-explorer-3"], features: [{ name: "Hide in Plain Sight", description: "Spend 1 min to camouflage yourself: +10 to Stealth while motionless." }, { name: "Natural Explorer", description: "Choose a third favored terrain type." }] },
+    { level: 11, proficiencyBonus: prof(11), resourcePoolMax: HALF_CASTER_POOL[11], featuresUnlocked: ["archetype-feature"], features: [{ name: "Ranger Archetype Feature", description: "Subclass feature at level 11." }] },
+    { level: 12, proficiencyBonus: prof(12), resourcePoolMax: HALF_CASTER_POOL[12], featuresUnlocked: ["asi"], features: [{ name: "ASI", description: "+2 to one ability score, or +1 to two, or a feat." }] },
+    { level: 13, proficiencyBonus: prof(13), resourcePoolMax: HALF_CASTER_POOL[13], featuresUnlocked: [], features: [] },
+    { level: 14, proficiencyBonus: prof(14), resourcePoolMax: HALF_CASTER_POOL[14], featuresUnlocked: ["vanish", "favored-enemy-3"], features: [{ name: "Vanish", description: "Hide as a bonus action. Cannot be tracked by nonmagical means unless you choose to leave a trail." }, { name: "Favored Enemy", description: "Choose a third favored enemy type." }] },
+    { level: 15, proficiencyBonus: prof(15), resourcePoolMax: HALF_CASTER_POOL[15], featuresUnlocked: ["archetype-feature"], features: [{ name: "Ranger Archetype Feature", description: "Subclass feature at level 15." }] },
+    { level: 16, proficiencyBonus: prof(16), resourcePoolMax: HALF_CASTER_POOL[16], featuresUnlocked: ["asi"], features: [{ name: "ASI", description: "+2 to one ability score, or +1 to two, or a feat." }] },
+    { level: 17, proficiencyBonus: prof(17), resourcePoolMax: HALF_CASTER_POOL[17], featuresUnlocked: [], features: [] },
+    { level: 18, proficiencyBonus: prof(18), resourcePoolMax: HALF_CASTER_POOL[18], featuresUnlocked: ["feral-senses"], features: [{ name: "Feral Senses", description: "No penalty attacking invisible creatures. Aware of invisible creatures within 30 ft that aren't hidden from you." }] },
+    { level: 19, proficiencyBonus: prof(19), resourcePoolMax: HALF_CASTER_POOL[19], featuresUnlocked: ["asi"], features: [{ name: "ASI", description: "+2 to one ability score, or +1 to two, or a feat." }] },
+    { level: 20, proficiencyBonus: prof(20), resourcePoolMax: HALF_CASTER_POOL[20], featuresUnlocked: ["foe-slayer"], features: [{ name: "Foe Slayer", description: "Once per turn, add your WIS modifier to an attack or damage roll against your favored enemy." }] },
+  ],
+};
+
+// ─── Sorcerer ────────────────────────────────────────────────────────────────
+
+const SORCERER: ClassSeed = {
+  characterClass: "Sorcerer",
+  levels: [
+    { level: 1,  proficiencyBonus: prof(1),  resourcePoolMax: CASTER_POOL[1],  featuresUnlocked: ["spellcasting", "sorcerous-origin"], features: [{ name: "Spellcasting", description: "CHA spellcasting. Know 2 cantrips + 2 spells at level 1. Spells are known (not prepared) — swap one per level-up." }, { name: "Sorcerous Origin", description: "Choose your innate power source: Draconic Bloodline, Wild Magic, Storm, etc. Features at 1, 6, 14, 18." }] },
+    { level: 2,  proficiencyBonus: prof(2),  resourcePoolMax: CASTER_POOL[2],  featuresUnlocked: ["sorcery-points", "font-of-magic"], features: [{ name: "Sorcery Points", description: "2 sorcery points (= your level). Flexible Casting: spend points to create slots or convert slots to points." }, { name: "Font of Magic", description: "Regain all sorcery points on a long rest." }] },
+    { level: 3,  proficiencyBonus: prof(3),  resourcePoolMax: CASTER_POOL[3],  featuresUnlocked: ["metamagic"], features: [{ name: "Metamagic", description: "Choose 2 options: Careful (+1 pt), Distant (+1 pt), Empowered (+1 pt), Extended (+1 pt), Heightened (+3 pts), Quickened (+2 pts), Subtle (+1 pt), Twinned (1–9 pts)." }] },
+    { level: 4,  proficiencyBonus: prof(4),  resourcePoolMax: CASTER_POOL[4],  featuresUnlocked: ["asi"], features: [{ name: "ASI", description: "+2 to one ability score, or +1 to two, or a feat." }] },
+    { level: 5,  proficiencyBonus: prof(5),  resourcePoolMax: CASTER_POOL[5],  featuresUnlocked: [], features: [] },
+    { level: 6,  proficiencyBonus: prof(6),  resourcePoolMax: CASTER_POOL[6],  featuresUnlocked: ["origin-feature"], features: [{ name: "Sorcerous Origin Feature", description: "Subclass feature at level 6." }] },
+    { level: 7,  proficiencyBonus: prof(7),  resourcePoolMax: CASTER_POOL[7],  featuresUnlocked: [], features: [] },
+    { level: 8,  proficiencyBonus: prof(8),  resourcePoolMax: CASTER_POOL[8],  featuresUnlocked: ["asi"], features: [{ name: "ASI", description: "+2 to one ability score, or +1 to two, or a feat." }] },
+    { level: 9,  proficiencyBonus: prof(9),  resourcePoolMax: CASTER_POOL[9],  featuresUnlocked: [], features: [] },
+    { level: 10, proficiencyBonus: prof(10), resourcePoolMax: CASTER_POOL[10], featuresUnlocked: ["metamagic-2"], features: [{ name: "Metamagic", description: "Learn one additional Metamagic option." }] },
+    { level: 11, proficiencyBonus: prof(11), resourcePoolMax: CASTER_POOL[11], featuresUnlocked: [], features: [] },
+    { level: 12, proficiencyBonus: prof(12), resourcePoolMax: CASTER_POOL[12], featuresUnlocked: ["asi"], features: [{ name: "ASI", description: "+2 to one ability score, or +1 to two, or a feat." }] },
+    { level: 13, proficiencyBonus: prof(13), resourcePoolMax: CASTER_POOL[13], featuresUnlocked: [], features: [] },
+    { level: 14, proficiencyBonus: prof(14), resourcePoolMax: CASTER_POOL[14], featuresUnlocked: ["origin-feature"], features: [{ name: "Sorcerous Origin Feature", description: "Subclass feature at level 14." }] },
+    { level: 15, proficiencyBonus: prof(15), resourcePoolMax: CASTER_POOL[15], featuresUnlocked: [], features: [] },
+    { level: 16, proficiencyBonus: prof(16), resourcePoolMax: CASTER_POOL[16], featuresUnlocked: ["asi"], features: [{ name: "ASI", description: "+2 to one ability score, or +1 to two, or a feat." }] },
+    { level: 17, proficiencyBonus: prof(17), resourcePoolMax: CASTER_POOL[17], featuresUnlocked: ["metamagic-3"], features: [{ name: "Metamagic", description: "Learn one additional Metamagic option." }] },
+    { level: 18, proficiencyBonus: prof(18), resourcePoolMax: CASTER_POOL[18], featuresUnlocked: ["origin-feature"], features: [{ name: "Sorcerous Origin Feature", description: "Subclass feature at level 18." }] },
+    { level: 19, proficiencyBonus: prof(19), resourcePoolMax: CASTER_POOL[19], featuresUnlocked: ["asi"], features: [{ name: "ASI", description: "+2 to one ability score, or +1 to two, or a feat." }] },
+    { level: 20, proficiencyBonus: prof(20), resourcePoolMax: CASTER_POOL[20], featuresUnlocked: ["sorcerous-restoration"], features: [{ name: "Sorcerous Restoration", description: "Regain 4 expended sorcery points whenever you finish a short rest." }] },
+  ],
+};
+
+// ─── Warlock ─────────────────────────────────────────────────────────────────
+
+const WARLOCK: ClassSeed = {
+  characterClass: "Warlock",
+  levels: [
+    { level: 1,  proficiencyBonus: prof(1),  resourcePoolMax: WARLOCK_POOL[1],  featuresUnlocked: ["otherworldly-patron", "pact-magic"], features: [{ name: "Otherworldly Patron", description: "Form a pact with The Archfey, The Fiend, The Great Old One, etc. Grants expanded spells and features at 1, 6, 10, 14." }, { name: "Pact Magic", description: "CHA spellcasting. Spell slots recharge on short rest. 1 slot at level 1, 2 at level 2. Slot level scales with Warlock level." }] },
+    { level: 2,  proficiencyBonus: prof(2),  resourcePoolMax: WARLOCK_POOL[2],  featuresUnlocked: ["eldritch-invocations"], features: [{ name: "Eldritch Invocations", description: "Choose 2 invocations: Agonizing Blast (+CHA to Eldritch Blast), Devil's Sight (see in magical darkness), Mask of Many Faces (Disguise Self at will), and others." }] },
+    { level: 3,  proficiencyBonus: prof(3),  resourcePoolMax: WARLOCK_POOL[3],  featuresUnlocked: ["pact-boon"], features: [{ name: "Pact Boon", description: "Choose Pact of the Chain (improved familiar), Pact of the Blade (summon pact weapon), or Pact of the Tome (Book of Shadows with 3 extra cantrips)." }] },
+    { level: 4,  proficiencyBonus: prof(4),  resourcePoolMax: WARLOCK_POOL[4],  featuresUnlocked: ["asi"], features: [{ name: "ASI", description: "+2 to one ability score, or +1 to two, or a feat." }] },
+    { level: 5,  proficiencyBonus: prof(5),  resourcePoolMax: WARLOCK_POOL[5],  featuresUnlocked: [], features: [] },
+    { level: 6,  proficiencyBonus: prof(6),  resourcePoolMax: WARLOCK_POOL[6],  featuresUnlocked: ["patron-feature"], features: [{ name: "Patron Feature", description: "Otherworldly Patron subclass feature at level 6." }] },
+    { level: 7,  proficiencyBonus: prof(7),  resourcePoolMax: WARLOCK_POOL[7],  featuresUnlocked: [], features: [] },
+    { level: 8,  proficiencyBonus: prof(8),  resourcePoolMax: WARLOCK_POOL[8],  featuresUnlocked: ["asi"], features: [{ name: "ASI", description: "+2 to one ability score, or +1 to two, or a feat." }] },
+    { level: 9,  proficiencyBonus: prof(9),  resourcePoolMax: WARLOCK_POOL[9],  featuresUnlocked: [], features: [] },
+    { level: 10, proficiencyBonus: prof(10), resourcePoolMax: WARLOCK_POOL[10], featuresUnlocked: ["patron-feature"], features: [{ name: "Patron Feature", description: "Otherworldly Patron subclass feature at level 10." }] },
+    { level: 11, proficiencyBonus: prof(11), resourcePoolMax: WARLOCK_POOL[11], featuresUnlocked: ["mystic-arcanum-6"], features: [{ name: "Mystic Arcanum (6th)", description: "Choose one 6th-level spell. Cast it once/long rest without a slot. Separate Arcana gained at 11 (6th), 13 (7th), 15 (8th), 17 (9th)." }] },
+    { level: 12, proficiencyBonus: prof(12), resourcePoolMax: WARLOCK_POOL[12], featuresUnlocked: ["asi"], features: [{ name: "ASI", description: "+2 to one ability score, or +1 to two, or a feat." }] },
+    { level: 13, proficiencyBonus: prof(13), resourcePoolMax: WARLOCK_POOL[13], featuresUnlocked: ["mystic-arcanum-7"], features: [{ name: "Mystic Arcanum (7th)", description: "Choose one 7th-level spell. Cast it once/long rest without a slot." }] },
+    { level: 14, proficiencyBonus: prof(14), resourcePoolMax: WARLOCK_POOL[14], featuresUnlocked: ["patron-feature"], features: [{ name: "Patron Feature", description: "Otherworldly Patron subclass feature at level 14." }] },
+    { level: 15, proficiencyBonus: prof(15), resourcePoolMax: WARLOCK_POOL[15], featuresUnlocked: ["mystic-arcanum-8"], features: [{ name: "Mystic Arcanum (8th)", description: "Choose one 8th-level spell. Cast it once/long rest without a slot." }] },
+    { level: 16, proficiencyBonus: prof(16), resourcePoolMax: WARLOCK_POOL[16], featuresUnlocked: ["asi"], features: [{ name: "ASI", description: "+2 to one ability score, or +1 to two, or a feat." }] },
+    { level: 17, proficiencyBonus: prof(17), resourcePoolMax: WARLOCK_POOL[17], featuresUnlocked: ["mystic-arcanum-9"], features: [{ name: "Mystic Arcanum (9th)", description: "Choose one 9th-level spell. Cast it once/long rest without a slot." }] },
+    { level: 18, proficiencyBonus: prof(18), resourcePoolMax: WARLOCK_POOL[18], featuresUnlocked: [], features: [] },
+    { level: 19, proficiencyBonus: prof(19), resourcePoolMax: WARLOCK_POOL[19], featuresUnlocked: ["asi"], features: [{ name: "ASI", description: "+2 to one ability score, or +1 to two, or a feat." }] },
+    { level: 20, proficiencyBonus: prof(20), resourcePoolMax: WARLOCK_POOL[20], featuresUnlocked: ["eldritch-master"], features: [{ name: "Eldritch Master", description: "Spend 1 minute communing with your patron to regain all Pact Magic slots. Once/long rest." }] },
+  ],
+};
+
 // ─── Registry — append new classes here ──────────────────────────────────────
 
-const CLASSES: ClassSeed[] = [BARBARIAN, BARD, FIGHTER, ROGUE, WIZARD, CLERIC];
+const CLASSES: ClassSeed[] = [BARBARIAN, BARD, DRUID, FIGHTER, MONK, PALADIN, RANGER, ROGUE, SORCERER, WARLOCK, WIZARD, CLERIC];
 
 // ─── Seed engine ─────────────────────────────────────────────────────────────
 

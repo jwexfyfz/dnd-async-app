@@ -1697,10 +1697,18 @@ function ChatTab({ history, hasMore, loadingMore, loadMore, sending, error, inpu
 // ─── Initiative Strip ─────────────────────────────────────────────────────────
 
 const CLASS_FEATURES: Record<string, Array<{ id: string; label: string; description: string; cunning?: boolean }>> = {
-  Fighter: [{ id: 'second_wind', label: '⚡ Second Wind', description: 'Spend a bonus action to recover 1d10 + your Fighter level in hit points. Once per short rest.' }],
-  Rogue: [{ id: 'cunning_action', label: '⚡ Cunning Action', cunning: true, description: 'Use a bonus action to Dash, Disengage, or Hide — letting you move fast or vanish without spending your main action.' }],
-  Wizard: [{ id: 'arcane_recovery', label: '⚡ Arcane Recovery', description: 'After a short rest, recover spell slot levels equal to half your Wizard level (min 1). Once per long rest.' }],
+  Barbarian: [{ id: 'rage', label: '⚡ Rage', description: 'Bonus action: enter rage. +2 melee damage, advantage on STR checks/saves, resistance to bludgeoning/piercing/slashing damage for 1 minute.' }],
+  Bard: [{ id: 'bardic_inspiration', label: '⚡ Bardic Inspiration', description: 'Bonus action: give an ally within 60 ft a Bardic Inspiration die (d6 → d12 at higher levels) to add to one roll within 10 minutes.' }],
   Cleric: [{ id: 'channel_divinity', label: '⚡ Channel Divinity', description: 'Channel divine power to turn undead or invoke your deity\'s domain ability. Once per short rest.' }],
+  Druid: [{ id: 'wild_shape', label: '⚡ Wild Shape', description: 'Action: transform into a beast you\'ve seen. Max CR scales with level. 2 uses/short rest. Duration = half your Druid level in hours.' }],
+  Fighter: [{ id: 'second_wind', label: '⚡ Second Wind', description: 'Bonus action: recover 1d10 + your Fighter level in hit points. Once per short rest.' }],
+  Monk: [{ id: 'ki', label: '⚡ Ki', description: 'Spend Ki points to fuel abilities: Flurry of Blows (2 unarmed strikes, bonus action), Patient Defense (Dodge, bonus action), Step of the Wind (Dash or Disengage, bonus action).' }],
+  Paladin: [{ id: 'divine_smite', label: '⚡ Divine Smite', description: 'When you hit with a melee attack, expend a spell slot to deal +2d8 radiant damage per slot level (max 5d8). +1d8 extra against undead or fiends.' }],
+  Ranger: [{ id: 'hunters_mark', label: "⚡ Hunter's Mark", description: "Bonus action: mark a creature. Deal +1d6 damage to it on each hit and gain advantage on Perception and Survival checks to find it. Concentration, up to 1 hour." }],
+  Rogue: [{ id: 'cunning_action', label: '⚡ Cunning Action', cunning: true, description: 'Bonus action to Dash, Disengage, or Hide — move fast or vanish without spending your main action.' }],
+  Sorcerer: [{ id: 'metamagic', label: '⚡ Metamagic', description: 'Spend Sorcery Points to modify spells: Quickened Spell (bonus action cast, 2 pts), Twinned Spell (second target, 1–9 pts), Subtle Spell (no components, 1 pt), and others.' }],
+  Warlock: [{ id: 'eldritch_blast', label: '⚡ Eldritch Blast', description: 'Your signature cantrip: 1d10 force damage at 120 ft. Extra beams at levels 5/11/17. Enhanced by Invocations like Agonizing Blast (+CHA mod) or Repelling Blast (push 10 ft).' }],
+  Wizard: [{ id: 'arcane_recovery', label: '⚡ Arcane Recovery', description: 'After a short rest, recover spell slot levels equal to half your Wizard level (min 1). Once per long rest.' }],
 };
 
 function hpRingClass(hp: number, maxHp: number): string {

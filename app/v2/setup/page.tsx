@@ -42,17 +42,26 @@ interface Dungeon {
 
 // ─── Character creation constants ─────────────────────────────────────────────
 
-const CLASSES = ['Fighter', 'Rogue', 'Wizard', 'Cleric'];
+const CLASSES = ['Barbarian', 'Bard', 'Cleric', 'Druid', 'Fighter', 'Monk', 'Paladin', 'Ranger', 'Rogue', 'Sorcerer', 'Warlock', 'Wizard'];
 
 const CLASS_SKILLS: Record<string, string[]> = {
-  Fighter: ['Acrobatics', 'Animal Handling', 'Athletics', 'History', 'Insight', 'Intimidation', 'Perception', 'Survival'],
-  Rogue:   ['Acrobatics', 'Athletics', 'Deception', 'Insight', 'Intimidation', 'Investigation', 'Perception', 'Performance', 'Persuasion', 'Sleight of Hand', 'Stealth'],
-  Wizard:  ['Arcana', 'History', 'Insight', 'Investigation', 'Medicine', 'Religion'],
-  Cleric:  ['History', 'Insight', 'Medicine', 'Persuasion', 'Religion'],
+  Barbarian: ['Animal Handling', 'Athletics', 'Intimidation', 'Nature', 'Perception', 'Survival'],
+  Bard:      ['Acrobatics', 'Animal Handling', 'Arcana', 'Athletics', 'Deception', 'History', 'Insight', 'Intimidation', 'Investigation', 'Medicine', 'Nature', 'Perception', 'Performance', 'Persuasion', 'Religion', 'Sleight of Hand', 'Stealth', 'Survival'],
+  Cleric:    ['History', 'Insight', 'Medicine', 'Persuasion', 'Religion'],
+  Druid:     ['Arcana', 'Animal Handling', 'Insight', 'Medicine', 'Nature', 'Perception', 'Religion', 'Survival'],
+  Fighter:   ['Acrobatics', 'Animal Handling', 'Athletics', 'History', 'Insight', 'Intimidation', 'Perception', 'Survival'],
+  Monk:      ['Acrobatics', 'Athletics', 'History', 'Insight', 'Religion', 'Stealth'],
+  Paladin:   ['Athletics', 'Insight', 'Intimidation', 'Medicine', 'Persuasion', 'Religion'],
+  Ranger:    ['Animal Handling', 'Athletics', 'Insight', 'Investigation', 'Nature', 'Perception', 'Stealth', 'Survival'],
+  Rogue:     ['Acrobatics', 'Athletics', 'Deception', 'Insight', 'Intimidation', 'Investigation', 'Perception', 'Performance', 'Persuasion', 'Sleight of Hand', 'Stealth'],
+  Sorcerer:  ['Arcana', 'Deception', 'Insight', 'Intimidation', 'Persuasion', 'Religion'],
+  Warlock:   ['Arcana', 'Deception', 'History', 'Intimidation', 'Investigation', 'Nature', 'Religion'],
+  Wizard:    ['Arcana', 'History', 'Insight', 'Investigation', 'Medicine', 'Religion'],
 };
 
 const SKILL_COUNT: Record<string, number> = {
-  Fighter: 2, Rogue: 4, Wizard: 2, Cleric: 2,
+  Barbarian: 2, Bard: 3, Cleric: 2, Druid: 2, Fighter: 2,
+  Monk: 2, Paladin: 2, Ranger: 3, Rogue: 4, Sorcerer: 2, Warlock: 2, Wizard: 2,
 };
 
 const INITIAL_STATS = { str: 8, dex: 8, con: 8, int: 8, wis: 8, cha: 8 };
