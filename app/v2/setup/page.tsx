@@ -28,6 +28,7 @@ interface Session {
   currentRoomName: string;
   currentObjective: string | null;
   lastActiveAt: string;
+  gameState: string;
 }
 
 interface Dungeon {
@@ -341,7 +342,11 @@ function SetupContent() {
   };
 
   const handleContinueSession = (session: Session) => {
-    window.location.href = `/v2/play?session=${session.sessionId}&char=${selectedChar!.id}`;
+    if (session.gameState === 'lobby') {
+      window.location.href = `/v2/lobby/${session.sessionId}`;
+    } else {
+      window.location.href = `/v2/play?session=${session.sessionId}&char=${selectedChar!.id}`;
+    }
   };
 
   const handleDeleteSession = async (session: Session) => {
@@ -364,7 +369,7 @@ function SetupContent() {
     });
     const data = await res.json();
     if (!res.ok) { setError(data.error); return; }
-    window.location.href = `/v2/play?session=${data.sessionId}&char=${selectedChar!.id}`;
+    window.location.href = `/v2/lobby/${data.sessionId}`;
   };
 
   // ── Loading ──────────────────────────────────────────────────────────────────

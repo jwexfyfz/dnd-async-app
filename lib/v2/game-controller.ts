@@ -3111,7 +3111,7 @@ async function buildViewState(
     prisma.character.findUniqueOrThrow({
       where: { id: characterId },
       select: {
-        inventory: true, currentHp: true, maxHp: true, level: true, characterClass: true,
+        name: true, inventory: true, currentHp: true, maxHp: true, level: true, characterClass: true,
         baseStrength: true, baseDexterity: true, baseConstitution: true, baseIntelligence: true,
         baseWisdom: true, baseCharisma: true, skillsModifiers: true, skillProficiencies: true,
         isHiding: true,
@@ -3291,6 +3291,7 @@ async function buildViewState(
     openSpaceItems,
     adjacentRoomPreviews,
     characterStats: {
+      name: charRow.name,
       currentHp: charRow.currentHp,
       maxHp: charRow.maxHp,
       ac: 10 + dexMod + armorBonus,

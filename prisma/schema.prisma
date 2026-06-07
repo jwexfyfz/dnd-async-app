@@ -12,6 +12,8 @@ model User {
   id               String        @id @default(uuid())
   email            String        @unique
   displayName      String?
+  avatarUrl        String?
+  lastSeenAt       DateTime?
   createdAt        DateTime      @default(now())
   characters       Character[]
   partyMemberships PartyMember[]
@@ -67,31 +69,38 @@ model PoiTemplate {
 // ==========================================
 
 model GameSession {
-  id                String           @id @default(uuid())
-  name              String
-  gameState         String           @default("exploration")
-  combatState       Json?
-  currentObjective  String?
-  storyFlags        Json             @default("{}")
-  dungeonTemplateId String?
-  dungeonTemplate   DungeonTemplate? @relation(fields: [dungeonTemplateId], references: [id])
-  createdAt         DateTime         @default(now())
-  roomInstances     RoomInstance[]
-  gameMaps          GameMap[]
+  id                 String           @id @default(uuid())
+  name               String
+  gameState          String           @default("exploration") // "lobby" | "active" | "completed" (exploration/combat moved to RoomInstance)
+  combatState        Json?            // deprecated — no longer written; use RoomInstance.combatState
+  currentObjective   String?
+  storyFlags         Json             @default("{}")
+  dungeonTemplateId  String?
+  dungeonTemplate    DungeonTemplate? @relation(fields: [dungeonTemplateId], references: [id])
+  createdAt          DateTime         @default(now())
+  hostCharacterId    String?
+  lobbyState         Json             @default("[]")
+  kickedCharacterIds Json             @default("[]")
+  lobbyVersion       Int              @default(0)
+  roomInstances      RoomInstance[]
+  gameMaps           GameMap[]
 }
 
 model RoomInstance {
-  id              String            @id @default(uuid())
-  sessionId       String
-  session         GameSession       @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  roomTemplateId  String
-  template        RoomTemplate      @relation(fields: [roomTemplateId], references: [id])
-  inGameTimestamp DateTime          @default(now())
-  poiInstances    PoiInstance[]
-  participants    RoomParticipant[]
-  messages        MessageLog[]
-  game            Game?             @relation(fields: [gameId], references: [id])
-  gameId          String?
+  id               String            @id @default(uuid())
+  sessionId        String
+  session          GameSession       @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  roomTemplateId   String
+  template         RoomTemplate      @relation(fields: [roomTemplateId], references: [id])
+  inGameTimestamp  DateTime          @default(now())
+  gameState        String            @default("exploration") // "exploration" | "combat"
+  combatState      Json?
+  processingAction Boolean           @default(false)
+  poiInstances     PoiInstance[]
+  participants     RoomParticipant[]
+  messages         MessageLog[]
+  game             Game?             @relation(fields: [gameId], references: [id])
+  gameId           String?
 }
 
 model PoiInstance {
@@ -153,6 +162,7 @@ model Character {
   posY        Int     @default(0)
   isHiding    Boolean @default(false)
   stealthRoll Int     @default(0)
+  isDead      Boolean @default(false)
 
   games            Game[]
   partyMemberships PartyMember[]

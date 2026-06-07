@@ -53,10 +53,12 @@ export async function POST(req: NextRequest) {
       user.email?.split('@')[0] ||
       'Adventurer';
 
+    const rawAvatarUrl = user.user_metadata?.avatar_url as string | undefined;
+    const avatarUrl = rawAvatarUrl && rawAvatarUrl.startsWith('https://') ? rawAvatarUrl : null;
     await prisma.user.upsert({
       where: { id: user.id },
-      update: { displayName },
-      create: { id: user.id, email: user.email ?? '', displayName },
+      update: { displayName, avatarUrl, lastSeenAt: new Date() },
+      create: { id: user.id, email: user.email ?? '', displayName, avatarUrl, lastSeenAt: new Date() },
     });
 
     const character = await prisma.character.create({

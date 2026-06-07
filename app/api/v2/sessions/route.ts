@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { prisma } from '@/lib/prisma';
+import { Prisma } from '@prisma/client';
 import { createSupabaseServerClient } from '@/lib/supabase-server';
 
 const anthropic = new Anthropic({ maxRetries: 4 });
@@ -34,8 +35,16 @@ export async function GET(req: NextRequest) {
           include: {
             template: { select: { name: true } },
             participants: {
-              where: { characterId },
-              select: { lastActiveAt: true },
+              select: {
+                lastActiveAt: true,
+                characterId: true,
+                character: {
+                  select: {
+                    id: true, name: true, characterClass: true,
+                    user: { select: { avatarUrl: true } },
+                  },
+                },
+              },
             },
           },
         },
@@ -45,10 +54,29 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({
       sessions: sessions.map(session => {
-        const activeRooms = session.roomInstances.filter(ri => ri.participants.length > 0);
-        const mostRecent = activeRooms.sort(
-          (a, b) => b.participants[0].lastActiveAt.getTime() - a.participants[0].lastActiveAt.getTime(),
-        )[0];
+        const myParticipation = session.roomInstances.filter(
+          ri => ri.participants.some(p => p.characterId === characterId),
+        );
+        const mostRecent = myParticipation.sort((a, b) => {
+          const aT = a.participants.find(p => p.characterId === characterId)?.lastActiveAt.getTime() ?? 0;
+          const bT = b.participants.find(p => p.characterId === characterId)?.lastActiveAt.getTime() ?? 0;
+          return bT - aT;
+        })[0];
+        const seenCharIds = new Set<string>();
+        const partyMembers: { id: string; name: string; characterClass: string; avatarUrl: string | null }[] = [];
+        for (const ri of session.roomInstances) {
+          for (const p of ri.participants) {
+            if (!seenCharIds.has(p.character.id)) {
+              seenCharIds.add(p.character.id);
+              partyMembers.push({
+                id: p.character.id,
+                name: p.character.name,
+                characterClass: p.character.characterClass,
+                avatarUrl: (p.character as { user?: { avatarUrl?: string | null } }).user?.avatarUrl ?? null,
+              });
+            }
+          }
+        }
         return {
           sessionId: session.id,
           sessionName: session.name,
@@ -56,7 +84,9 @@ export async function GET(req: NextRequest) {
           currentRoomName: mostRecent?.template.name ?? 'Unknown',
           roomInstanceId: mostRecent?.id ?? '',
           currentObjective: session.currentObjective,
-          lastActiveAt: mostRecent?.participants[0]?.lastActiveAt,
+          lastActiveAt: mostRecent?.participants.find(p => p.characterId === characterId)?.lastActiveAt,
+          gameState: session.gameState,
+          partyMembers,
         };
       }),
     });
@@ -111,7 +141,7 @@ export async function POST(req: NextRequest) {
       }),
       prisma.dungeonTemplate.findUniqueOrThrow({
         where: { id: dungeonTemplateId },
-        select: { startRoomTemplateId: true },
+        select: { name: true, startRoomTemplateId: true },
       }),
     ]);
     if (!character) return NextResponse.json({ error: 'Character not found' }, { status: 404 });
@@ -128,11 +158,29 @@ export async function POST(req: NextRequest) {
       },
     });
 
+    // Fetch host's avatarUrl for lobby entry
+    const hostUser = await prisma.user.findUnique({ where: { id: user.id }, select: { avatarUrl: true } });
+
+    const hostLobbyEntry = {
+      characterId,
+      userId: user.id,
+      displayName: user.user_metadata?.full_name ?? user.email ?? 'Adventurer',
+      avatarUrl: hostUser?.avatarUrl ?? null,
+      characterName: character.name,
+      characterClass: character.characterClass,
+      status: 'ready' as const,
+    };
+
     const result = await prisma.$transaction(async tx => {
       const session = await tx.gameSession.create({
         data: {
-          name: `${character.name}'s Session`,
+          name: dungeon.name,
           dungeonTemplateId,
+          gameState: 'lobby',
+          hostCharacterId: characterId,
+          lobbyState: [hostLobbyEntry],
+          kickedCharacterIds: [],
+          lobbyVersion: 0,
           currentObjective: 'Investigate the disturbances in the merchant\'s cellar',
         },
       });
@@ -140,6 +188,9 @@ export async function POST(req: NextRequest) {
         data: {
           sessionId: session.id,
           roomTemplateId: dungeon.startRoomTemplateId!,
+          gameState: 'exploration',
+          combatState: Prisma.JsonNull,
+          processingAction: false,
           poiInstances: {
             create: roomTemplate.poiTemplates.map(tpl => ({ poiTemplateId: tpl.id, currentProperties: {} })),
           },
