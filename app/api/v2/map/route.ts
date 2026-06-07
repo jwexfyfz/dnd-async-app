@@ -116,9 +116,14 @@ export async function GET(req: NextRequest) {
         };
       });
 
-      const characters = ri.participants.filter(p => charCurrentRoom.get(p.characterId) === ri.id).map(p => {
+      const characters: {
+        characterId: string;
+        name: string;
+        grid_slot: string;
+        stance: string | null;
+        type: 'player' | 'enemy';
+      }[] = ri.participants.filter(p => charCurrentRoom.get(p.characterId) === ri.id).map(p => {
         const cs = p.combatState as { proximity_target_id?: string; stance?: string };
-        // Find grid_slot for proximity target
         const proximityPoi = cs.proximity_target_id
           ? ri.poiInstances.find(pi => pi.id === cs.proximity_target_id)
           : null;
@@ -130,8 +135,28 @@ export async function GET(req: NextRequest) {
           name: p.character.name,
           grid_slot: proximityTemplate?.grid_slot ?? 'C',
           stance: cs.stance ?? null,
+          type: 'player' as const,
         };
       });
+
+      // Add enemies from combat state
+      const roomCombat = ri.combatState as { initiativeOrder?: { id: string; type: string; name: string; hp: number }[] } | null;
+      if (roomCombat?.initiativeOrder) {
+        for (const entry of roomCombat.initiativeOrder) {
+          if (entry.type !== 'enemy') continue;
+          if (entry.hp <= 0) continue;
+          // entry.id is the poiInstanceId
+          const poi = ri.poiInstances.find(pi => pi.id === entry.id);
+          const template = poi ? ri.template.poiTemplates.find(pt => pt.id === poi.poiTemplateId) : null;
+          characters.push({
+            characterId: entry.id,
+            name: entry.name,
+            grid_slot: template?.grid_slot ?? 'C',
+            stance: null,
+            type: 'enemy',
+          });
+        }
+      }
 
       return {
         instanceId: ri.id,
@@ -146,6 +171,7 @@ export async function GET(req: NextRequest) {
 
     const combatState = currentParticipant?.combatState as { proximity_target_id?: string } | null;
     const character = {
+      characterId,
       roomInstanceId: currentParticipant?.roomInstanceId ?? null,
       proximityTargetId: combatState?.proximity_target_id ?? null,
     };

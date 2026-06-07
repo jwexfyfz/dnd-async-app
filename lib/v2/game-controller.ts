@@ -3125,7 +3125,8 @@ async function buildViewState(
       take: 5,
       select: {
         id: true, text: true, isMechanicalEvent: true, mechanicalSummary: true, createdAt: true,
-        character: { select: { name: true, user: { select: { avatarUrl: true } } } },
+        characterId: true,
+        character: { select: { name: true, characterClass: true } },
       },
     }),
     prisma.roomParticipant.findMany({
@@ -3155,6 +3156,10 @@ async function buildViewState(
         character: {
           select: {
             id: true, name: true, characterClass: true, currentHp: true, maxHp: true, isDead: true,
+            level: true, inventory: true,
+            baseStrength: true, baseDexterity: true, baseConstitution: true,
+            baseIntelligence: true, baseWisdom: true, baseCharisma: true,
+            skillsModifiers: true, skillProficiencies: true,
             user: { select: { avatarUrl: true, lastSeenAt: true } },
           },
         },
@@ -3281,11 +3286,15 @@ async function buildViewState(
   }
 
   const orderedNarrative = recentNarrative.reverse().map(n => ({
-    ...n,
+    id: n.id,
+    text: n.text,
+    isMechanicalEvent: n.isMechanicalEvent,
+    mechanicalSummary: n.mechanicalSummary,
+    createdAt: n.createdAt,
+    authorCharacterId: n.characterId ?? null,
+    authorCharacterClass: n.character?.characterClass ?? null,
     authorName: n.character?.name ?? null,
-    authorAvatarUrl: n.character?.user?.avatarUrl && (n.character.user.avatarUrl as string).startsWith('https://')
-      ? n.character.user.avatarUrl as string
-      : null,
+    authorAvatarUrl: null as null,
   }));
   if (fallbackNarrative && !orderedNarrative.some(n => n.text === fallbackNarrative)) {
     orderedNarrative.push({
@@ -3294,7 +3303,8 @@ async function buildViewState(
       isMechanicalEvent: false,
       mechanicalSummary: null,
       createdAt: new Date(),
-      character: null,
+      authorCharacterId: null,
+      authorCharacterClass: null,
       authorName: null,
       authorAvatarUrl: null,
     });
@@ -3321,19 +3331,39 @@ async function buildViewState(
   for (const rp of sessionPartyData) {
     if (seenPartyCharIds.has(rp.character.id)) continue;
     seenPartyCharIds.add(rp.character.id);
+    const c = rp.character;
     const lastActive = rp.lastActiveAt;
+    const mDexMod = abilityModifier(c.baseDexterity);
+    const mStrMod = abilityModifier(c.baseStrength);
+    const mProf = c.level >= 5 ? 3 : 2;
+    const mInv = normalizeInventory(c.inventory);
+    const mArmor = Object.values(mInv.equipped)
+      .filter((i): i is import('@/types/v2-game').ItemDefinition => i != null)
+      .reduce((acc, item) => acc + ((item.equip_bonus?.ac) ?? 0), 0);
     partyMembers.push({
-      characterId: rp.character.id,
-      characterName: rp.character.name,
-      characterClass: rp.character.characterClass,
-      avatarUrl: rp.character.user.avatarUrl,
-      currentHp: rp.character.currentHp,
-      maxHp: rp.character.maxHp,
-      isDead: rp.character.isDead,
+      characterId: c.id,
+      characterName: c.name,
+      characterClass: c.characterClass,
+      avatarUrl: c.user.avatarUrl,
+      currentHp: c.currentHp,
+      maxHp: c.maxHp,
+      isDead: c.isDead,
       isDormant: Date.now() - lastActive.getTime() > DORMANT_MS,
       isInSameRoom: rp.roomInstance.id === roomInstanceId,
       currentRoom: rp.roomInstance.template.name,
-      lastSeenAt: rp.character.user.lastSeenAt,
+      lastSeenAt: c.user.lastSeenAt,
+      level: c.level,
+      ac: 10 + mDexMod + mArmor,
+      attackBonus: mStrMod + mProf,
+      initiativeMod: mDexMod,
+      baseStrength: c.baseStrength,
+      baseDexterity: c.baseDexterity,
+      baseConstitution: c.baseConstitution,
+      baseIntelligence: c.baseIntelligence,
+      baseWisdom: c.baseWisdom,
+      baseCharisma: c.baseCharisma,
+      skillsModifiers: (c.skillsModifiers as Record<string, number>) ?? {},
+      skillProficiencies: c.skillProficiencies ?? [],
     });
   }
 

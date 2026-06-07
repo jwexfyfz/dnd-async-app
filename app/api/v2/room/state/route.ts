@@ -39,6 +39,10 @@ export async function GET(req: NextRequest) {
           character: {
             select: {
               id: true, name: true, characterClass: true, currentHp: true, maxHp: true, isDead: true,
+              level: true, inventory: true,
+              baseStrength: true, baseDexterity: true, baseConstitution: true,
+              baseIntelligence: true, baseWisdom: true, baseCharisma: true,
+              skillsModifiers: true, skillProficiencies: true,
               user: { select: { avatarUrl: true, lastSeenAt: true } },
             },
           },
@@ -60,7 +64,8 @@ export async function GET(req: NextRequest) {
         take: 5,
         select: {
           id: true, text: true, isMechanicalEvent: true, mechanicalSummary: true, createdAt: true,
-          character: { select: { name: true, user: { select: { avatarUrl: true } } } },
+          characterId: true,
+          character: { select: { name: true, characterClass: true, user: { select: { avatarUrl: true } } } },
         },
       }),
     ]);
@@ -134,32 +139,52 @@ export async function GET(req: NextRequest) {
     for (const rp of sessionPartyData) {
       if (seenIds.has(rp.character.id)) continue;
       seenIds.add(rp.character.id);
+      const c = rp.character;
+      const memberDexMod = abilityModifier(c.baseDexterity);
+      const memberStrMod = abilityModifier(c.baseStrength);
+      const memberProfBonus = c.level >= 5 ? 3 : 2;
+      const memberInv = normalizeInventory(c.inventory);
+      const memberArmorBonus = Object.values(memberInv.equipped)
+        .filter((i): i is NonNullable<typeof i> => i != null)
+        .reduce((acc, item) => acc + ((item.equip_bonus?.ac) ?? 0), 0);
       partyMembers.push({
-        characterId: rp.character.id,
-        characterName: rp.character.name,
-        characterClass: rp.character.characterClass,
-        avatarUrl: rp.character.user.avatarUrl,
-        currentHp: rp.character.currentHp,
-        maxHp: rp.character.maxHp,
-        isDead: rp.character.isDead,
+        characterId: c.id,
+        characterName: c.name,
+        characterClass: c.characterClass,
+        avatarUrl: c.user.avatarUrl,
+        currentHp: c.currentHp,
+        maxHp: c.maxHp,
+        isDead: c.isDead,
         isDormant: Date.now() - rp.lastActiveAt.getTime() > DORMANT_MS,
         isInSameRoom: rp.roomInstance.id === roomInstanceId,
         currentRoom: rp.roomInstance.template.name,
-        lastSeenAt: rp.character.user.lastSeenAt,
+        lastSeenAt: c.user.lastSeenAt,
+        level: c.level,
+        ac: 10 + memberDexMod + memberArmorBonus,
+        attackBonus: memberStrMod + memberProfBonus,
+        initiativeMod: memberDexMod,
+        baseStrength: c.baseStrength,
+        baseDexterity: c.baseDexterity,
+        baseConstitution: c.baseConstitution,
+        baseIntelligence: c.baseIntelligence,
+        baseWisdom: c.baseWisdom,
+        baseCharisma: c.baseCharisma,
+        skillsModifiers: (c.skillsModifiers as Record<string, number>) ?? {},
+        skillProficiencies: c.skillProficiencies ?? [],
       });
     }
 
-    // Recent narrative (chronological) with author avatars
+    // Recent narrative (chronological) with author info
     const currentNarrative = messageLogs.reverse().map(n => ({
       id: n.id,
       text: n.text,
       isMechanicalEvent: n.isMechanicalEvent,
       mechanicalSummary: n.mechanicalSummary,
       createdAt: n.createdAt,
+      authorCharacterId: n.characterId ?? null,
+      authorCharacterClass: n.character?.characterClass ?? null,
       authorName: n.character?.name ?? null,
-      authorAvatarUrl: n.character?.user?.avatarUrl && (n.character.user.avatarUrl as string).startsWith('https://')
-        ? n.character.user.avatarUrl
-        : null,
+      authorAvatarUrl: null as null, // always use class sprite, never profile photo
     }));
 
     return NextResponse.json({

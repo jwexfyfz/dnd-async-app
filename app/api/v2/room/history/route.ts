@@ -14,32 +14,49 @@ export async function GET(req: NextRequest) {
   const baseWhere = sessionId
     ? { roomInstance: { sessionId }, isMechanicalEvent: false }
     : { roomInstanceId: roomInstanceId!, isMechanicalEvent: false };
-  const select = { id: true, text: true, isMechanicalEvent: true, mechanicalSummary: true, createdAt: true };
+  const select = {
+    id: true, text: true, isMechanicalEvent: true, mechanicalSummary: true, createdAt: true,
+    characterId: true,
+    character: { select: { name: true, characterClass: true } },
+  };
+
+  const flatten = (raw: { id: string; text: string; isMechanicalEvent: boolean; mechanicalSummary: unknown; createdAt: Date; characterId: string | null; character: { name: string; characterClass: string } | null }[]) =>
+    raw.map(n => ({
+      id: n.id,
+      text: n.text,
+      isMechanicalEvent: n.isMechanicalEvent,
+      mechanicalSummary: n.mechanicalSummary,
+      createdAt: n.createdAt,
+      authorCharacterId: n.characterId ?? null,
+      authorCharacterClass: n.character?.characterClass ?? null,
+      authorName: n.character?.name ?? null,
+      authorAvatarUrl: null as null,
+    }));
 
   try {
     if (!cursor) {
-      const logs = await prisma.messageLog.findMany({
+      const raw = await prisma.messageLog.findMany({
         where: baseWhere,
         orderBy: { createdAt: 'desc' },
         take: LIMIT + 1,
         select,
       });
-      const hasMore = logs.length > LIMIT;
-      if (hasMore) logs.pop();
-      logs.reverse();
-      return NextResponse.json({ logs, hasMore });
+      const hasMore = raw.length > LIMIT;
+      if (hasMore) raw.pop();
+      raw.reverse();
+      return NextResponse.json({ logs: flatten(raw), hasMore });
     }
 
-    const logs = await prisma.messageLog.findMany({
+    const raw = await prisma.messageLog.findMany({
       where: { ...baseWhere, createdAt: { lt: new Date(cursor) } },
       orderBy: { createdAt: 'desc' },
       take: LIMIT + 1,
       select,
     });
-    const hasMore = logs.length > LIMIT;
-    if (hasMore) logs.pop();
-    logs.reverse();
-    return NextResponse.json({ logs, hasMore });
+    const hasMore = raw.length > LIMIT;
+    if (hasMore) raw.pop();
+    raw.reverse();
+    return NextResponse.json({ logs: flatten(raw), hasMore });
   } catch {
     return NextResponse.json({ error: 'Failed to fetch room history' }, { status: 500 });
   }

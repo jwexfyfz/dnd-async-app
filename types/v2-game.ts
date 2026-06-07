@@ -145,6 +145,19 @@ export interface PartyMemberInfo {
   isInSameRoom: boolean;
   currentRoom: string;
   lastSeenAt: Date | null;
+  // Full stats for character sheet display
+  level: number;
+  ac: number;
+  attackBonus: number;
+  initiativeMod: number;
+  baseStrength: number;
+  baseDexterity: number;
+  baseConstitution: number;
+  baseIntelligence: number;
+  baseWisdom: number;
+  baseCharisma: number;
+  skillsModifiers: Record<string, number>;
+  skillProficiencies: string[];
 }
 
 export interface TurnUsage {

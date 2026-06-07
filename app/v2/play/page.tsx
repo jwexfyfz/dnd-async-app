@@ -30,6 +30,7 @@ interface MapCharacter {
   name: string;
   grid_slot: string;
   stance: string | null;
+  type: 'player' | 'enemy';
 }
 
 interface MapRoom {
@@ -44,7 +45,7 @@ interface MapRoom {
 
 interface MapData {
   rooms: MapRoom[];
-  character: { roomInstanceId: string | null; proximityTargetId: string | null };
+  character: { characterId: string | null; roomInstanceId: string | null; proximityTargetId: string | null };
 }
 
 // ─── Grid Constants ───────────────────────────────────────────────────────────
@@ -150,7 +151,7 @@ function DungeonMap({ mapData, currentRoomInstanceId }: { mapData: MapData; curr
 
   // Find character's current grid_slot
   const charSlot = currentRoom?.characters.find(
-    c => c.characterId === mapData.character.roomInstanceId || true
+    c => c.characterId === mapData.character.characterId
   )?.grid_slot ?? 'C';
 
   // Find exits in current room
@@ -335,13 +336,36 @@ function DungeonMap({ mapData, currentRoomInstanceId }: { mapData: MapData; curr
           }
         }
 
+        // Characters visible in this room (adjacent rooms filtered by LoS)
+        const visibleCharacters = room.characters.filter(c => {
+          if (isCurrentRoom) return true;
+          const sourcePos = currentRoom ? roomPx.get(currentRoom.instanceId) : null;
+          if (!sourcePos || !currentRoom) return false;
+          const matchingExit = currentExits.find(e => {
+            const adjacentByDir: Record<string, { dx: number; dy: number }> = {
+              E: { dx: 1, dy: 0 }, W: { dx: -1, dy: 0 },
+              N: { dx: 0, dy: -1 }, S: { dx: 0, dy: 1 },
+            };
+            const d = adjacentByDir[e.exit_direction ?? ''];
+            if (!d) return false;
+            return room.map_x === currentRoom.map_x + d.dx && room.map_y === currentRoom.map_y + d.dy;
+          });
+          if (!matchingExit || matchingExit.peek_visibility === 'none') return false;
+          const { px: cpx, py: cpy } = sourcePos;
+          const { px: tpx, py: tpy } = roomPx.get(room.instanceId)!;
+          return isSlotVisibleThroughExit(charSlot, c.grid_slot, matchingExit, cpx, cpy, tpx, tpy);
+        });
+
         // Character tokens
-        const charTokens = room.characters.map((c, i) => {
+        const charTokens = visibleCharacters.map((c) => {
           const [cx2, cy2] = slotCenter(c.grid_slot, px, py);
+          const isEnemy = c.type === 'enemy';
           return (
             <g key={`char-${c.characterId}`}>
-              <circle cx={cx2} cy={cy2} r={7} fill="#6366f1" />
-              <text x={cx2} y={cy2 + 4} textAnchor="middle" fontSize={9} fill="white" fontWeight="bold">@</text>
+              <circle cx={cx2} cy={cy2} r={7} fill={isEnemy ? '#dc2626' : '#6366f1'} />
+              <text x={cx2} y={cy2 + 4} textAnchor="middle" fontSize={9} fill="white" fontWeight="bold">
+                {isEnemy ? '!' : '@'}
+              </text>
             </g>
           );
         });
@@ -408,7 +432,8 @@ function MapLegend({ mapData }: { mapData: MapData | null }) {
   return (
     <div className="px-3 py-2 border-t border-slate-100 text-xs text-slate-500">
       <div className="flex flex-wrap gap-x-4 gap-y-1">
-        <span><span className="font-mono font-bold text-indigo-600">@</span> You</span>
+        <span><span className="font-mono font-bold text-indigo-600">@</span> Player</span>
+        <span><span className="font-mono font-bold text-red-600">!</span> Enemy</span>
         <span><span className="font-mono">·</span> Empty slot</span>
         <span><span className="font-mono">▮</span> Locked door</span>
         <span><span className="font-mono">▯</span> Open door</span>
@@ -886,6 +911,28 @@ function CharacterSheet({ stats, isCombat, isOwn, onFeatureActivate }: {
   );
 }
 
+function partyMemberToStats(m: PartyMemberInfo): CharacterStats {
+  return {
+    name: m.characterName,
+    currentHp: m.currentHp,
+    maxHp: m.maxHp,
+    ac: m.ac,
+    level: m.level,
+    characterClass: m.characterClass,
+    attackBonus: m.attackBonus,
+    initiativeMod: m.initiativeMod,
+    baseStrength: m.baseStrength,
+    baseDexterity: m.baseDexterity,
+    baseConstitution: m.baseConstitution,
+    baseIntelligence: m.baseIntelligence,
+    baseWisdom: m.baseWisdom,
+    baseCharisma: m.baseCharisma,
+    skillsModifiers: m.skillsModifiers,
+    skillProficiencies: m.skillProficiencies,
+    isHiding: false,
+  };
+}
+
 function PartyTab({ characterStats, gameState, onFeatureActivate, partyMembers, characterId }: {
   characterStats: CharacterStats | null;
   gameState: 'exploration' | 'combat';
@@ -893,49 +940,56 @@ function PartyTab({ characterStats, gameState, onFeatureActivate, partyMembers, 
   partyMembers: PartyMemberInfo[];
   characterId: string;
 }) {
+  const [selectedId, setSelectedId] = useState<string>(characterId);
+
   if (!characterStats) {
     return <div className="flex-1 flex items-center justify-center text-slate-400 text-sm">Loading…</div>;
   }
-  const others = partyMembers.filter(m => m.characterId !== characterId);
+
+  const allMembers = partyMembers;
+  const selectedMember = allMembers.find(m => m.characterId === selectedId);
+  const shownStats = selectedId === characterId ? characterStats : (selectedMember ? partyMemberToStats(selectedMember) : characterStats);
+  const isOwn = selectedId === characterId;
+
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* Party roster strip */}
       <div className="flex items-center gap-3 px-4 py-3 border-b border-slate-200 bg-white flex-shrink-0 overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
-        {/* Self */}
-        <div className="flex flex-col items-center gap-0.5 flex-shrink-0">
-          <div className="w-14 h-14 rounded-full bg-slate-100 border-2 border-indigo-300 overflow-hidden">
-            <img src={classSprite(characterStats.characterClass)} alt={characterStats.characterClass} className="w-full h-full object-cover" />
-          </div>
-          <span className="text-xs text-slate-800 font-semibold leading-tight">{characterStats.name}</span>
-          <span className="text-xs text-slate-500">{characterStats.characterClass}</span>
-          <span className={`text-xs ${characterStats.currentHp / characterStats.maxHp < 0.3 ? 'text-red-500 font-semibold' : 'text-slate-400'}`}>
-            {characterStats.currentHp}/{characterStats.maxHp} HP
-          </span>
-        </div>
-        {/* Others */}
-        {others.map(m => (
-          <div key={m.characterId} className="flex flex-col items-center gap-0.5 flex-shrink-0">
-            <div className={`w-14 h-14 rounded-full overflow-hidden border-2 ${m.isDead ? 'border-slate-300 opacity-50' : m.isDormant ? 'border-yellow-300' : 'border-slate-200'}`}>
-              {m.avatarUrl
-                ? <img src={m.avatarUrl} alt={m.characterName} className="w-full h-full object-cover" />
-                : <div className="w-full h-full bg-slate-100 flex items-center justify-center text-2xl">{classEmoji(m.characterClass)}</div>}
-            </div>
-            <span className="text-xs text-slate-800 font-semibold leading-tight max-w-[60px] truncate">{m.characterName}</span>
-            <span className="text-xs text-slate-500">{m.characterClass}</span>
-            <span className={`text-xs ${m.currentHp / m.maxHp < 0.3 ? 'text-red-500 font-semibold' : 'text-slate-400'}`}>
-              {m.currentHp}/{m.maxHp} HP
-            </span>
-            {m.isDead && <span className="text-[10px] text-slate-400">☠ Dead</span>}
-            {m.isDormant && !m.isDead && <span className="text-[10px] text-yellow-600">Away</span>}
-            {!m.isInSameRoom && <span className="text-[10px] text-slate-400 truncate max-w-[60px]">{m.currentRoom}</span>}
-          </div>
-        ))}
+        {allMembers.map(m => {
+          const isSelf = m.characterId === characterId;
+          const isSelected = m.characterId === selectedId;
+          const hpPct = m.maxHp > 0 ? m.currentHp / m.maxHp : 1;
+          const borderCls = isSelected
+            ? 'border-indigo-400'
+            : m.isDead ? 'border-slate-300 opacity-50'
+            : m.isDormant ? 'border-yellow-300'
+            : 'border-slate-200';
+          return (
+            <button
+              key={m.characterId}
+              onClick={() => setSelectedId(m.characterId)}
+              className="flex flex-col items-center gap-0.5 flex-shrink-0"
+            >
+              <div className={`w-14 h-14 rounded-full overflow-hidden border-2 ${borderCls} ${isSelf ? 'bg-slate-100' : ''} transition-all`}>
+                <img src={classSprite(m.characterClass)} alt={m.characterName} className="w-full h-full object-cover" />
+              </div>
+              <span className={`text-xs font-semibold leading-tight max-w-[60px] truncate ${isSelected ? 'text-indigo-700' : 'text-slate-800'}`}>{m.characterName}</span>
+              <span className="text-xs text-slate-500">{m.characterClass}</span>
+              <span className={`text-xs ${hpPct < 0.3 ? 'text-red-500 font-semibold' : 'text-slate-400'}`}>
+                {m.currentHp}/{m.maxHp} HP
+              </span>
+              {m.isDead && <span className="text-[10px] text-slate-400">☠ Dead</span>}
+              {m.isDormant && !m.isDead && <span className="text-[10px] text-yellow-600">Away</span>}
+              {!m.isInSameRoom && <span className="text-[10px] text-slate-400 truncate max-w-[60px]">{m.currentRoom}</span>}
+            </button>
+          );
+        })}
       </div>
       <CharacterSheet
-        stats={characterStats}
+        stats={shownStats}
         isCombat={gameState === 'combat'}
-        isOwn={true}
-        onFeatureActivate={onFeatureActivate}
+        isOwn={isOwn}
+        onFeatureActivate={isOwn ? onFeatureActivate : () => {}}
       />
     </div>
   );
@@ -1766,13 +1820,14 @@ function hpRingClass(hp: number, maxHp: number): string {
   return 'border-red-400 bg-red-50';
 }
 
-function InitiativeStrip({ initiativeOrder, activeActorId, characterId, characterClass, selectedId, onSelect }: {
+function InitiativeStrip({ initiativeOrder, activeActorId, characterId, characterClass, selectedId, onSelect, partyMembers }: {
   initiativeOrder: InitiativeEntry[];
   activeActorId: string;
   characterId: string;
   characterClass: string;
   selectedId: string | null;
   onSelect: (id: string | null) => void;
+  partyMembers: PartyMemberInfo[];
 }) {
   const activeIconRef = useRef<HTMLButtonElement>(null);
 
@@ -1801,8 +1856,11 @@ function InitiativeStrip({ initiativeOrder, activeActorId, characterId, characte
           >
             <span className={`text-xs leading-none ${isActive ? 'text-white' : 'text-transparent'}`}>▼</span>
             <div className={`w-10 h-10 rounded-full border-2 ${ringCls} relative overflow-hidden ${isSelected ? 'ring-2 ring-white ring-offset-1 ring-offset-red-700' : ''}`}>
-              {isOwn
-                ? <img src={classSprite(characterClass)} alt={characterClass} className="w-full h-full object-cover" />
+              {entry.type === 'character'
+                ? (() => {
+                    const cls = isOwn ? characterClass : (partyMembers.find(m => m.characterId === entry.id)?.characterClass ?? '');
+                    return <img src={classSprite(cls)} alt={cls} className="w-full h-full object-cover" />;
+                  })()
                 : <span className="w-full h-full flex items-center justify-center text-lg">👹</span>
               }
               {isDead && (
@@ -1892,8 +1950,10 @@ interface HistoryEntry {
   isMechanicalEvent: boolean;
   mechanicalSummary: Record<string, unknown> | null;
   createdAt: string;
-  authorAvatarUrl?: string | null;
+  authorCharacterId?: string | null;
+  authorCharacterClass?: string | null;
   authorName?: string | null;
+  authorAvatarUrl?: string | null;
 }
 
 interface RollResult {
@@ -2118,9 +2178,27 @@ function ChatMessage({ entry, characterId }: { entry: HistoryEntry; characterId?
   const type = summary?.type as string | undefined;
 
   if (type === 'player_action') {
+    const isOwn = entry.authorCharacterId === characterId;
+    const spriteClass = entry.authorCharacterClass ?? '';
+    if (isOwn) {
+      return (
+        <div className="flex justify-end my-2 gap-2">
+          <div className="max-w-xs px-4 py-2 bg-indigo-600 text-white rounded-2xl rounded-br-sm text-sm">
+            {entry.text}
+          </div>
+          <div className="flex-shrink-0 w-7 h-7 rounded-full overflow-hidden mt-1">
+            <img src={classSprite(spriteClass)} alt={spriteClass} className="w-full h-full object-cover" />
+          </div>
+        </div>
+      );
+    }
     return (
-      <div className="flex justify-end my-2">
-        <div className="max-w-xs px-4 py-2 bg-indigo-600 text-white rounded-2xl rounded-br-sm text-sm">
+      <div className="flex justify-start my-2 gap-2">
+        <div className="flex-shrink-0 w-7 h-7 rounded-full overflow-hidden mt-1">
+          <img src={classSprite(spriteClass)} alt={spriteClass} className="w-full h-full object-cover" />
+        </div>
+        <div className="max-w-xs px-4 py-2 bg-slate-100 text-slate-800 rounded-2xl rounded-bl-sm text-sm">
+          {entry.authorName && <span className="text-[10px] text-slate-400 block mb-0.5">{entry.authorName}</span>}
           {entry.text}
         </div>
       </div>
@@ -2151,15 +2229,11 @@ function ChatMessage({ entry, characterId }: { entry: HistoryEntry; characterId?
     return <CombatBanner type="combat_end" />;
   }
 
-  // DM narrative or player narrative
-  const avatarUrl = entry.authorAvatarUrl;
-  const authorName = entry.authorName;
+  // DM narrative — always show dice, never user avatar
   return (
     <div className="flex justify-start my-2 gap-2">
-      <div className="flex-shrink-0 w-6 h-6 rounded-full overflow-hidden flex items-center justify-center bg-slate-100 text-xs mt-1">
-        {avatarUrl
-          ? <img src={avatarUrl} alt={authorName ?? 'DM'} width={24} height={24} className="w-full h-full object-cover" />
-          : <span>🎲</span>}
+      <div className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center bg-slate-100 text-xs mt-1">
+        <span>🎲</span>
       </div>
       <div className="max-w-sm px-4 py-3 bg-white border border-slate-200 rounded-2xl rounded-bl-sm text-sm text-slate-700 leading-relaxed">
         {entry.text}
@@ -2193,12 +2267,13 @@ function PlayContent() {
   const [availablePois, setAvailablePois] = useState<{ id: string; name: string }[]>([]);
   const [chip, setChip] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<ActiveTab>('chat');
-  const [showResumeCard, setShowResumeCard] = useState(true);
+  const [showResumeCard, setShowResumeCard] = useState(false);
   const [selectedStripEntryId, setSelectedStripEntryId] = useState<string | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const suppressScrollRef = useRef(false);
   const prevScrollHeightRef = useRef(0);
+  const sendingRef = useRef(false);
 
   // Ping lastSeenAt on mount
   useEffect(() => {
@@ -2236,6 +2311,9 @@ function PlayContent() {
           const olderEntries = entries.filter(e => !existingIds.has(e.id));
           return olderEntries.length > 0 ? [...olderEntries, ...prev] : prev;
         });
+        // Only show resume card if the session already has player activity
+        const hasPlayerActivity = entries.some(e => (e.mechanicalSummary as { type?: string } | null)?.type === 'player_action');
+        if (hasPlayerActivity) setShowResumeCard(true);
         setHasMore(more ?? false);
         setOldestCursor(entries.length > 0 ? entries[0].createdAt : null);
         if (state.roomName) setRoomName(state.roomName);
@@ -2266,7 +2344,7 @@ function PlayContent() {
         setProximityPoi(data.characterProximityPoi ?? null);
         if (data.partyMembers) setPartyMembers(data.partyMembers);
         if (data.poiIndex) setAvailablePois(Object.entries(data.poiIndex as Record<string, string>).map(([id, name]) => ({ id, name })));
-        if (data.currentNarrative) {
+        if (data.currentNarrative && !sendingRef.current) {
           const incoming = data.currentNarrative as HistoryEntry[];
           setHistory(prev => {
             const existingIds = new Set(prev.map(e => e.id));
@@ -2324,6 +2402,7 @@ function PlayContent() {
     const prevGameState = gameState;
     setInput('');
     setSending(true);
+    sendingRef.current = true;
     setError('');
     setShowResumeCard(false);
 
@@ -2386,6 +2465,7 @@ function PlayContent() {
       setHistory(prev => prev.filter(e => !e.id.startsWith('optimistic-')));
     } finally {
       setSending(false);
+      sendingRef.current = false;
     }
   }, [input, sending, activeRoomInstanceId, characterId, chip, gameState]);
 
@@ -2398,6 +2478,7 @@ function PlayContent() {
     if (sending || !activeRoomInstanceId || !characterId) return;
     const prevGs = gameState;
     setSending(true);
+    sendingRef.current = true;
     setError('');
     setShowResumeCard(false);
     try {
@@ -2429,6 +2510,7 @@ function PlayContent() {
       setActiveTab('chat');
     } finally {
       setSending(false);
+      sendingRef.current = false;
     }
   }, [sending, activeRoomInstanceId, characterId, gameState]);
 
@@ -2482,6 +2564,7 @@ function PlayContent() {
             characterId={characterId!}
             characterClass={characterStats?.characterClass ?? ''}
             selectedId={selectedStripEntryId}
+            partyMembers={partyMembers}
             onSelect={setSelectedStripEntryId}
           />
           {selectedStripEntryId && (() => {
