@@ -18,6 +18,7 @@ const prisma = new PrismaClient({ adapter: new PrismaNeon({ connectionString: pr
 const TEST_CHAR_ID     = "7ea93aa8-1eeb-4bb7-8f1d-01911a62a029";
 const TEST_PARTICIPANT = "9a8a6136-9d6a-41f2-b421-a6be92392e24";
 const STONE_FOUNTAIN   = "69e63dce-36a0-45b9-9af9-0a7afaa9b90a";
+const TEST_ROOM_INSTANCE = "bac19630-b39d-4687-82c2-a25c6ebe0765";
 
 const inventory = {
   equipped: {
@@ -190,6 +191,125 @@ const inventory = {
       passive_effect: "8 radiant damage vs undead/fiends, harmless to others.",
     },
     {
+      id: "dev-damage-1",
+      name: "Vial of Caustic Bile",
+      description: "Extracted from a giant toad's gland. Reeks of ammonia and dissolves leather on contact.",
+      consumable: true,
+      throwable: true,
+      use_effect: "acid_damage_10",
+      quantity: 1,
+      combat_usable: true,
+      target: ["enemy", "poi"],
+      passive_effect: "10 acid damage; target's AC is reduced by 1 until end of their next turn.",
+    },
+    {
+      id: "dev-damage-2",
+      name: "Frost Shard",
+      description: "A sliver of perpetually frozen blue ice sealed in wax paper. Shatters into a burst of freezing shards on impact.",
+      consumable: true,
+      throwable: true,
+      use_effect: "cold_damage_8_slow",
+      quantity: 2,
+      combat_usable: true,
+      target: ["enemy"],
+      passive_effect: "8 cold damage; DC 12 Con save or speed halved until end of next turn.",
+    },
+    {
+      id: "dev-damage-3",
+      name: "Sunrod",
+      description: "A short iron rod tipped with alchemical phosphor. Blindingly bright when snapped and thrown.",
+      consumable: true,
+      throwable: true,
+      use_effect: "radiant_damage_6_blind",
+      quantity: 2,
+      combat_usable: true,
+      target: ["enemy"],
+      passive_effect: "6 radiant damage; DC 12 Con save or Blinded until end of next turn.",
+    },
+    {
+      id: "dev-damage-4",
+      name: "Tanglefoot Bag",
+      description: "A leather pouch of sticky alchemical resin. Bursts on impact, coating the target's feet.",
+      consumable: true,
+      throwable: true,
+      use_effect: "restrain_2_rounds",
+      quantity: 1,
+      combat_usable: true,
+      target: ["enemy"],
+      passive_effect: "DC 13 Str save or Restrained for 2 rounds.",
+    },
+    {
+      id: "dev-damage-5",
+      name: "Venom Dart",
+      description: "A hollow bone needle loaded with cave-spider venom. Fired with a short puff of breath.",
+      consumable: true,
+      throwable: true,
+      use_effect: "poison_damage_6_poison",
+      quantity: 3,
+      combat_usable: true,
+      target: ["enemy"],
+      passive_effect: "6 poison damage; DC 12 Con save or Poisoned for 1 minute.",
+    },
+    {
+      id: "dev-damage-6",
+      name: "Concussive Orb",
+      description: "A ceramic sphere packed with compressed sound. Shatters with a bone-rattling concussive blast.",
+      consumable: true,
+      throwable: true,
+      use_effect: "thunder_damage_10_push",
+      quantity: 1,
+      combat_usable: true,
+      target: ["enemy", "poi"],
+      passive_effect: "10 thunder damage; DC 13 Str save or pushed 10 ft.",
+    },
+    {
+      id: "dev-damage-7",
+      name: "Witch-Light Flask",
+      description: "A swirling violet liquid that crackles with static. Discharges a bolt of lightning on contact.",
+      consumable: true,
+      throwable: true,
+      use_effect: "lightning_damage_8_chain",
+      quantity: 1,
+      combat_usable: true,
+      target: ["enemy"],
+      passive_effect: "8 lightning damage; arcs to an adjacent enemy for 4 damage.",
+    },
+    {
+      id: "dev-damage-8",
+      name: "Iron Caltrops (Pouch)",
+      description: "A cloth pouch of sharpened four-pointed iron spikes. Scattered to control ground.",
+      consumable: true,
+      use_effect: "scatter_caltrops",
+      quantity: 1,
+      combat_usable: true,
+      target: ["poi"],
+      passive_effect: "Creatures moving through the area take 1d4 piercing damage and halve their speed.",
+    },
+    {
+      id: "dev-damage-9",
+      name: "Corrosive Bomb",
+      description: "A fist-sized clay vessel packed with reactive salts. Erupts in a spray of dissolving vapour.",
+      consumable: true,
+      throwable: true,
+      use_effect: "acid_damage_12_aoe",
+      quantity: 1,
+      combat_usable: true,
+      target: ["enemy", "poi"],
+      passive_effect: "12 acid damage in a 5-ft burst; corrodes all armour in the area for –1 AC.",
+    },
+    {
+      id: "dev-damage-10",
+      name: "Necrotic Dust",
+      description: "A pinch of grey powder ground from cursed bone. Inhaled or thrown, it withers living flesh.",
+      consumable: true,
+      throwable: true,
+      use_effect: "necrotic_damage_8_drain",
+      quantity: 2,
+      combat_usable: true,
+      target: ["enemy"],
+      passive_effect: "8 necrotic damage; target's max HP reduced by the damage dealt until a long rest.",
+    },
+    {
       id: "dev-misc-1",
       name: "Velvet Coin Purse",
       description: "Soft purple velvet, embroidered with a merchant's mark. Contains 12 gold pieces.",
@@ -214,6 +334,65 @@ const inventory = {
   ],
 };
 
+async function buildCombatState() {
+  const char = await prisma.character.findUnique({
+    where: { id: TEST_CHAR_ID },
+    select: { name: true, currentHp: true, maxHp: true },
+  });
+  if (!char) throw new Error(`Character ${TEST_CHAR_ID} not found`);
+
+  return {
+  round: 1,
+  activeActorId: TEST_CHAR_ID,
+  currentTurnUsage: { actionUsed: false, bonusActionUsed: false, movementUsed: false, reactionUsed: false },
+  initiativeOrder: [
+    {
+      id: TEST_CHAR_ID,
+      type: "character",
+      name: char.name,
+      initiative: 18,
+      hp: char.currentHp,
+      maxHp: char.maxHp,
+      ac: 14,
+      surprised: false,
+      acted: false,
+      proximity: "close",
+      status_effects: [],
+    },
+    {
+      id: "enemy-skeleton-01",
+      type: "enemy",
+      name: "Skeleton Warrior",
+      initiative: 14,
+      hp: 13,
+      maxHp: 13,
+      ac: 13,
+      surprised: false,
+      acted: false,
+      proximity: "close",
+      status_effects: [],
+      resistances: ["piercing"],
+      passive_perception: 8,
+    },
+    {
+      id: "enemy-skeleton-02",
+      type: "enemy",
+      name: "Skeleton Archer",
+      initiative: 11,
+      hp: 10,
+      maxHp: 10,
+      ac: 13,
+      surprised: false,
+      acted: false,
+      proximity: "far",
+      status_effects: [],
+      resistances: ["piercing"],
+      passive_perception: 8,
+    },
+  ],
+  };
+}
+
 async function main() {
   // 1. Seed inventory on all characters
   const characters = await prisma.character.findMany({ select: { id: true, name: true } });
@@ -231,6 +410,19 @@ async function main() {
     data: { combatState: { proximity_target_id: STONE_FOUNTAIN, stance: "examining" } },
   });
   console.log(`✓ proximity  test char → Stone Fountain (${STONE_FOUNTAIN})`);
+
+  // 3. Set active combat on the session linked to the test room instance
+  const roomInstance = await prisma.roomInstance.findUnique({
+    where: { id: TEST_ROOM_INSTANCE },
+    select: { sessionId: true },
+  });
+  if (!roomInstance) throw new Error(`Room instance ${TEST_ROOM_INSTANCE} not found`);
+  const combatState = await buildCombatState();
+  await prisma.gameSession.update({
+    where: { id: roomInstance.sessionId },
+    data: { gameState: "combat", combatState: combatState as object },
+  });
+  console.log(`✓ combat     session → round 1, 2 skeletons`);
 }
 
 main()

@@ -395,7 +395,7 @@ ACTION TYPES:
 - "drop"             — Player drops an item from their bag. Set item_id. Optionally set target_poi_instance_id to place the item at a specific POI instead of current position.
 - "equip"            — Player equips an item from their bag. Set item_id.
 - "unequip"          — Player removes an equipped item. Set item_id.
-- "use_item"         — Player uses an item (drink a potion, use a key on a lock, pick a lock with Thieves' Tools). Set item_id. For unlocking or lockpicking a POI, also set target_poi_instance_id.
+- "use_item"         — Player uses an item (drink a potion, use a key on a lock, throw a grenade, etc.). Set item_id. If the target is an enemy or a POI (lock, container, trap), set target_poi_instance_id. If the target is an ally party member listed under OTHER CHARACTERS, set target_character_id. Never set target_character_id for enemies — use target_poi_instance_id instead.
 - "throw_item"       — Player throws an item. Set item_id. Optionally set target_poi_instance_id for landing location.
 - "narrative_only"   — Purely conversational or idle (talking to self, waiting in place). Do NOT use this for any movement, exploration, or interaction — even vague ones.
 - "attack"           — Player intends to strike an NPC or enemy. Set target_poi_instance_id to the enemy's POI instance ID if identifiable.
@@ -608,7 +608,7 @@ async function parseIntentWithHaiku(
                   },
                   target_character_id: {
                     type: ['string', 'null'],
-                    description: 'Target character ID. Null (give_item deferred to multi-player phase).',
+                    description: 'For use_item or throw_item in combat: set to the initiative order entry ID of the target (ally or enemy). Copy the ID exactly from the COMBAT STATE initiative order. Null for all other action types.',
                   },
                 },
                 required: [
@@ -640,6 +640,13 @@ async function parseIntentWithHaiku(
   }
 
   const { actions } = toolUseBlock.input as { actions: ExtractedAction[] };
+
+  // Sanitize <UNKNOWN> placeholders — treat as unresolved (null)
+  for (const a of actions) {
+    if (a.target_character_id === '<UNKNOWN>') a.target_character_id = null;
+    if (a.target_poi_instance_id === '<UNKNOWN>') a.target_poi_instance_id = null;
+    if (a.target_room_template_id === '<UNKNOWN>') a.target_room_template_id = null;
+  }
 
   console.log('[intent-parser] input:', playerActionText);
   console.log(
@@ -903,6 +910,17 @@ export interface EnemyTurnResult {
   facts: string[];
   hpDamage: number;
   updatedEntry: InitiativeEntry;
+  rollData?: {
+    type: 'combat_roll';
+    action: string;
+    d20: number;
+    modifier: number;
+    total: number;
+    vsTarget: string;
+    success: boolean;
+    isCrit?: boolean;
+    damage?: string;
+  };
 }
 
 export function resolveEnemyTurn(
@@ -969,18 +987,23 @@ export function resolveEnemyTurn(
       updatedEntry = { ...updatedEntry, status_effects: updatedEntry.status_effects.filter(s => s !== 'advantage_next_attack') };
     }
 
+    let rollData: EnemyTurnResult['rollData'];
     if (roll.fumble) {
       facts.push(`${entry.name} attacked ${characterName} — rolled 1 (fumble), miss.`);
       console.log(`[stage3:enemy-attack] ${entry.name} roll=1 vs AC=${characterAc} hit=false damage=0`);
+      rollData = { type: 'combat_roll', action: `${entry.name} attacks`, d20: 1, modifier: 0, total: 1, vsTarget: `AC ${characterAc}`, success: false };
     } else if (roll.success || roll.critical) {
       const damage = computeAttackDamage(damageDice, 0, roll.critical);
       hpDamage = damage;
       facts.push(`${entry.name} attacked ${characterName} — rolled ${roll.roll}+${attackBonus}=${roll.total} vs AC ${characterAc}, ${roll.critical ? 'CRITICAL HIT' : 'hit'}, dealt ${damage} damage.`);
       console.log(`[stage3:enemy-attack] ${entry.name} roll=${roll.roll} vs AC=${characterAc} hit=true damage=${damage}`);
+      rollData = { type: 'combat_roll', action: `${entry.name} attacks`, d20: roll.roll, modifier: attackBonus, total: roll.total, vsTarget: `AC ${characterAc}`, success: true, isCrit: roll.critical || undefined, damage: `${damage} dmg` };
     } else {
       facts.push(`${entry.name} attacked ${characterName} — rolled ${roll.roll}+${attackBonus}=${roll.total} vs AC ${characterAc}, miss.`);
       console.log(`[stage3:enemy-attack] ${entry.name} roll=${roll.roll} vs AC=${characterAc} hit=false damage=0`);
+      rollData = { type: 'combat_roll', action: `${entry.name} attacks`, d20: roll.roll, modifier: attackBonus, total: roll.total, vsTarget: `AC ${characterAc}`, success: false };
     }
+    return { facts, hpDamage, updatedEntry, rollData };
   } else if (action === 'move') {
     updatedEntry = { ...updatedEntry, proximity: 'close' };
     facts.push(`${entry.name} moves to close range.`);
@@ -1036,6 +1059,18 @@ export function checkCombatEnd(cs: CombatState): boolean {
   return cs.initiativeOrder.every(e => e.type === 'character' || e.hp <= 0);
 }
 
+type CombatRollLog = {
+  type: 'combat_roll';
+  action: string;
+  d20: number;
+  modifier: number;
+  total: number;
+  vsTarget: string;
+  success: boolean;
+  isCrit?: boolean;
+  damage?: string;
+};
+
 interface CombatActionResult {
   facts: string[];
   updatedCombatState: CombatState;
@@ -1043,6 +1078,8 @@ interface CombatActionResult {
   deadEnemyPoiIds: string[];
   silentKillIds: Set<string>;
   playerGainedHidden: boolean | null;
+  dbHpUpdates: Array<{ id: string; hpDelta: number }>;
+  rollLogs: CombatRollLog[];
 }
 
 export function resolveCombatAction(
@@ -1050,6 +1087,7 @@ export function resolveCombatAction(
   cs: CombatState,
   character: { id: string; name: string; characterClass: string; level: number; baseDexterity: number; baseStrength: number; baseCharisma: number; baseWisdom: number; isHiding?: boolean },
   equippedWeapon: { damageDice: string; weaponType?: string; silent?: boolean } | null,
+  inventory?: CharacterInventory | null,
 ): CombatActionResult {
   const facts: string[] = [];
   let order = [...cs.initiativeOrder];
@@ -1058,6 +1096,9 @@ export function resolveCombatAction(
   const deadEnemyPoiIds: string[] = [];
   const silentKillIds = new Set<string>();
   let playerGainedHidden: boolean | null = null;
+  const dbHpUpdates: Array<{ id: string; hpDelta: number }> = [];
+  let turnUsage = { ...cs.currentTurnUsage };
+  const rollLogs: CombatRollLog[] = [];
 
   if (action.action_type === 'attack') {
     const targetId = action.target_poi_instance_id;
@@ -1095,6 +1136,7 @@ export function resolveCombatAction(
       // Natural 1 always misses
       if (finalRoll.fumble) {
         facts.push(`${character.name} attacked ${target.name} — rolled 1 (fumble), miss.`);
+        rollLogs.push({ type: 'combat_roll', action: `${character.name} attacks ${target.name}`, d20: 1, modifier: 0, total: 1, vsTarget: `AC ${target.ac}`, success: false });
       } else if (finalRoll.success || finalRoll.critical) {
         const damageDice = equippedWeapon?.damageDice ?? '1d4';
         const damage = computeAttackDamage(damageDice, statMod, finalRoll.critical);
@@ -1118,6 +1160,7 @@ export function resolveCombatAction(
 
         console.log(`[stage3:attack] target=${target.name} roll=${finalRoll.roll} vs AC=${target.ac} hit=${finalRoll.success} damage=${effectiveDamage}${isResisted ? '(resisted)' : ''} crit=${finalRoll.critical}`);
         facts.push(`${character.name} attacked ${target.name} — rolled ${finalRoll.roll}+${attackBonus}=${finalRoll.total} vs AC ${target.ac}, ${finalRoll.critical ? 'CRITICAL HIT' : 'hit'}, dealt ${effectiveDamage} damage${sneakDamage ? ` (incl. ${sneakDiceCount}d6 sneak attack)` : ''}${isResisted ? ' (resisted)' : ''}.`);
+        rollLogs.push({ type: 'combat_roll', action: `${character.name} attacks ${target.name}`, d20: finalRoll.roll, modifier: attackBonus, total: finalRoll.total, vsTarget: `AC ${target.ac}`, success: true, isCrit: finalRoll.critical || undefined, damage: `${effectiveDamage} dmg` });
 
         if (newHp <= 0) {
           console.log(`[stage3:enemy-dead] ${target.name} dropped to 0 HP — removed from initiative`);
@@ -1132,6 +1175,7 @@ export function resolveCombatAction(
       } else {
         console.log(`[stage3:attack] target=${target.name} roll=${finalRoll.roll} vs AC=${target.ac} hit=false damage=0 crit=false`);
         facts.push(`${character.name} attacked ${target.name} — rolled ${finalRoll.roll}+${attackBonus}=${finalRoll.total} vs AC ${target.ac}, miss.`);
+        rollLogs.push({ type: 'combat_roll', action: `${character.name} attacks ${target.name}`, d20: finalRoll.roll, modifier: attackBonus, total: finalRoll.total, vsTarget: `AC ${target.ac}`, success: false });
       }
     }
 
@@ -1205,16 +1249,98 @@ export function resolveCombatAction(
     } else {
       facts.push(`${character.name} death save — rolled ${deathRoll.roll}, failure.`);
     }
+
+  } else if (action.action_type === 'use_item' || action.action_type === 'throw_item') {
+    const itemId = action.item_id;
+    const item = itemId ? (inventory?.bag.find(i => i.id === itemId) ?? null) : null;
+    if (!item) {
+      facts.push(`${character.name} tried to use an item but it wasn't found.`);
+    } else {
+      const targetId = action.target_character_id ?? action.target_poi_instance_id;
+      const effect = item.use_effect ?? '';
+
+      if (effect.startsWith('heal_')) {
+        const amount = parseInt(effect.replace('heal_', ''), 10);
+        const targetIdx = targetId
+          ? order.findIndex(e => e.id === targetId)
+          : order.findIndex(e => e.id === character.id);
+        if (targetIdx !== -1) {
+          const target = order[targetIdx];
+          const healed = Math.min(amount, target.maxHp - target.hp);
+          order[targetIdx] = { ...target, hp: target.hp + healed };
+          facts.push(`${character.name} used ${item.name} on ${target.name} — restored ${healed} HP (${target.hp} → ${target.hp + healed}).`);
+          if (target.type === 'character') dbHpUpdates.push({ id: target.id, hpDelta: healed });
+        }
+      } else if (effect === 'cure_poison') {
+        const targetIdx = targetId
+          ? order.findIndex(e => e.id === targetId)
+          : order.findIndex(e => e.id === character.id);
+        if (targetIdx !== -1) {
+          const target = order[targetIdx];
+          const wasPoisoned = target.status_effects.includes('poisoned');
+          order[targetIdx] = { ...target, status_effects: target.status_effects.filter(s => s !== 'poisoned') };
+          facts.push(`${character.name} used ${item.name} on ${target.name} — ${wasPoisoned ? 'cured poison' : 'not poisoned, no effect'}.`);
+        }
+      } else if (effect === 'shield_spell') {
+        const playerIdx = order.findIndex(e => e.id === character.id);
+        if (playerIdx !== -1) {
+          order[playerIdx] = { ...order[playerIdx], status_effects: [...order[playerIdx].status_effects.filter(s => s !== 'shielded'), 'shielded'] };
+          facts.push(`${character.name} used ${item.name} — +5 AC until next turn.`);
+        }
+      } else {
+        // Generic damage effect: parse trailing number e.g. holy_damage_8, fire_damage_6
+        const dmgMatch = effect.match(/(\d+)/);
+        const baseDamage = dmgMatch ? parseInt(dmgMatch[1], 10) : 0;
+        if (baseDamage > 0) {
+          const targetIdx = targetId
+            ? order.findIndex(e => e.id === targetId)
+            : order.findIndex(e => e.type === 'enemy' && e.hp > 0);
+          if (targetIdx !== -1) {
+            const target = order[targetIdx];
+            const dexMod = abilityModifier(character.baseDexterity);
+            const profBonus = character.level >= 5 ? 3 : 2;
+            const attackBonus = dexMod + profBonus;
+            const roll = rollD20Check(attackBonus, target.ac, 'AC');
+            if (roll.fumble) {
+              facts.push(`${character.name} used ${item.name} on ${target.name} — rolled 1 (fumble), miss.`);
+            } else if (roll.success || roll.critical) {
+              const damage = roll.critical ? baseDamage * 2 : baseDamage;
+              const newHp = Math.max(0, target.hp - damage);
+              order[targetIdx] = { ...target, hp: newHp };
+              console.log(`[stage3:item-use] ${character.name} used ${item.name} on ${target.name} — roll=${roll.roll}+${attackBonus}=${roll.total} vs AC ${target.ac} hit damage=${damage}`);
+              facts.push(`${character.name} used ${item.name} on ${target.name} — rolled ${roll.roll}+${attackBonus}=${roll.total} vs AC ${target.ac}, hit, dealt ${damage} damage.`);
+              if (newHp <= 0) {
+                facts.push(`${target.name} dropped to 0 HP and is dead.`);
+                if (target.type === 'enemy') deadEnemyPoiIds.push(target.id);
+                order = order.filter(e => e.id !== target.id);
+              }
+            } else {
+              console.log(`[stage3:item-use] ${character.name} used ${item.name} on ${target.name} — roll=${roll.roll}+${attackBonus}=${roll.total} vs AC ${target.ac} miss`);
+              facts.push(`${character.name} used ${item.name} on ${target.name} — rolled ${roll.roll}+${attackBonus}=${roll.total} vs AC ${target.ac}, miss.`);
+            }
+          } else {
+            facts.push(`${character.name} used ${item.name} — no valid target.`);
+          }
+        } else {
+          facts.push(`${character.name} used ${item.name}.`);
+        }
+      }
+      turnUsage = { ...turnUsage, actionUsed: true };
+    }
   }
 
-  let updatedCs = { ...cs, initiativeOrder: order };
+  // Mark main-action consumption for standard combat actions
+  if (['attack', 'dodge', 'dash', 'disengage', 'hide', 'provoke'].includes(action.action_type)) {
+    turnUsage = { ...turnUsage, actionUsed: true };
+  }
+  if (action.action_type === 'change_proximity') {
+    turnUsage = { ...turnUsage, movementUsed: true };
+  }
+
+  let updatedCs = { ...cs, initiativeOrder: order, currentTurnUsage: turnUsage };
   combatEnded = checkCombatEnd(updatedCs);
-  if (!combatEnded) {
-    updatedCs = advanceTurn(updatedCs);
-    console.log(`[stage3:turn-advance] ${cs.activeActorId} → ${updatedCs.activeActorId}`);
-  }
 
-  return { facts, updatedCombatState: updatedCs, combatEnded, deadEnemyPoiIds, silentKillIds, playerGainedHidden };
+  return { facts, updatedCombatState: updatedCs, combatEnded, deadEnemyPoiIds, silentKillIds, playerGainedHidden, dbHpUpdates, rollLogs };
 }
 
 // ─── Stage 3: Deterministic State Mutation ───────────────────────────────────
@@ -1476,6 +1602,7 @@ async function mutateGameState(
   exitPoiMap: Map<string, string>,
   validPoiMap: Map<string, string>,
   openSpacePoiId: string | null,
+  inCombat = false,
 ): Promise<MutationResult> {
   const { id: characterId, name: characterName } = character;
   const appliedActions: AppliedAction[] = [];
@@ -2529,7 +2656,8 @@ async function mutateGameState(
         const charUpdates: Record<string, unknown> = {};
 
         if (item.use_effect) {
-          if (item.use_effect.startsWith('heal_')) {
+          if (item.use_effect.startsWith('heal_') && !inCombat) {
+            // In combat, heal is handled by resolveCombatAction — skip DB update here to avoid double apply
             const amount = parseInt(item.use_effect.replace('heal_', ''), 10);
             const healed = Math.min(charRow.currentHp + amount, charRow.maxHp) - charRow.currentHp;
             charUpdates.currentHp = charRow.currentHp + healed;
@@ -2728,29 +2856,30 @@ async function mutateGameState(
         thrownItemName = item.name;
         inv.bag.splice(itemIdx, 1);
 
-        // Resolve landing POI
-        let landingPoiId = action.target_poi_instance_id;
-        if (!landingPoiId || !validPoiMap.has(landingPoiId)) {
-          landingPoiId = openSpacePoiId;
-        }
-        if (!landingPoiId) throw new Error('No valid landing location — open_space POI not found');
-        landingPoiName = validPoiMap.get(landingPoiId) ?? 'open space';
-
         await tx.character.update({
           where: { id: characterId },
           data: { inventory: inv as unknown as object },
         });
 
-        const poi = await tx.poiInstance.findUniqueOrThrow({ where: { id: landingPoiId } });
-        const currentProps = poi.currentProperties as Record<string, unknown>;
-        const floorItems = Array.isArray(currentProps.floor_items) ? (currentProps.floor_items as ItemDefinition[]) : [];
+        if (!inCombat) {
+          // In combat the item shatters on impact — no floor drop
+          let landingPoiId = action.target_poi_instance_id;
+          if (!landingPoiId || !validPoiMap.has(landingPoiId)) {
+            landingPoiId = openSpacePoiId;
+          }
+          if (!landingPoiId) throw new Error('No valid landing location — open_space POI not found');
+          landingPoiName = validPoiMap.get(landingPoiId) ?? 'open space';
 
-        await tx.poiInstance.update({
-          where: { id: landingPoiId },
-          data: { currentProperties: { ...currentProps, floor_items: [...floorItems, item] } as unknown as object },
-        });
+          const poi = await tx.poiInstance.findUniqueOrThrow({ where: { id: landingPoiId } });
+          const currentProps = poi.currentProperties as Record<string, unknown>;
+          const floorItems = Array.isArray(currentProps.floor_items) ? (currentProps.floor_items as ItemDefinition[]) : [];
+          await tx.poiInstance.update({
+            where: { id: landingPoiId },
+            data: { currentProperties: { ...currentProps, floor_items: [...floorItems, item] } as unknown as object },
+          });
+        }
 
-        console.log(`[items] throw_item: ${characterName} threw "${item.name}" → "${landingPoiName}"`);
+        console.log(`[items] throw_item: ${characterName} threw "${item.name}"${inCombat ? ' (combat — no floor drop)' : ` → "${landingPoiName}"`}`);
         console.log(`[items] inventory: ${inventorySummary(inv)}`);
 
         await tx.messageLog.create({
@@ -3274,6 +3403,81 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
       },
     });
 
+    // Early-exit: end_turn bypasses intent parsing — just advance turn and run enemies
+    if (action_hint === 'end_turn') {
+      const sessionGs = roomInstance.session.gameState;
+      const sessionCs = roomInstance.session.combatState;
+      if (sessionGs !== 'combat' || !sessionCs) {
+        return buildViewState(roomInstanceId, sessionGs as string, characterId, roomInstance.session.id, currentProximityPoiId);
+      }
+      const cs = sessionCs as unknown as CombatState;
+      if (cs.activeActorId !== characterId) {
+        throw Object.assign(new Error("It's not your turn"), { status: 409 });
+      }
+
+      // Advance past player
+      let workingCs = advanceTurn(cs);
+      let totalEnemyDamage = 0;
+      const allEnemyFacts: string[] = [];
+
+      while (true) {
+        const activeEntry = workingCs.initiativeOrder.find(e => e.id === workingCs.activeActorId);
+        if (!activeEntry || activeEntry.type === 'character') break;
+
+        const poiForEnemy = roomInstance.poiInstances.find(p => p.id === activeEntry.id);
+        const defaultProps = (poiForEnemy?.template?.defaultProperties ?? {}) as Record<string, unknown>;
+
+        const result = resolveEnemyTurn(activeEntry, workingCs, characterId, character.name, defaultProps);
+        allEnemyFacts.push(...result.facts);
+        totalEnemyDamage += result.hpDamage;
+
+        if (result.rollData) {
+          await prisma.messageLog.create({
+            data: {
+              roomInstanceId,
+              characterId,
+              isMechanicalEvent: false,
+              mechanicalSummary: result.rollData,
+              text: `[COMBAT] ${result.facts[0] ?? ''}`,
+            },
+          });
+        }
+
+        workingCs = {
+          ...workingCs,
+          initiativeOrder: workingCs.initiativeOrder.map(e =>
+            e.id === activeEntry.id ? result.updatedEntry : e,
+          ),
+        };
+
+        if (totalEnemyDamage >= character.currentHp) break;
+        workingCs = advanceTurn(workingCs);
+      }
+
+      if (totalEnemyDamage > 0) {
+        const newHp = Math.max(0, character.currentHp - totalEnemyDamage);
+        await prisma.character.update({ where: { id: characterId }, data: { currentHp: newHp } });
+      }
+
+      await prisma.gameSession.update({
+        where: { id: roomInstance.session.id },
+        data: { combatState: workingCs as object },
+      });
+
+      await generateAndPersistNarrative(
+        roomInstanceId,
+        characterId,
+        character.name,
+        roomInstance.template.name,
+        roomInstance.template.baseDescription,
+        [],
+        roomInstance.session.id,
+        allEnemyFacts.length > 0 ? allEnemyFacts : undefined,
+      );
+
+      return buildViewState(roomInstanceId, 'combat', characterId, roomInstance.session.id, currentProximityPoiId);
+    }
+
     // If character is standing at a visible exit, fetch adjacent room POIs so
     // Haiku can reference them by real instance ID (cross-room actions).
     let adjacentRoom: AdjacentRoomContext | null = null;
@@ -3510,7 +3714,7 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
 
     // Combat action resolution (Phase 3 + 4): resolve in-combat actions, then auto-resolve enemy turns
     const inCombat = sessionForGate.gameState === 'combat' && !!sessionForGate.combatState;
-    const combatActionTypes = new Set(['attack', 'dodge', 'dash', 'disengage', 'hide', 'provoke', 'change_proximity', 'death_save']);
+    const combatActionTypes = new Set(['attack', 'dodge', 'dash', 'disengage', 'hide', 'provoke', 'change_proximity', 'death_save', 'use_item', 'throw_item']);
     const allCombatFacts: string[] = [];
     let hadSilentKill = false; // Phase 13: suppress loud propagation for silent kills
     if (inCombat && parsedActions.length > 0 && combatActionTypes.has(parsedActions[0].action_type)) {
@@ -3522,8 +3726,22 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
         cs,
         { id: character.id, name: character.name, characterClass: character.characterClass, level: character.level, baseDexterity: character.baseDexterity, baseStrength: character.baseStrength, baseCharisma: character.baseCharisma, baseWisdom: character.baseWisdom, isHiding: character.isHiding },
         equippedWeapon,
+        characterInventory,
       );
       allCombatFacts.push(...combatResult.facts);
+
+      // Write player combat roll badges
+      for (const rollLog of combatResult.rollLogs) {
+        await prisma.messageLog.create({
+          data: {
+            roomInstanceId,
+            characterId,
+            isMechanicalEvent: false,
+            mechanicalSummary: rollLog,
+            text: `[COMBAT] ${combatResult.facts[0] ?? ''}`,
+          },
+        });
+      }
 
       // Mark dead enemies in DB (from player attack)
       for (const deadId of combatResult.deadEnemyPoiIds) {
@@ -3532,6 +3750,17 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
           await prisma.poiInstance.update({
             where: { id: deadId },
             data: { currentProperties: { ...(existingPoi.currentProperties as object), awareness_state: 'dead', current_hp: 0 } },
+          });
+        }
+      }
+
+      // Apply HP updates from item heals targeting ally characters
+      for (const upd of combatResult.dbHpUpdates) {
+        const targetChar = await prisma.character.findUnique({ where: { id: upd.id }, select: { currentHp: true, maxHp: true } });
+        if (targetChar) {
+          await prisma.character.update({
+            where: { id: upd.id },
+            data: { currentHp: Math.min(targetChar.maxHp, targetChar.currentHp + upd.hpDelta) },
           });
         }
       }
@@ -3546,42 +3775,10 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
         await prisma.gameSession.update({ where: { id: roomInstance.session.id }, data: { gameState: 'exploration', combatState: Prisma.JsonNull } });
         console.log('[stage3:combat] combat ended — all enemies dead');
       } else {
-        // Phase 4: auto-resolve enemy turns until the next player turn
-        let workingCs = combatResult.updatedCombatState;
-        let totalEnemyDamage = 0;
+        // Player's turn remains active — enemies act when player ends turn
+        await prisma.gameSession.update({ where: { id: roomInstance.session.id }, data: { combatState: combatResult.updatedCombatState as object } });
 
-        while (true) {
-          const activeEntry = workingCs.initiativeOrder.find(e => e.id === workingCs.activeActorId);
-          if (!activeEntry || activeEntry.type === 'character') break;
-
-          const poi = roomInstance.poiInstances.find(p => p.id === activeEntry.id);
-          const defaultProps = (poi?.template?.defaultProperties ?? {}) as Record<string, unknown>;
-
-          const result = resolveEnemyTurn(activeEntry, workingCs, characterId, character.name, defaultProps);
-          allCombatFacts.push(...result.facts);
-          totalEnemyDamage += result.hpDamage;
-
-          workingCs = {
-            ...workingCs,
-            initiativeOrder: workingCs.initiativeOrder.map(e =>
-              e.id === activeEntry.id ? result.updatedEntry : e,
-            ),
-          };
-
-          // Player is down — remaining enemies skip
-          if (totalEnemyDamage >= character.currentHp) break;
-
-          workingCs = advanceTurn(workingCs);
-        }
-
-        if (totalEnemyDamage > 0) {
-          const newHp = Math.max(0, character.currentHp - totalEnemyDamage);
-          await prisma.character.update({ where: { id: characterId }, data: { currentHp: newHp } });
-        }
-
-        await prisma.gameSession.update({ where: { id: roomInstance.session.id }, data: { combatState: workingCs as object } });
-
-        // Phase 13: body discovery — unaware enemies in the room check for dead allies
+        // Phase 13: body discovery — unaware enemies check for newly dead allies
         const newDeadCount = combatResult.deadEnemyPoiIds.length;
         if (newDeadCount > 0) {
           for (const poi of roomInstance.poiInstances) {
@@ -3605,7 +3802,7 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
           }
         }
 
-        // Phase 13: patrol — suspicious enemies approach, alert patrol enemies join combat
+        // Phase 13: patrol — suspicious enemies approach
         for (const poi of roomInstance.poiInstances) {
           const dp = poi.template.defaultProperties as Record<string, unknown>;
           if (!dp.patrol) continue;
@@ -3657,6 +3854,7 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
       exitPoiMap,
       validPoiMap,
       openSpacePoiId,
+      inCombat,
     );
 
     // Check whether any story flags set this turn complete the current act

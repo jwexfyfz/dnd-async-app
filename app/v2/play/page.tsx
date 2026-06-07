@@ -709,11 +709,49 @@ function CharacterSheet({ stats, isCombat, isOwn, onFeatureActivate }: {
             );
           })}
         </div>
-        {activeStat && COMBAT_STAT_META[activeStat] && (
-          <p className="mt-2 text-xs text-slate-500 bg-slate-50 rounded-lg px-3 py-2">
-            {COMBAT_STAT_META[activeStat].description}
-          </p>
-        )}
+        {activeStat && COMBAT_STAT_META[activeStat] && (() => {
+          const dexMod = Math.floor((stats.baseDexterity - 10) / 2);
+          const strMod = Math.floor((stats.baseStrength - 10) / 2);
+          const profBonus = stats.level >= 5 ? 3 : 2;
+          const fmt = (n: number) => n >= 0 ? `+${n}` : `${n}`;
+
+          let rows: { label: string; value: string }[] = [];
+          if (activeStat === 'HP') {
+            rows = [
+              { label: 'Current', value: `${stats.currentHp}` },
+              { label: 'Maximum', value: `${stats.maxHp}` },
+            ];
+          } else if (activeStat === 'AC') {
+            const baseAC = 10 + dexMod;
+            const gearAC = stats.ac - baseAC;
+            rows = [
+              { label: `Base (10 + DEX ${fmt(dexMod)})`, value: `${baseAC}` },
+              ...(gearAC !== 0 ? [{ label: 'Gear bonus', value: fmt(gearAC) }] : []),
+              { label: 'Total', value: `${stats.ac}` },
+            ];
+          } else if (activeStat === 'Atk') {
+            rows = [
+              { label: `STR modifier`, value: fmt(strMod) },
+              { label: `Proficiency (lvl ${stats.level})`, value: `+${profBonus}` },
+              { label: 'Total', value: fmt(stats.attackBonus) },
+            ];
+          } else if (activeStat === 'Init') {
+            rows = [
+              { label: 'DEX modifier', value: fmt(dexMod) },
+            ];
+          }
+
+          return (
+            <div className="mt-2 bg-slate-50 rounded-lg px-3 py-2 space-y-1">
+              {rows.map(r => (
+                <div key={r.label} className="flex justify-between text-xs">
+                  <span className="text-slate-500">{r.label}</span>
+                  <span className="font-mono font-medium text-slate-700">{r.value}</span>
+                </div>
+              ))}
+            </div>
+          );
+        })()}
       </div>
 
       {/* Class features */}
@@ -1054,14 +1092,23 @@ function InventoryTab({ characterInventory, gameState, onExplorationAction, onCo
         </div>
       )}
 
-      {/* ── Gear bonus chips ── */}
+      {/* ── Gear bonus cards ── */}
       {gearBonusEntries.length > 0 && (
-        <div className="flex flex-wrap gap-1.5 py-3 border-b border-slate-100">
-          {gearBonusEntries.map(([k, v]) => (
-            <span key={k} className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-600">
-              +{v}{' '}{BONUS_LABELS[k] ?? k.toUpperCase()}
-            </span>
-          ))}
+        <div className="py-3 border-b border-slate-100">
+          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Total Gear Bonus</p>
+          <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${Math.min(gearBonusEntries.length, 4)}, minmax(0, 1fr))` }}>
+            {gearBonusEntries.map(([k, v]) => {
+              const labelColor = k === 'ac' ? 'text-blue-500' : k === 'hp' ? 'text-red-400' : 'text-orange-500';
+              return (
+                <div key={k} className="bg-white rounded-lg px-1.5 py-2.5 text-center border border-slate-200">
+                  <div className={`text-xs font-semibold leading-none mb-1.5 ${labelColor}`}>
+                    {BONUS_LABELS[k] ?? k.toUpperCase()}
+                  </div>
+                  <div className="text-2xl font-bold tracking-tight text-emerald-600">+{v}</div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 
@@ -1078,9 +1125,9 @@ function InventoryTab({ characterInventory, gameState, onExplorationAction, onCo
 
                 if (!item) {
                   return (
-                    <div key={slot} className="flex items-center gap-3 py-0.5">
-                      <span className="text-xs text-slate-400 w-20 shrink-0">{SLOT_LABELS[slot]}</span>
-                      <span className="text-xs text-slate-300">—</span>
+                    <div key={slot} className="rounded-xl border border-dashed border-slate-200 px-3 py-2">
+                      <p className="text-[9px] font-semibold text-slate-300 uppercase tracking-wider leading-none mb-0.5">{SLOT_LABELS[slot]}</p>
+                      <p className="text-sm text-slate-300">Empty</p>
                     </div>
                   );
                 }
@@ -1314,6 +1361,7 @@ const STANDARD_CHIPS = [
   { id: 'hide',       label: 'Hide' },
   { id: 'use_item',   label: 'Use Item' },
   { id: 'provoke',    label: 'Provoke' },
+  { id: 'end_turn',   label: 'End Turn' },
 ];
 
 const CUNNING_SUB = [
@@ -1322,17 +1370,29 @@ const CUNNING_SUB = [
   { id: 'cunning_disengage',  label: 'Disengage' },
 ];
 
-function ActionChips({ characterStats, characterInventory, combatState, chip, setChip, onOpenItemSheet }: {
+function TurnBadge({ label, used }: { label: string; used: boolean }) {
+  return (
+    <span className={`flex items-center gap-1 text-[11px] font-medium ${used ? 'text-slate-300' : 'text-emerald-600'}`}>
+      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${used ? 'bg-slate-300' : 'bg-emerald-400'}`} />
+      {label}
+    </span>
+  );
+}
+
+function ActionChips({ characterStats, characterInventory, combatState, chip, setChip, onOpenItemSheet, onEndTurn }: {
   characterStats: CharacterStats | null;
   characterInventory: CharacterInventory | null;
   combatState: CombatState | null;
   chip: string | null;
   setChip: (v: string | null) => void;
   onOpenItemSheet: () => void;
+  onEndTurn: () => void;
 }) {
   const [showCunningPicker, setShowCunningPicker] = useState(false);
 
   const actionUsed = combatState?.currentTurnUsage.actionUsed ?? false;
+  const bonusUsed  = combatState?.currentTurnUsage.bonusActionUsed ?? false;
+  const moveUsed   = combatState?.currentTurnUsage.movementUsed ?? false;
   const hasCombatItems = (characterInventory?.bag ?? []).some(i => i.combat_usable);
   const features = CLASS_FEATURES[characterStats?.characterClass ?? ''] ?? [];
 
@@ -1347,6 +1407,13 @@ function ActionChips({ characterStats, characterInventory, combatState, chip, se
 
   return (
     <div className="bg-white border-t border-slate-100 flex-shrink-0">
+      {combatState && (
+        <div className="flex items-center gap-4 px-4 pt-2 pb-0">
+          <TurnBadge label="Action" used={actionUsed} />
+          <TurnBadge label="Bonus"  used={bonusUsed} />
+          <TurnBadge label="Move"   used={moveUsed} />
+        </div>
+      )}
       {showCunningPicker && (
         <div className="flex items-center gap-2 px-4 py-2 bg-slate-50 border-b border-slate-100 overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
           <span className="text-xs font-medium text-slate-600 whitespace-nowrap">Cunning Action — use as:</span>
@@ -1364,14 +1431,16 @@ function ActionChips({ characterStats, characterInventory, combatState, chip, se
       <div className="flex gap-2 overflow-x-auto px-4 py-2" style={{ scrollbarWidth: 'none' }}>
         {STANDARD_CHIPS.map(c => {
           const isUseItem = c.id === 'use_item';
-          const greyed = actionUsed || (isUseItem && !hasCombatItems);
+          const isEndTurn = c.id === 'end_turn';
+          const greyed = !isEndTurn && (actionUsed || (isUseItem && !hasCombatItems));
           const isActive = chip?.startsWith('Use:') && isUseItem ? true : chip === c.label;
           return (
             <button
               key={c.id}
-              disabled={actionUsed}
+              disabled={!isEndTurn && actionUsed}
               onClick={() => {
                 if (isUseItem) onOpenItemSheet();
+                else if (c.id === 'end_turn') onEndTurn();
                 else tapChip(c.label);
               }}
               className={`px-3 py-1.5 rounded-full border text-xs font-medium whitespace-nowrap flex-shrink-0 transition-colors ${
@@ -1413,7 +1482,7 @@ function ActionChips({ characterStats, characterInventory, combatState, chip, se
 
 // ─── Chat Tab ─────────────────────────────────────────────────────────────────
 
-function ChatTab({ history, hasMore, loadingMore, loadMore, sending, error, input, setInput, sendAction, handleKeyDown, chip, setChip, gameState, combatState, characterStats, characterInventory, chatEndRef, chatContainerRef, showResumeCard, roomName, characterId }: {
+function ChatTab({ history, hasMore, loadingMore, loadMore, sending, error, input, setInput, sendAction, handleKeyDown, chip, setChip, gameState, combatState, characterStats, characterInventory, chatEndRef, chatContainerRef, showResumeCard, roomName, characterId, onEndTurn }: {
   history: HistoryEntry[];
   hasMore: boolean;
   loadingMore: boolean;
@@ -1435,6 +1504,7 @@ function ChatTab({ history, hasMore, loadingMore, loadMore, sending, error, inpu
   showResumeCard: boolean;
   roomName: string;
   characterId: string;
+  onEndTurn: () => void;
 }) {
   const [showItemSheet, setShowItemSheet] = useState(false);
 
@@ -1504,6 +1574,7 @@ function ChatTab({ history, hasMore, loadingMore, loadMore, sending, error, inpu
           chip={chip}
           setChip={setChip}
           onOpenItemSheet={handleOpenItemSheet}
+          onEndTurn={onEndTurn}
         />
       )}
 
@@ -2126,9 +2197,24 @@ function PlayContent() {
     setActiveTab('chat');
   }, []);
 
+  const populateChatAction = useCallback((text: string, hint: string) => {
+    if (hint === 'use_item') {
+      const targeted = text.match(/^use (.+?) on (.+)$/i);
+      setChip(targeted ? `Use: ${targeted[1]} → ${targeted[2]}` : `Use: ${text.replace(/^use /i, '')}`);
+    } else {
+      setChip(null);
+    }
+    setInput(text);
+    setActiveTab('chat');
+  }, []);
+
   const handleCombatUseItem = useCallback((item: ItemDefinition, targetName?: string) => {
     const text = targetName ? `use ${item.name} on ${targetName}` : `use ${item.name}`;
-    executeDirectAction(text, 'use_item');
+    populateChatAction(text, 'use_item');
+  }, [populateChatAction]);
+
+  const handleEndTurn = useCallback(() => {
+    executeDirectAction('end turn', 'end_turn');
   }, [executeDirectAction]);
 
   return (
@@ -2198,13 +2284,14 @@ function PlayContent() {
             showResumeCard={showResumeCard}
             roomName={roomName}
             characterId={characterId!}
+            onEndTurn={handleEndTurn}
           />
         )}
         {activeTab === 'inventory' && (
           <InventoryTab
             characterInventory={characterInventory}
             gameState={gameState}
-            onExplorationAction={executeDirectAction}
+            onExplorationAction={populateChatAction}
             onCombatUse={handleCombatUseItem}
             proximityPoi={proximityPoi}
             availablePois={availablePois}
