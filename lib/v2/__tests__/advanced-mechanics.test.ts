@@ -5,11 +5,11 @@ vi.mock('@anthropic-ai/sdk', () => ({ default: class { messages = { create: vi.f
 vi.mock('@/lib/dice', () => ({
   rollD20Check: vi.fn(),
   abilityModifier: (score: number) => Math.floor((score - 10) / 2),
-  rollDice: vi.fn(() => ({ total: 6 })),
+  rollDice: vi.fn(() => ({ total: 6, rolls: [6] })),
   rollInitiative: vi.fn(),
 }));
 vi.mock('@/lib/mechanical-damage', () => ({
-  computeAttackDamage: vi.fn(() => 5),
+  computeAttackDamage: vi.fn(() => ({ total: 5, expr: '[3]+2' })),
 }));
 vi.mock('@/lib/stealth', () => ({
   rollStealthCheck: vi.fn(() => 14),
@@ -75,7 +75,7 @@ describe('stealth kills', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(rollD20Check).mockReturnValue(mockHit);
-    vi.mocked(computeAttackDamage).mockReturnValue(5);
+    vi.mocked(computeAttackDamage).mockReturnValue({ total: 5, expr: '[3]+2' });
   });
 
   it('hidden attacker + unaware target: advantage on attack (two rolls, best taken)', () => {
@@ -96,7 +96,7 @@ describe('stealth kills', () => {
   });
 
   it('instant kill with silent weapon + hidden player: no propagation tracked (silentKillIds populated)', () => {
-    vi.mocked(computeAttackDamage).mockReturnValue(999);
+    vi.mocked(computeAttackDamage).mockReturnValue({ total: 999, expr: '[6]+2' });
     const char = makeChar();
     const enemy = makeEnemy({ hp: 5, maxHp: 5 });
     const cs = makeCs(char, enemy);
@@ -112,7 +112,7 @@ describe('stealth kills', () => {
   });
 
   it('instant kill with non-silent weapon: silentKillIds is empty (propagation fires)', () => {
-    vi.mocked(computeAttackDamage).mockReturnValue(999);
+    vi.mocked(computeAttackDamage).mockReturnValue({ total: 999, expr: '[6]+2' });
     const char = makeChar();
     const enemy = makeEnemy({ hp: 5, maxHp: 5 });
     const cs = makeCs(char, enemy);
@@ -171,7 +171,7 @@ describe('prone status effect', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(rollD20Check).mockReturnValue(mockHit);
-    vi.mocked(computeAttackDamage).mockReturnValue(5);
+    vi.mocked(computeAttackDamage).mockReturnValue({ total: 5, expr: '[3]+2' });
   });
 
   it('melee attack vs prone target: advantage (two rolls, best taken)', () => {
@@ -231,7 +231,7 @@ describe('damage resistances', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(rollD20Check).mockReturnValue(mockHit);
-    vi.mocked(computeAttackDamage).mockReturnValue(10);
+    vi.mocked(computeAttackDamage).mockReturnValue({ total: 10, expr: '[8]+2' });
   });
 
   it('attack type matches resistance: damage halved (round down)', () => {

@@ -758,38 +758,51 @@ function CharacterSheet({ stats, isCombat, isOwn, onFeatureActivate }: {
       {features.length > 0 && (
         <div>
           <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Features</p>
-          <div className="flex flex-wrap gap-2">
-            {features.map(f => (
-              <button
-                key={f.id}
-                onClick={() => {
-                  if (!isOwn) return;
-                  if (isCombat && onFeatureActivate) {
-                    onFeatureActivate(f.label);
-                  } else {
-                    setFeatureTooltip(t => t === f.id ? null : f.id);
-                  }
-                }}
-                className={`text-xs px-3 py-1.5 rounded-full border font-medium transition-colors ${
-                  isOwn
-                    ? isCombat
-                      ? 'border-indigo-300 text-indigo-700 bg-indigo-50 hover:bg-indigo-100'
-                      : 'border-emerald-200 text-emerald-700 bg-emerald-50 hover:bg-emerald-100'
-                    : 'border-slate-200 text-slate-300 cursor-default'
-                }`}
-              >
-                {f.label}
-              </button>
-            ))}
-          </div>
-          {featureTooltip && (() => {
-            const f = features.find(x => x.id === featureTooltip);
-            return f ? (
-              <p className="mt-2 text-xs text-slate-500 bg-slate-50 rounded-lg px-3 py-2">
-                {f.description}
-              </p>
-            ) : null;
-          })()}
+          {isCombat ? (
+            <div className="flex flex-col gap-2">
+              {features.map(f => (
+                <div key={f.id} className="flex flex-col gap-0.5">
+                  <button
+                    onClick={() => { if (isOwn && onFeatureActivate) onFeatureActivate(f.label); }}
+                    className={`self-start text-xs px-3 py-1.5 rounded-full border font-medium transition-colors ${
+                      isOwn
+                        ? 'border-indigo-300 text-indigo-700 bg-indigo-50 hover:bg-indigo-100'
+                        : 'border-slate-200 text-slate-300 cursor-default'
+                    }`}
+                  >
+                    {f.label}
+                  </button>
+                  <p className="text-xs text-slate-500 pl-1">{f.description}</p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <>
+              <div className="flex flex-wrap gap-2">
+                {features.map(f => (
+                  <button
+                    key={f.id}
+                    onClick={() => { if (!isOwn) return; setFeatureTooltip(t => t === f.id ? null : f.id); }}
+                    className={`text-xs px-3 py-1.5 rounded-full border font-medium transition-colors ${
+                      isOwn
+                        ? 'border-emerald-200 text-emerald-700 bg-emerald-50 hover:bg-emerald-100'
+                        : 'border-slate-200 text-slate-300 cursor-default'
+                    }`}
+                  >
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+              {featureTooltip && (() => {
+                const f = features.find(x => x.id === featureTooltip);
+                return f ? (
+                  <p className="mt-2 text-xs text-slate-500 bg-slate-50 rounded-lg px-3 py-2">
+                    {f.description}
+                  </p>
+                ) : null;
+              })()}
+            </>
+          )}
         </div>
       )}
 
@@ -1361,7 +1374,6 @@ const STANDARD_CHIPS = [
   { id: 'hide',       label: 'Hide' },
   { id: 'use_item',   label: 'Use Item' },
   { id: 'provoke',    label: 'Provoke' },
-  { id: 'end_turn',   label: 'End Turn' },
 ];
 
 const CUNNING_SUB = [
@@ -1389,12 +1401,43 @@ function ActionChips({ characterStats, characterInventory, combatState, chip, se
   onEndTurn: () => void;
 }) {
   const [showCunningPicker, setShowCunningPicker] = useState(false);
+  const [confirmingEndTurn, setConfirmingEndTurn] = useState(false);
 
   const actionUsed = combatState?.currentTurnUsage.actionUsed ?? false;
   const bonusUsed  = combatState?.currentTurnUsage.bonusActionUsed ?? false;
   const moveUsed   = combatState?.currentTurnUsage.movementUsed ?? false;
   const hasCombatItems = (characterInventory?.bag ?? []).some(i => i.combat_usable);
   const features = CLASS_FEATURES[characterStats?.characterClass ?? ''] ?? [];
+
+  const unusedResources: string[] = [];
+  if (!actionUsed) unusedResources.push('action');
+  if (!bonusUsed) unusedResources.push('bonus action');
+  if (!moveUsed) unusedResources.push('movement');
+  const allUsed = unusedResources.length === 0;
+
+  function formatUnused(): string {
+    if (unusedResources.length === 1) return unusedResources[0];
+    if (unusedResources.length === 2) return `${unusedResources[0]} and ${unusedResources[1]}`;
+    return `${unusedResources[0]}, ${unusedResources[1]}, and ${unusedResources[2]}`;
+  }
+
+  const confirmMessage = unusedResources.length === 3
+    ? "You haven't taken any actions. End turn and forfeit your turn?"
+    : `You still have your ${formatUnused()}. End turn anyway?`;
+
+  function handleEndTurnTap() {
+    if (allUsed) {
+      onEndTurn();
+    } else {
+      setConfirmingEndTurn(true);
+    }
+  }
+
+  const endTurnBtnCls = allUsed
+    ? 'border-indigo-400 text-indigo-700 bg-indigo-50 font-semibold'
+    : actionUsed
+    ? 'border-slate-300 text-slate-500'
+    : 'border-slate-200 text-slate-300';
 
   function tapChip(label: string) {
     setChip(chip === label ? null : label);
@@ -1408,10 +1451,35 @@ function ActionChips({ characterStats, characterInventory, combatState, chip, se
   return (
     <div className="bg-white border-t border-slate-100 flex-shrink-0">
       {combatState && (
-        <div className="flex items-center gap-4 px-4 pt-2 pb-0">
-          <TurnBadge label="Action" used={actionUsed} />
-          <TurnBadge label="Bonus"  used={bonusUsed} />
-          <TurnBadge label="Move"   used={moveUsed} />
+        <div className="flex items-center justify-between px-4 pt-2 pb-0">
+          <div className="flex items-center gap-4">
+            <TurnBadge label="Action" used={actionUsed} />
+            <TurnBadge label="Bonus"  used={bonusUsed} />
+            <TurnBadge label="Move"   used={moveUsed} />
+          </div>
+          <button
+            onClick={handleEndTurnTap}
+            className={`text-xs px-3 py-1 rounded-full border transition-all ${endTurnBtnCls}`}
+          >
+            End Turn →
+          </button>
+        </div>
+      )}
+      {confirmingEndTurn && (
+        <div className="flex items-center gap-2 px-4 py-2 bg-amber-50 border-t border-amber-100">
+          <span className="text-xs text-amber-800 flex-1">{confirmMessage}</span>
+          <button
+            onClick={() => setConfirmingEndTurn(false)}
+            className="text-xs font-medium text-slate-500 px-2 py-1 flex-shrink-0"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => { setConfirmingEndTurn(false); onEndTurn(); }}
+            className="text-xs font-medium text-red-600 px-2 py-1 flex-shrink-0"
+          >
+            End Turn
+          </button>
         </div>
       )}
       {showCunningPicker && (
@@ -1431,16 +1499,14 @@ function ActionChips({ characterStats, characterInventory, combatState, chip, se
       <div className="flex gap-2 overflow-x-auto px-4 py-2" style={{ scrollbarWidth: 'none' }}>
         {STANDARD_CHIPS.map(c => {
           const isUseItem = c.id === 'use_item';
-          const isEndTurn = c.id === 'end_turn';
-          const greyed = !isEndTurn && (actionUsed || (isUseItem && !hasCombatItems));
+          const greyed = actionUsed || (isUseItem && !hasCombatItems);
           const isActive = chip?.startsWith('Use:') && isUseItem ? true : chip === c.label;
           return (
             <button
               key={c.id}
-              disabled={!isEndTurn && actionUsed}
+              disabled={actionUsed}
               onClick={() => {
                 if (isUseItem) onOpenItemSheet();
-                else if (c.id === 'end_turn') onEndTurn();
                 else tapChip(c.label);
               }}
               className={`px-3 py-1.5 rounded-full border text-xs font-medium whitespace-nowrap flex-shrink-0 transition-colors ${
@@ -1461,13 +1527,17 @@ function ActionChips({ characterStats, characterInventory, combatState, chip, se
           return (
             <button
               key={f.id}
+              disabled={bonusUsed}
               onClick={() => {
+                if (bonusUsed) return;
                 if (isCunning) setShowCunningPicker(p => !p);
                 else tapChip(f.label);
               }}
               className={`px-3 py-1.5 rounded-full border text-xs font-medium whitespace-nowrap flex-shrink-0 transition-colors ${
                 isActive
                   ? 'bg-indigo-600 text-white border-indigo-600'
+                  : bonusUsed
+                  ? 'border-slate-200 text-slate-300 cursor-not-allowed'
                   : 'border-indigo-200 text-indigo-700 hover:bg-indigo-50'
               }`}
             >
@@ -1593,24 +1663,32 @@ function ChatTab({ history, hasMore, loadingMore, loadMore, sending, error, inpu
             </span>
           </div>
         )}
-        <div className="flex gap-2">
-          <textarea
-            value={input}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            rows={2}
-            placeholder="What do you do? (Enter to send)"
-            className="flex-1 resize-none border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
-            disabled={sending}
-          />
-          <button
-            onClick={sendAction}
-            disabled={sending || !input.trim()}
-            className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-40"
-          >
-            Send
-          </button>
-        </div>
+        {(() => {
+          const allActionsUsed = gameState === 'combat' &&
+            (combatState?.currentTurnUsage.actionUsed ?? false) &&
+            (combatState?.currentTurnUsage.bonusActionUsed ?? false) &&
+            (combatState?.currentTurnUsage.movementUsed ?? false);
+          return (
+            <div className="flex gap-2">
+              <textarea
+                value={input}
+                onChange={e => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                rows={2}
+                placeholder={allActionsUsed ? 'All actions used — press End Turn' : 'What do you do? (Enter to send)'}
+                className={`flex-1 resize-none border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 ${allActionsUsed ? 'border-slate-200 bg-slate-50 text-slate-400 cursor-not-allowed' : 'border-slate-300'}`}
+                disabled={sending || allActionsUsed}
+              />
+              <button
+                onClick={sendAction}
+                disabled={sending || !input.trim() || allActionsUsed}
+                className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-40"
+              >
+                Send
+              </button>
+            </div>
+          );
+        })()}
       </div>
     </>
   );
@@ -1777,7 +1855,9 @@ interface CombatRollData {
   vsTarget: string;
   success: boolean;
   isCrit?: boolean;
-  damage?: string;
+  damageRoll?: { dice: string; expr: string; total: number };
+  rollMode?: 'advantage' | 'disadvantage';
+  d20Rolls?: [number, number];
 }
 
 function RollBadge({ rolls }: { rolls: RollResult[] }) {
@@ -1809,8 +1889,10 @@ function RollBadge({ rolls }: { rolls: RollResult[] }) {
 }
 
 function CombatRollBadge({ data }: { data: CombatRollData }) {
+  const modStr = data.modifier !== 0 ? (data.modifier > 0 ? `+${data.modifier}` : `${data.modifier}`) : '';
   return (
-    <div className="my-2 flex flex-col gap-0.5">
+    <div className="my-2 flex flex-col gap-1.5">
+      {/* Attack roll chip */}
       <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-mono w-fit border ${
         data.isCrit
           ? 'bg-amber-50 border-amber-300 text-amber-800'
@@ -1820,17 +1902,28 @@ function CombatRollBadge({ data }: { data: CombatRollData }) {
       }`}>
         <span>🎲</span>
         <span className="font-semibold">{data.action}</span>
-        <span className="font-bold">
-          {data.d20}{data.modifier !== 0 ? (data.modifier > 0 ? `+${data.modifier}` : data.modifier) : ''}={data.total}
+        <span className="text-slate-400 font-normal">
+          d20{modStr}{data.rollMode ? ` (${data.rollMode === 'advantage' ? 'adv' : 'dis'})` : ''}
         </span>
-        <span>vs {data.vsTarget}</span>
+        <span className="text-slate-400">→</span>
+        <span className="font-bold">
+          {data.d20Rolls ? `[${data.d20Rolls.join(', ')}]` : data.d20}{modStr} = {data.total}
+        </span>
+        <span className="text-slate-400">vs {data.vsTarget}</span>
         <span className={data.success ? (data.isCrit ? 'text-amber-600 font-bold' : 'text-emerald-600 font-semibold') : 'text-slate-400'}>
-          {data.isCrit ? '✓ CRIT' : data.success ? '✓' : '✗'}
+          {data.isCrit ? '✓ CRIT' : data.success ? '✓ HIT' : '✗ MISS'}
         </span>
       </div>
-      {data.damage && (
-        <div className="pl-3 text-xs font-mono text-slate-500">
-          &nbsp;&nbsp;Damage&nbsp;&nbsp;{data.damage}
+      {/* Damage roll chip */}
+      {data.success && data.damageRoll && (
+        <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-mono w-fit border ${
+          data.isCrit ? 'bg-amber-50 border-amber-200 text-amber-700' : 'bg-orange-50 border-orange-200 text-orange-800'
+        }`}>
+          <span>⚔️</span>
+          <span className="text-slate-400 font-normal">{data.damageRoll.dice}</span>
+          <span className="text-slate-400">→</span>
+          <span className="font-bold">{data.damageRoll.expr} = {data.damageRoll.total}</span>
+          <span className="font-semibold">dmg</span>
         </div>
       )}
     </div>

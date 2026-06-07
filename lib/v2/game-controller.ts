@@ -891,7 +891,7 @@ export function resolveOpportunityAttacks(
       facts.push(`${entry.name} swings at ${characterName} (opportunity) — rolled 1, miss.`);
       console.log(`[stage3:opportunity] ${entry.name} opportunity attack — roll=1 hit=false damage=0`);
     } else if (roll.success || roll.critical) {
-      const damage = computeAttackDamage(damageDice, 0, roll.critical);
+      const { total: damage } = computeAttackDamage(damageDice, 0, roll.critical);
       hpDamage += damage;
       facts.push(`${entry.name} strikes ${characterName} as they flee — rolled ${roll.roll}+${attackBonus}=${roll.total} vs AC ${charAc}, hit, dealt ${damage} damage.`);
       console.log(`[stage3:opportunity] ${entry.name} opportunity attack — roll=${roll.roll} vs AC=${charAc} hit=true damage=${damage}`);
@@ -919,7 +919,9 @@ export interface EnemyTurnResult {
     vsTarget: string;
     success: boolean;
     isCrit?: boolean;
-    damage?: string;
+    damageRoll?: { dice: string; expr: string; total: number };
+    rollMode?: 'advantage' | 'disadvantage';
+    d20Rolls?: [number, number];
   };
 }
 
@@ -975,13 +977,20 @@ export function resolveEnemyTurn(
     const hasDisadvantage = playerDodging;
 
     let roll = rollD20Check(attackBonus, characterAc, 'AC');
+    let rollMode: 'advantage' | 'disadvantage' | undefined;
+    let d20Rolls: [number, number] | undefined;
     if (hasAdvantage && !hasDisadvantage) {
       const roll2 = rollD20Check(attackBonus, characterAc, 'AC');
+      d20Rolls = [roll.roll, roll2.roll];
       roll = roll2.roll > roll.roll ? roll2 : roll;
+      rollMode = 'advantage';
     } else if (hasDisadvantage && !hasAdvantage) {
       const roll2 = rollD20Check(attackBonus, characterAc, 'AC');
+      d20Rolls = [roll.roll, roll2.roll];
       roll = roll2.roll < roll.roll ? roll2 : roll;
+      rollMode = 'disadvantage';
     }
+    const rollModeFields = rollMode ? { rollMode, d20Rolls } : {};
 
     if (hasAdvantage) {
       updatedEntry = { ...updatedEntry, status_effects: updatedEntry.status_effects.filter(s => s !== 'advantage_next_attack') };
@@ -991,17 +1000,17 @@ export function resolveEnemyTurn(
     if (roll.fumble) {
       facts.push(`${entry.name} attacked ${characterName} — rolled 1 (fumble), miss.`);
       console.log(`[stage3:enemy-attack] ${entry.name} roll=1 vs AC=${characterAc} hit=false damage=0`);
-      rollData = { type: 'combat_roll', action: `${entry.name} attacks`, d20: 1, modifier: 0, total: 1, vsTarget: `AC ${characterAc}`, success: false };
+      rollData = { type: 'combat_roll', action: `${entry.name} attacks`, d20: 1, modifier: 0, total: 1, vsTarget: `AC ${characterAc}`, success: false, ...rollModeFields };
     } else if (roll.success || roll.critical) {
-      const damage = computeAttackDamage(damageDice, 0, roll.critical);
+      const { total: damage, expr: dmgExpr } = computeAttackDamage(damageDice, 0, roll.critical);
       hpDamage = damage;
       facts.push(`${entry.name} attacked ${characterName} — rolled ${roll.roll}+${attackBonus}=${roll.total} vs AC ${characterAc}, ${roll.critical ? 'CRITICAL HIT' : 'hit'}, dealt ${damage} damage.`);
       console.log(`[stage3:enemy-attack] ${entry.name} roll=${roll.roll} vs AC=${characterAc} hit=true damage=${damage}`);
-      rollData = { type: 'combat_roll', action: `${entry.name} attacks`, d20: roll.roll, modifier: attackBonus, total: roll.total, vsTarget: `AC ${characterAc}`, success: true, isCrit: roll.critical || undefined, damage: `${damage} dmg` };
+      rollData = { type: 'combat_roll', action: `${entry.name} attacks`, d20: roll.roll, modifier: attackBonus, total: roll.total, vsTarget: `AC ${characterAc}`, success: true, isCrit: roll.critical || undefined, damageRoll: { dice: `${damageDice}${roll.critical ? ' ×2' : ''}`, expr: dmgExpr, total: damage }, ...rollModeFields };
     } else {
       facts.push(`${entry.name} attacked ${characterName} — rolled ${roll.roll}+${attackBonus}=${roll.total} vs AC ${characterAc}, miss.`);
       console.log(`[stage3:enemy-attack] ${entry.name} roll=${roll.roll} vs AC=${characterAc} hit=false damage=0`);
-      rollData = { type: 'combat_roll', action: `${entry.name} attacks`, d20: roll.roll, modifier: attackBonus, total: roll.total, vsTarget: `AC ${characterAc}`, success: false };
+      rollData = { type: 'combat_roll', action: `${entry.name} attacks`, d20: roll.roll, modifier: attackBonus, total: roll.total, vsTarget: `AC ${characterAc}`, success: false, ...rollModeFields };
     }
     return { facts, hpDamage, updatedEntry, rollData };
   } else if (action === 'move') {
@@ -1068,7 +1077,9 @@ type CombatRollLog = {
   vsTarget: string;
   success: boolean;
   isCrit?: boolean;
-  damage?: string;
+  damageRoll?: { dice: string; expr: string; total: number };
+  rollMode?: 'advantage' | 'disadvantage';
+  d20Rolls?: [number, number];
 };
 
 interface CombatActionResult {
@@ -1125,29 +1136,39 @@ export function resolveCombatAction(
 
       let roll1 = rollD20Check(attackBonus, target.ac, 'AC');
       let finalRoll = roll1;
+      let rollMode: 'advantage' | 'disadvantage' | undefined;
+      let d20Rolls: [number, number] | undefined;
       if (hasAdvantage && !hasDisadvantage) {
         const roll2 = rollD20Check(attackBonus, target.ac, 'AC');
+        d20Rolls = [roll1.roll, roll2.roll];
         finalRoll = roll2.roll > roll1.roll ? roll2 : roll1;
+        rollMode = 'advantage';
       } else if (hasDisadvantage && !hasAdvantage) {
         const roll2 = rollD20Check(attackBonus, target.ac, 'AC');
+        d20Rolls = [roll1.roll, roll2.roll];
         finalRoll = roll2.roll < roll1.roll ? roll2 : roll1;
+        rollMode = 'disadvantage';
       }
+      const rollModeFields = rollMode ? { rollMode, d20Rolls } : {};
 
       // Natural 1 always misses
       if (finalRoll.fumble) {
         facts.push(`${character.name} attacked ${target.name} — rolled 1 (fumble), miss.`);
-        rollLogs.push({ type: 'combat_roll', action: `${character.name} attacks ${target.name}`, d20: 1, modifier: 0, total: 1, vsTarget: `AC ${target.ac}`, success: false });
+        rollLogs.push({ type: 'combat_roll', action: `${character.name} attacks ${target.name}`, d20: 1, modifier: 0, total: 1, vsTarget: `AC ${target.ac}`, success: false, ...rollModeFields });
       } else if (finalRoll.success || finalRoll.critical) {
         const damageDice = equippedWeapon?.damageDice ?? '1d4';
-        const damage = computeAttackDamage(damageDice, statMod, finalRoll.critical);
+        const { total: damage, expr: dmgExpr } = computeAttackDamage(damageDice, statMod, finalRoll.critical);
 
         // Sneak attack: Rogue with advantage OR ally adjacent
         let sneakDamage = 0;
         let sneakDiceCount = 0;
+        let sneakExpr = '';
         const isRogue = character.characterClass === 'Rogue';
         if (isRogue && (hasAdvantage || !hasDisadvantage)) {
           sneakDiceCount = Math.ceil(character.level / 2);
-          sneakDamage = rollDice(sneakDiceCount, 6).total;
+          const sneakRoll = rollDice(sneakDiceCount, 6);
+          sneakDamage = sneakRoll.total;
+          sneakExpr = ` + [${sneakRoll.rolls.join(', ')}] sneak`;
         }
 
         // Phase 13: damage resistance halves damage
@@ -1160,7 +1181,10 @@ export function resolveCombatAction(
 
         console.log(`[stage3:attack] target=${target.name} roll=${finalRoll.roll} vs AC=${target.ac} hit=${finalRoll.success} damage=${effectiveDamage}${isResisted ? '(resisted)' : ''} crit=${finalRoll.critical}`);
         facts.push(`${character.name} attacked ${target.name} — rolled ${finalRoll.roll}+${attackBonus}=${finalRoll.total} vs AC ${target.ac}, ${finalRoll.critical ? 'CRITICAL HIT' : 'hit'}, dealt ${effectiveDamage} damage${sneakDamage ? ` (incl. ${sneakDiceCount}d6 sneak attack)` : ''}${isResisted ? ' (resisted)' : ''}.`);
-        rollLogs.push({ type: 'combat_roll', action: `${character.name} attacks ${target.name}`, d20: finalRoll.roll, modifier: attackBonus, total: finalRoll.total, vsTarget: `AC ${target.ac}`, success: true, isCrit: finalRoll.critical || undefined, damage: `${effectiveDamage} dmg` });
+        const dmgModStr = statMod !== 0 ? (statMod > 0 ? `+${statMod}` : `${statMod}`) : '';
+        const diceLabel = `${damageDice}${dmgModStr}${finalRoll.critical ? ' ×2' : ''}`;
+        const dmgExprFull = `${dmgExpr}${sneakExpr}${isResisted ? ' (resisted)' : ''}`;
+        rollLogs.push({ type: 'combat_roll', action: `${character.name} attacks ${target.name}`, d20: finalRoll.roll, modifier: attackBonus, total: finalRoll.total, vsTarget: `AC ${target.ac}`, success: true, isCrit: finalRoll.critical || undefined, damageRoll: { dice: diceLabel, expr: dmgExprFull, total: effectiveDamage }, ...rollModeFields });
 
         if (newHp <= 0) {
           console.log(`[stage3:enemy-dead] ${target.name} dropped to 0 HP — removed from initiative`);
@@ -1175,7 +1199,7 @@ export function resolveCombatAction(
       } else {
         console.log(`[stage3:attack] target=${target.name} roll=${finalRoll.roll} vs AC=${target.ac} hit=false damage=0 crit=false`);
         facts.push(`${character.name} attacked ${target.name} — rolled ${finalRoll.roll}+${attackBonus}=${finalRoll.total} vs AC ${target.ac}, miss.`);
-        rollLogs.push({ type: 'combat_roll', action: `${character.name} attacks ${target.name}`, d20: finalRoll.roll, modifier: attackBonus, total: finalRoll.total, vsTarget: `AC ${target.ac}`, success: false });
+        rollLogs.push({ type: 'combat_roll', action: `${character.name} attacks ${target.name}`, d20: finalRoll.roll, modifier: attackBonus, total: finalRoll.total, vsTarget: `AC ${target.ac}`, success: false, ...rollModeFields });
       }
     }
 
@@ -1194,7 +1218,8 @@ export function resolveCombatAction(
 
   } else if (action.action_type === 'hide') {
     const dexMod = abilityModifier(character.baseDexterity);
-    const stealthRoll = rollStealthCheck(dexMod);
+    const d20Raw = Math.ceil(Math.random() * 20);
+    const stealthRoll = d20Raw + dexMod;
     const enemies = order.filter(e => e.type === 'enemy' && e.hp > 0);
     const highestPerception = enemies.length > 0
       ? Math.max(...enemies.map(e => e.passive_perception ?? 10))
@@ -1206,6 +1231,7 @@ export function resolveCombatAction(
       facts.push(`${character.name} attempts to hide — Stealth ${stealthRoll} vs passive Perception ${highestPerception}, fails.`);
       playerGainedHidden = false;
     }
+    rollLogs.push({ type: 'combat_roll', action: `${character.name} stealth`, d20: d20Raw, modifier: dexMod, total: stealthRoll, vsTarget: `Perception ${highestPerception}`, success: stealthRoll >= highestPerception });
 
   } else if (action.action_type === 'provoke') {
     const targetId = action.target_poi_instance_id;
@@ -1222,6 +1248,7 @@ export function resolveCombatAction(
         order[targetIdx] = { ...target, status_effects: [...target.status_effects, 'advantage_next_attack'] };
         facts.push(`${character.name} provokes ${target.name} — Intimidation ${check.total} vs DC ${intimidDC}, failure. ${target.name} gains advantage on next attack.`);
       }
+      rollLogs.push({ type: 'combat_roll', action: `${character.name} intimidates ${target.name}`, d20: check.roll, modifier: chaMod, total: check.total, vsTarget: `DC ${intimidDC}`, success: check.success });
     }
 
   } else if (action.action_type === 'change_proximity') {
@@ -1249,6 +1276,7 @@ export function resolveCombatAction(
     } else {
       facts.push(`${character.name} death save — rolled ${deathRoll.roll}, failure.`);
     }
+    rollLogs.push({ type: 'combat_roll', action: `${character.name} death save`, d20: deathRoll.roll, modifier: 0, total: deathRoll.total, vsTarget: 'DC 10', success: deathRoll.success });
 
   } else if (action.action_type === 'use_item' || action.action_type === 'throw_item') {
     const itemId = action.item_id;
@@ -1318,6 +1346,7 @@ export function resolveCombatAction(
               console.log(`[stage3:item-use] ${character.name} used ${item.name} on ${target.name} — roll=${roll.roll}+${attackBonus}=${roll.total} vs AC ${target.ac} miss`);
               facts.push(`${character.name} used ${item.name} on ${target.name} — rolled ${roll.roll}+${attackBonus}=${roll.total} vs AC ${target.ac}, miss.`);
             }
+            rollLogs.push({ type: 'combat_roll', action: `${character.name} uses ${item.name}`, d20: roll.roll, modifier: attackBonus, total: roll.total, vsTarget: `AC ${target.ac}`, success: roll.success || roll.critical, isCrit: roll.critical || undefined });
           } else {
             facts.push(`${character.name} used ${item.name} — no valid target.`);
           }
@@ -3226,8 +3255,19 @@ async function buildViewState(
   }
 
   const resolvedGameState = (sessionRow?.gameState ?? gameState) as 'exploration' | 'combat';
-  const resolvedCombatState = sessionRow?.combatState
+  const rawCombatState = sessionRow?.combatState
     ? (sessionRow.combatState as unknown as import('@/types/v2-game').CombatState)
+    : null;
+  // Sync authoritative character HP into the player's initiative entry.
+  // The DB writes to character.currentHp but may not flush back into combatState.initiativeOrder
+  // (e.g. when enemies deal damage during end_turn). Read-time sync keeps the strip accurate.
+  const resolvedCombatState = rawCombatState
+    ? {
+        ...rawCombatState,
+        initiativeOrder: rawCombatState.initiativeOrder.map(e =>
+          e.id === characterId ? { ...e, hp: charRow.currentHp } : e
+        ),
+      }
     : null;
 
   const profBonus = charRow.level >= 5 ? 3 : charRow.level >= 3 ? 2 : 2;
@@ -3419,6 +3459,7 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
       let workingCs = advanceTurn(cs);
       let totalEnemyDamage = 0;
       const allEnemyFacts: string[] = [];
+      const pendingRollData: NonNullable<EnemyTurnResult['rollData']>[] = [];
 
       while (true) {
         const activeEntry = workingCs.initiativeOrder.find(e => e.id === workingCs.activeActorId);
@@ -3432,15 +3473,7 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
         totalEnemyDamage += result.hpDamage;
 
         if (result.rollData) {
-          await prisma.messageLog.create({
-            data: {
-              roomInstanceId,
-              characterId,
-              isMechanicalEvent: false,
-              mechanicalSummary: result.rollData,
-              text: `[COMBAT] ${result.facts[0] ?? ''}`,
-            },
-          });
+          pendingRollData.push(result.rollData);
         }
 
         workingCs = {
@@ -3464,6 +3497,7 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
         data: { combatState: workingCs as object },
       });
 
+      // Narrative first — badges appear after so they read as mechanical receipts for the described action
       await generateAndPersistNarrative(
         roomInstanceId,
         characterId,
@@ -3474,6 +3508,18 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
         roomInstance.session.id,
         allEnemyFacts.length > 0 ? allEnemyFacts : undefined,
       );
+
+      for (const rollData of pendingRollData) {
+        await prisma.messageLog.create({
+          data: {
+            roomInstanceId,
+            characterId,
+            isMechanicalEvent: false,
+            mechanicalSummary: rollData,
+            text: `[COMBAT] ${rollData.action}`,
+          },
+        });
+      }
 
       return buildViewState(roomInstanceId, 'combat', characterId, roomInstance.session.id, currentProximityPoiId);
     }
@@ -3717,6 +3763,23 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
     const combatActionTypes = new Set(['attack', 'dodge', 'dash', 'disengage', 'hide', 'provoke', 'change_proximity', 'death_save', 'use_item', 'throw_item']);
     const allCombatFacts: string[] = [];
     let hadSilentKill = false; // Phase 13: suppress loud propagation for silent kills
+    if (inCombat && parsedActions.length > 0) {
+      const cs = sessionForGate.combatState as unknown as CombatState;
+      const usage = cs.currentTurnUsage;
+      const firstType = parsedActions[0].action_type;
+      if (firstType === 'change_proximity' && usage.movementUsed) {
+        throw Object.assign(new Error('You have already used your movement this turn.'), { status: 400 });
+      }
+      const mainActionTypes = new Set(['attack', 'dodge', 'dash', 'disengage', 'hide', 'provoke', 'use_item', 'throw_item']);
+      const BONUS_ACTION_HINTS_GATE = ['Cunning Action', 'Second Wind', 'Channel Divinity'];
+      const isThisBonusAction = !!action_hint && BONUS_ACTION_HINTS_GATE.some(h => action_hint.includes(h));
+      if (mainActionTypes.has(firstType) && !isThisBonusAction && usage.actionUsed) {
+        throw Object.assign(new Error('You have already used your action this turn.'), { status: 400 });
+      }
+      if (isThisBonusAction && usage.bonusActionUsed) {
+        throw Object.assign(new Error('You have already used your bonus action this turn.'), { status: 400 });
+      }
+    }
     if (inCombat && parsedActions.length > 0 && combatActionTypes.has(parsedActions[0].action_type)) {
       const cs = sessionForGate.combatState as unknown as CombatState;
       const mainHand = characterInventory.equipped.main_hand;
@@ -3776,7 +3839,12 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
         console.log('[stage3:combat] combat ended — all enemies dead');
       } else {
         // Player's turn remains active — enemies act when player ends turn
-        await prisma.gameSession.update({ where: { id: roomInstance.session.id }, data: { combatState: combatResult.updatedCombatState as object } });
+        const BONUS_ACTION_HINTS = ['Cunning Action', 'Second Wind', 'Channel Divinity'];
+        const isBonusAction = !!action_hint && BONUS_ACTION_HINTS.some(h => action_hint.includes(h));
+        const finalUpdatedCs = isBonusAction
+          ? { ...combatResult.updatedCombatState, currentTurnUsage: { ...combatResult.updatedCombatState.currentTurnUsage, bonusActionUsed: true } }
+          : combatResult.updatedCombatState;
+        await prisma.gameSession.update({ where: { id: roomInstance.session.id }, data: { combatState: finalUpdatedCs as object } });
 
         // Phase 13: body discovery — unaware enemies check for newly dead allies
         const newDeadCount = combatResult.deadEnemyPoiIds.length;

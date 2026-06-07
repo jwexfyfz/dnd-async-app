@@ -475,7 +475,31 @@ This means a patrolling guard who hears something approaches the door first (pla
 
 ---
 
-### 5. Multiple enemies entering combat
+### 5. Hidden player — enemies attack blindly (known gap)
+
+**Gap:** When the player is hidden (`isHiding: true`), enemies currently ignore the hidden state entirely and attack the player's last known position as if they had a clear target. There is no Search action, no "can't find target" path, and no distinction between a hidden and a visible player from the enemy AI's perspective.
+
+**In 5e terms:** A hidden creature can't be directly targeted. An enemy must either (a) use the Search action to make a Perception check vs. the player's Stealth roll, or (b) guess the player's square (attack into a location with disadvantage). On a miss or failed Search, the enemy wastes their turn.
+
+**Recommendation:**
+
+At the start of each enemy turn in `resolveEnemyTurn`, check whether the player has `isHiding: true`. If so, branch on a Perception vs. Stealth contest:
+
+1. **Enemy rolls Perception** — `d20 + WIS mod` vs. the player's stored `stealthRoll` (already written to `Character.stealthRoll` on a successful Hide action).
+2. **Pass** — enemy spots the player: clear `isHiding`, attack proceeds normally with no advantage for the player.
+3. **Fail** — enemy cannot locate the player: skip the attack, emit a fact like *"Skarr sweeps the room but can't find you."* Enemy uses their action as a Search (no damage this turn).
+
+This requires:
+- Reading `character.stealthRoll` in `resolveEnemyTurn` (currently not passed in — it only receives `characterId` and `characterName`)
+- Adding `stealthRoll: number` to the data fetched before the enemy loop in the `end_turn` handler
+- Passing it into `resolveEnemyTurn` as a new optional parameter
+- Emitting a `combat_roll` badge for the Perception check (same pattern as attack badges)
+
+Until this is implemented, hiding is mechanically advantageous (advantage on your next attack) but provides no protection against enemy turns — a hidden player takes hits as normal.
+
+---
+
+### 6. Multiple enemies entering combat
 **Recommendation: detection is individual, but combat start is a loud event.**
 
 Each enemy makes their own detection check — they're not telepathic. However, when the **first attack roll** happens in a room, treat it as a loud action (DC 10 to hear within the room). All `unaware` enemies in the same room roll Perception vs. DC 10:

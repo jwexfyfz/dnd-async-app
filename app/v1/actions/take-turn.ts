@@ -1028,7 +1028,7 @@ export async function takeTurn(
     ? dbEnemies.find(e => e.posX === targetPos.x && e.posY === targetPos.y) ?? null
     : null;
   const mechanicalDmg = attackTargetEnemy
-    ? computeAttackDamage(weaponDamageDice, statModForDmg, diceResult.critical)
+    ? computeAttackDamage(weaponDamageDice, statModForDmg, diceResult.critical).total
     : 0;
   const mechanicalDmgEffect = (attackTargetEnemy && mechanicalDmg > 0)
     ? { targetId: attackTargetEnemy.id, delta: -mechanicalDmg, type: "damage" }
