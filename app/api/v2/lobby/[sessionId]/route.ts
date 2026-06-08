@@ -12,12 +12,8 @@ type LobbyMember = {
   status: 'joined' | 'ready';
 };
 
-// GET — poll lobby state
+// GET — poll lobby state (public — no auth required to view the lobby)
 export async function GET(req: NextRequest, { params }: { params: Promise<{ sessionId: string }> }) {
-  const supabase = await createSupabaseServerClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
   const { sessionId } = await params;
   try {
     const session = await prisma.gameSession.findUnique({
