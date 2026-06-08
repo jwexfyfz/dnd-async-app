@@ -287,8 +287,17 @@ function SetupContent() {
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session?.user) { setUser(session.user); setStep('character'); loadCharacters(); }
-      else               { setUser(null); setStep('login'); }
+      if (session?.user) {
+        const returnTo = sessionStorage.getItem('auth-return-to');
+        if (returnTo) {
+          sessionStorage.removeItem('auth-return-to');
+          window.location.href = returnTo;
+          return;
+        }
+        setUser(session.user); setStep('character'); loadCharacters();
+      } else {
+        setUser(null); setStep('login');
+      }
     });
     return () => subscription.unsubscribe();
   }, []);

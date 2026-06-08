@@ -304,7 +304,10 @@ function LobbyContent() {
             <div className="text-center space-y-2">
               <p className="text-sm text-slate-600">Sign in to join this adventure</p>
               <button
-                onClick={() => router.push('/v2/setup')}
+                onClick={() => {
+                  sessionStorage.setItem('auth-return-to', window.location.href);
+                  router.push('/v2/setup');
+                }}
                 className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700"
               >
                 Sign in
