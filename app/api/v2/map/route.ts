@@ -113,8 +113,14 @@ export async function GET(req: NextRequest) {
           examined: state.examined === true,
           interacted: state.interacted === true,
           unlocked: state.unlocked === true,
+          isDead: state.awareness_state === 'dead',
         };
       });
+
+      // Build a lookup from enemy POI instance ID → their current combat grid_slot
+      // so player positions resolve to where enemies actually are, not their template origin
+      const combatOrder = (ri.combatState as { initiativeOrder?: { id: string; grid_slot?: string }[] } | null)?.initiativeOrder ?? [];
+      const enemyCombatSlot = new Map(combatOrder.filter(e => e.grid_slot).map(e => [e.id, e.grid_slot!]));
 
       const characters: {
         characterId: string;
@@ -123,40 +129,50 @@ export async function GET(req: NextRequest) {
         grid_slot: string;
         stance: string | null;
         type: 'player' | 'enemy';
+        isDead?: boolean;
       }[] = ri.participants.filter(p => charCurrentRoom.get(p.characterId) === ri.id).map(p => {
         const cs = p.combatState as { proximity_target_id?: string; stance?: string };
-        const proximityPoi = cs.proximity_target_id
-          ? ri.poiInstances.find(pi => pi.id === cs.proximity_target_id)
-          : null;
-        const proximityTemplate = proximityPoi
-          ? ri.template.poiTemplates.find(pt => pt.id === proximityPoi.poiTemplateId)
-          : null;
+        const proxId = cs.proximity_target_id ?? null;
+        // If the proximity target is an enemy with a tracked combat position, use that
+        const combatSlot = proxId ? enemyCombatSlot.get(proxId) : undefined;
+        let gridSlot = 'C';
+        if (combatSlot) {
+          gridSlot = combatSlot;
+        } else if (proxId) {
+          const proximityPoi = ri.poiInstances.find(pi => pi.id === proxId);
+          const proximityTemplate = proximityPoi
+            ? ri.template.poiTemplates.find(pt => pt.id === proximityPoi.poiTemplateId)
+            : null;
+          gridSlot = proximityTemplate?.grid_slot ?? 'C';
+        }
         return {
           characterId: p.characterId,
           name: p.character.name,
           characterClass: p.character.characterClass,
-          grid_slot: proximityTemplate?.grid_slot ?? 'C',
+          grid_slot: gridSlot,
           stance: cs.stance ?? null,
           type: 'player' as const,
         };
       });
 
-      // Add enemies from combat state
-      const roomCombat = ri.combatState as { initiativeOrder?: { id: string; type: string; name: string; hp: number }[] } | null;
+      // Add enemies from combat state (alive and dead)
+      const roomCombat = ri.combatState as { initiativeOrder?: { id: string; type: string; name: string; hp: number; grid_slot?: string }[] } | null;
       if (roomCombat?.initiativeOrder) {
         for (const entry of roomCombat.initiativeOrder) {
           if (entry.type !== 'enemy') continue;
-          if (entry.hp <= 0) continue;
           // entry.id is the poiInstanceId
           const poi = ri.poiInstances.find(pi => pi.id === entry.id);
           const template = poi ? ri.template.poiTemplates.find(pt => pt.id === poi.poiTemplateId) : null;
+          // Prefer the tracked grid_slot (updated as enemy moves), fall back to template slot
+          const gridSlot = entry.grid_slot ?? template?.grid_slot ?? 'C';
           characters.push({
             characterId: entry.id,
             name: entry.name,
             characterClass: null,
-            grid_slot: template?.grid_slot ?? 'C',
+            grid_slot: gridSlot,
             stance: null,
             type: 'enemy',
+            isDead: entry.hp <= 0,
           });
         }
       }
@@ -233,6 +249,7 @@ export async function GET(req: NextRequest) {
             examined: false,
             interacted: false,
             unlocked: false,
+            isDead: false,
           };
         });
 

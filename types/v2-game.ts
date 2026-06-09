@@ -124,6 +124,7 @@ export interface InitiativeEntry {
   surprised: boolean;
   acted: boolean;
   proximity: 'close' | 'far';
+  grid_slot?: string;
   status_effects: string[];
   priority_target?: string;
   priority_target_until_round?: number;

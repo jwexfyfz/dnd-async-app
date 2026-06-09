@@ -1,2 +1,3 @@
 1. scroll issue (chat keeps scrolling up after sending message)
 2. characters should only be linked to one game
+3. when searching the room, don't do one roll per item. it should be one perception roll for the whole room, which shouldn't necessarily surface every item - Perceivable is anything you can naturally notice using your physical senses (like seeing a glint of metal or smelling gas), whereas not perceivable (requires investigation) is anything requiring physical manipulation, deep deduction, or hidden knowledge to uncover (like finding a latch inside a hollow desk or decoding a cipher). seed the database accordingly.

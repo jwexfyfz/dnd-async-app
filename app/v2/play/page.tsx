@@ -23,6 +23,7 @@ interface MapPoi {
   examined: boolean;
   interacted: boolean;
   unlocked: boolean;
+  isDead?: boolean;
 }
 
 interface MapCharacter {
@@ -32,6 +33,7 @@ interface MapCharacter {
   grid_slot: string;
   stance: string | null;
   type: 'player' | 'enemy';
+  isDead?: boolean;
 }
 
 interface MapRoom {
@@ -210,15 +212,20 @@ function DungeonMap({ mapData, currentRoomInstanceId, showLegend }: { mapData: M
 
   const legendEntries = new Map<string, string>();
   for (const p of allVisiblePois) {
+    if (p.isDead) continue; // dead enemies appear in the dead-enemy legend, not the POI legend
     const a = abbrev(p.name);
     if (!legendEntries.has(a)) legendEntries.set(a, p.name);
   }
 
   const allyLegend = new Map<string, { name: string; characterClass: string | null }>();
+  const deadEnemyLegend = new Map<string, string>(); // characterId → name
   for (const room of mapData.rooms) {
     for (const c of room.characters) {
       if (c.type === 'player' && c.characterId !== mapData.character.characterId) {
         allyLegend.set(c.characterId, { name: c.name, characterClass: c.characterClass });
+      }
+      if (c.type === 'enemy' && c.isDead) {
+        deadEnemyLegend.set(c.characterId, c.name);
       }
     }
   }
@@ -372,9 +379,11 @@ function DungeonMap({ mapData, currentRoomInstanceId, showLegend }: { mapData: M
           return isSlotVisibleThroughExit(charSlot, c.grid_slot, matchingExit, cpx, cpy, tpx, tpy);
         });
 
-        // Character tokens — grouped by slot with overflow indicators
+        // Character tokens — group live characters by slot; dead enemies rendered separately
+        const deadEnemies = visibleCharacters.filter(c => c.type === 'enemy' && c.isDead);
         const charsBySlot = new Map<string, MapCharacter[]>();
         for (const c of visibleCharacters) {
+          if (c.isDead) continue;
           const g = charsBySlot.get(c.grid_slot) ?? [];
           g.push(c);
           charsBySlot.set(c.grid_slot, g);
@@ -447,6 +456,17 @@ function DungeonMap({ mapData, currentRoomInstanceId, showLegend }: { mapData: M
           });
         }
 
+        // Dead enemy corpse markers — small gray circle with ✕ at their last position
+        const corpseTokens = deadEnemies.map((c, i) => {
+          const [cx, cy] = slotCenter(c.grid_slot, px, py);
+          return (
+            <g key={`corpse-${c.characterId}-${i}`} opacity={0.6}>
+              <circle cx={cx} cy={cy} r={6} fill="#475569" />
+              <text x={cx} y={cy + 3.5} textAnchor="middle" fontSize={8} fill="white" fontWeight="bold">✕</text>
+            </g>
+          );
+        });
+
         // Empty slot dots for current room
         const emptyDots = isCurrentRoom
           ? Object.entries(SLOT_OFFSETS)
@@ -482,6 +502,7 @@ function DungeonMap({ mapData, currentRoomInstanceId, showLegend }: { mapData: M
             {wallLines}
             {emptyDots}
             {poiLabels}
+            {corpseTokens}
             {charTokens}
             {roomLabel}
           </g>
@@ -502,6 +523,9 @@ function DungeonMap({ mapData, currentRoomInstanceId, showLegend }: { mapData: M
           <span>(gap) Archway</span>
           {[...legendEntries.entries()].map(([a, name]) => (
             <span key={a}><span className="font-mono font-medium">{a}</span> {name}</span>
+          ))}
+          {[...deadEnemyLegend.values()].map(name => (
+            <span key={name} className="text-slate-400"><span className="font-mono">✕</span> {name}</span>
           ))}
         </div>
       </div>

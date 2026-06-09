@@ -737,7 +737,7 @@ interface CombatPoiContext extends PoiContext {
 }
 
 export async function enterCombat(
-  roomInstance: { id: string; poiInstances: Array<{ id: string; poiTemplateId: string; currentProperties: unknown; template: { defaultProperties: unknown; name: string } }> },
+  roomInstance: { id: string; poiInstances: Array<{ id: string; poiTemplateId: string; currentProperties: unknown; template: { defaultProperties: unknown; name: string; grid_slot?: string | null } }> },
 ): Promise<CombatState> {
   const DORMANT_MS = 48 * 60 * 60 * 1000;
 
@@ -813,6 +813,7 @@ export async function enterCombat(
       };
     }
     const enemy = alertEnemies.find(e => e.poiInstanceId === slot.actorId)!;
+    const enemyPoi = roomInstance.poiInstances.find(p => p.id === slot.actorId);
     return {
       id: slot.actorId,
       type: 'enemy',
@@ -824,6 +825,7 @@ export async function enterCombat(
       surprised: unawarePoiIds.has(slot.actorId),
       acted: false,
       proximity: 'close',
+      grid_slot: enemyPoi?.template.grid_slot ?? 'C',
       status_effects: [],
       resistances: enemy.combatStats.resistances ?? [],
       passive_perception: enemy.combatStats.passive_perception ?? (10 + abilityModifier(enemy.combatStats.wis_score ?? 10)),
@@ -972,6 +974,7 @@ export function resolveEnemyTurn(
   characterId: string,
   characterName: string,
   defaultProps: Record<string, unknown>,
+  playerGridSlot = 'C',
 ): EnemyTurnResult {
   const facts: string[] = [];
   let hpDamage = 0;
@@ -1053,9 +1056,10 @@ export function resolveEnemyTurn(
       console.log(`[stage3:enemy-attack] ${entry.name} roll=${roll.roll} vs AC=${characterAc} hit=false damage=0`);
       rollData = { type: 'combat_roll', action: `${entry.name} attacks`, d20: roll.roll, modifier: attackBonus, total: roll.total, vsTarget: `AC ${characterAc}`, success: false, ...rollModeFields };
     }
+    updatedEntry = { ...updatedEntry, grid_slot: playerGridSlot };
     return { facts, hpDamage, updatedEntry, rollData };
   } else if (action === 'move') {
-    updatedEntry = { ...updatedEntry, proximity: 'close' };
+    updatedEntry = { ...updatedEntry, proximity: 'close', grid_slot: playerGridSlot };
     facts.push(`${entry.name} moves to close range.`);
   } else if (action === 'flee') {
     facts.push(`${entry.name} attempts to flee!`);
@@ -1160,6 +1164,7 @@ export function resolveCombatAction(
   const rollLogs: CombatRollLog[] = [];
 
   if (action.action_type === 'attack') {
+    playerGainedHidden = false; // attacking always reveals the character
     const targetId = action.target_poi_instance_id;
     const targetIdx = targetId ? order.findIndex(e => e.id === targetId) : order.findIndex(e => e.type === 'enemy' && e.hp > 0);
     if (targetIdx === -1) {
@@ -1207,12 +1212,13 @@ export function resolveCombatAction(
         const damageDice = equippedWeapon?.damageDice ?? '1d4';
         const { total: damage, expr: dmgExpr } = computeAttackDamage(damageDice, statMod, finalRoll.critical);
 
-        // Sneak attack: Rogue with advantage OR ally adjacent
+        // Sneak attack: Rogue with advantage OR an ally adjacent to the target
         let sneakDamage = 0;
         let sneakDiceCount = 0;
         let sneakExpr = '';
         const isRogue = character.characterClass === 'Rogue';
-        if (isRogue && (hasAdvantage || !hasDisadvantage)) {
+        const allyAdjacent = order.some(e => e.type === 'character' && e.id !== character.id && e.hp > 0 && e.proximity === 'close');
+        if (isRogue && (hasAdvantage || allyAdjacent)) {
           sneakDiceCount = Math.ceil(character.level / 2);
           const sneakRoll = rollDice(sneakDiceCount, 6);
           sneakDamage = sneakRoll.total;
@@ -3631,6 +3637,8 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
       const allEnemyFacts: string[] = [];
       const pendingRollData: NonNullable<EnemyTurnResult['rollData']>[] = [];
 
+      const playerPoiSlot = (roomInstance.poiInstances.find(p => p.id === currentProximityPoiId)?.template as Record<string, unknown> | undefined)?.grid_slot as string ?? 'C';
+
       while (true) {
         const activeEntry = workingCs.initiativeOrder.find(e => e.id === workingCs.activeActorId);
         if (!activeEntry || activeEntry.type === 'character') break;
@@ -3638,7 +3646,7 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
         const poiForEnemy = roomInstance.poiInstances.find(p => p.id === activeEntry.id);
         const defaultProps = (poiForEnemy?.template?.defaultProperties ?? {}) as Record<string, unknown>;
 
-        const result = resolveEnemyTurn(activeEntry, workingCs, characterId, character.name, defaultProps);
+        const result = resolveEnemyTurn(activeEntry, workingCs, characterId, character.name, defaultProps, playerPoiSlot);
         allEnemyFacts.push(...result.facts);
         totalEnemyDamage += result.hpDamage;
 
@@ -4247,6 +4255,8 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
           let totalEnemyDamage = 0;
           const pendingRollData: NonNullable<EnemyTurnResult['rollData']>[] = [];
 
+          const combatStartPlayerSlot = (activeRoomInstance.poiInstances.find(p => p.id === currentProximityPoiId)?.template as Record<string, unknown> | undefined)?.grid_slot as string ?? 'C';
+
           while (true) {
             const activeEntry = workingCs.initiativeOrder.find(e => e.id === workingCs.activeActorId);
             if (!activeEntry || activeEntry.type === 'character') break;
@@ -4254,7 +4264,7 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
             const poiForEnemy = activeRoomInstance.poiInstances.find(p => p.id === activeEntry.id);
             const defaultProps = (poiForEnemy?.template?.defaultProperties ?? {}) as Record<string, unknown>;
 
-            const result = resolveEnemyTurn(activeEntry, workingCs, characterId, character.name, defaultProps);
+            const result = resolveEnemyTurn(activeEntry, workingCs, characterId, character.name, defaultProps, combatStartPlayerSlot);
             allCombatFacts.push(...result.facts);
             totalEnemyDamage += result.hpDamage;
             if (result.rollData) pendingRollData.push(result.rollData);
