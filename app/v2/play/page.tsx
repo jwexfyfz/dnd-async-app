@@ -126,7 +126,7 @@ function isSlotVisibleThroughExit(
 
 // ─── SVG Map Renderer ─────────────────────────────────────────────────────────
 
-function DungeonMap({ mapData, currentRoomInstanceId }: { mapData: MapData; currentRoomInstanceId: string }) {
+function DungeonMap({ mapData, currentRoomInstanceId, showLegend }: { mapData: MapData; currentRoomInstanceId: string; showLegend?: boolean }) {
   if (!mapData?.rooms?.length) return null;
 
   // Compute canvas bounds
@@ -176,7 +176,45 @@ function DungeonMap({ mapData, currentRoomInstanceId }: { mapData: MapData; curr
   const wallColor = '#334155';
   const wallWidth = 1.5;
 
+  // Pre-compute visible POIs per room using the same LoS filter applied to map labels.
+  // This drives both the SVG render AND the legend so they are always in sync.
+  const visiblePoisByRoom = new Map<string, MapPoi[]>();
+  for (const room of mapData.rooms) {
+    const isCurrentRoom = room.instanceId === currentRoomInstanceId;
+    visiblePoisByRoom.set(room.instanceId, room.pois.filter(p => {
+      if (p.poi_type === 'open_space' || p.poi_type === 'exit') return false;
+      if (!isCurrentRoom) {
+        const sourcePos = currentRoom ? roomPx.get(currentRoom.instanceId) : null;
+        if (!sourcePos || !currentRoom) return false;
+        const matchingExit = currentExits.find(e => {
+          const adjacentByDir: Record<string, { dx: number; dy: number }> = {
+            E: { dx: 1, dy: 0 }, W: { dx: -1, dy: 0 },
+            N: { dx: 0, dy: -1 }, S: { dx: 0, dy: 1 },
+          };
+          const d = adjacentByDir[e.exit_direction ?? ''];
+          if (!d) return false;
+          return room.map_x === currentRoom.map_x + d.dx && room.map_y === currentRoom.map_y + d.dy;
+        });
+        if (!matchingExit) return false;
+        const minVis = (matchingExit.peek_visibility === 'full' || matchingExit.interacted) ? 1 : 2;
+        if (p.visibility_level < minVis) return false;
+        const { px: cpx, py: cpy } = sourcePos;
+        const { px: tpx, py: tpy } = roomPx.get(room.instanceId)!;
+        return isSlotVisibleThroughExit(charSlot, p.grid_slot, matchingExit, cpx, cpy, tpx, tpy);
+      }
+      return true;
+    }));
+  }
+  const allVisiblePois = [...visiblePoisByRoom.values()].flat();
+
+  const legendEntries = new Map<string, string>();
+  for (const p of allVisiblePois) {
+    const a = abbrev(p.name);
+    if (!legendEntries.has(a)) legendEntries.set(a, p.name);
+  }
+
   return (
+    <>
     <svg width={svgW} height={svgH} className="block" style={{ fontFamily: 'monospace' }}>
       {mapData.rooms.map(room => {
         const { px, py } = roomPx.get(room.instanceId)!;
@@ -265,40 +303,8 @@ function DungeonMap({ mapData, currentRoomInstanceId }: { mapData: MapData; curr
         drawWall('W', px, py, px, py + ROOM_PX);
         drawWall('E', px + ROOM_PX, py, px + ROOM_PX, py + ROOM_PX);
 
-        // POI labels — only non-exit, non-open-space POIs
-        const visiblePois = room.pois.filter(p => {
-          if (p.poi_type === 'open_space' || p.poi_type === 'exit') return false;
-          if (!isCurrentRoom) {
-            // Adjacent room: filter by LoS and visibility_level
-            const sourcePos = currentRoom ? roomPx.get(currentRoom.instanceId) : null;
-            if (!sourcePos || !currentRoom) return false;
-            const matchingExit = currentExits.find(e => {
-              // Find the room this exit leads to
-              const targetTemplateId = (currentRoom.pois.find(ep => ep === e)?.poi_type === 'exit')
-                ? (currentRoom.pois.find(ep => ep === e) as MapPoi | undefined)?.templateId
-                : null;
-              // Compare directions instead
-              const adjacentByDir: Record<string, { dx: number; dy: number }> = {
-                E: { dx: 1, dy: 0 }, W: { dx: -1, dy: 0 },
-                N: { dx: 0, dy: -1 }, S: { dx: 0, dy: 1 },
-              };
-              const d = adjacentByDir[e.exit_direction ?? ''];
-              if (!d) return false;
-              return room.map_x === currentRoom.map_x + d.dx &&
-                     room.map_y === currentRoom.map_y + d.dy;
-            });
-            if (!matchingExit) return false;
-
-            // opened door → see everything; obvious_only peek → vis>=2 only; full → everything
-            const minVis = (matchingExit.peek_visibility === 'full' || matchingExit.interacted) ? 1 : 2;
-            if (p.visibility_level < minVis) return false;
-
-            const { px: cpx, py: cpy } = sourcePos;
-            const { px: tpx, py: tpy } = roomPx.get(room.instanceId)!;
-            return isSlotVisibleThroughExit(charSlot, p.grid_slot, matchingExit, cpx, cpy, tpx, tpy);
-          }
-          return true;
-        });
+        // POI labels — pre-computed above using the same LoS filter
+        const visiblePois = visiblePoisByRoom.get(room.instanceId) ?? [];
 
         // Group POIs by slot so shared slots can be stacked vertically
         const poisBySlot = new Map<string, typeof visiblePois>();
@@ -356,19 +362,80 @@ function DungeonMap({ mapData, currentRoomInstanceId }: { mapData: MapData; curr
           return isSlotVisibleThroughExit(charSlot, c.grid_slot, matchingExit, cpx, cpy, tpx, tpy);
         });
 
-        // Character tokens
-        const charTokens = visibleCharacters.map((c) => {
-          const [cx2, cy2] = slotCenter(c.grid_slot, px, py);
-          const isEnemy = c.type === 'enemy';
-          return (
-            <g key={`char-${c.characterId}`}>
-              <circle cx={cx2} cy={cy2} r={7} fill={isEnemy ? '#dc2626' : '#6366f1'} />
-              <text x={cx2} y={cy2 + 4} textAnchor="middle" fontSize={9} fill="white" fontWeight="bold">
-                {isEnemy ? '!' : '@'}
-              </text>
-            </g>
-          );
-        });
+        // Character tokens — grouped by slot with overflow indicators
+        const charsBySlot = new Map<string, MapCharacter[]>();
+        for (const c of visibleCharacters) {
+          const g = charsBySlot.get(c.grid_slot) ?? [];
+          g.push(c);
+          charsBySlot.set(c.grid_slot, g);
+        }
+
+        // Offset table from slot center for 1–4 sub-tokens
+        const subOffsets: [number, number][][] = [
+          [],
+          [[0, 0]],
+          [[-9, 0], [9, 0]],
+          [[-9, -7], [9, -7], [0, 8]],
+          [[-9, -8], [9, -8], [-9, 8], [9, 8]],
+        ];
+
+        const charTokens: React.ReactElement[] = [];
+        const myCharId = mapData.character.characterId;
+
+        for (const [slot, chars] of charsBySlot) {
+          const [scx, scy] = slotCenter(slot, px, py);
+          const me = chars.find(c => c.characterId === myCharId);
+          const allies = chars.filter(c => c.type !== 'enemy' && c.characterId !== myCharId);
+          const enemies = chars.filter(c => c.type === 'enemy');
+
+          // Build token list: player first, then enemies (1 individual + overflow), then
+          // splice allies in after the player so order is: player, ally?, +N_allies?, enemy?, +N_enemies?
+          const toks: Array<{ fill: string; label: string }> = [];
+          if (me) toks.push({ fill: '#6366f1', label: '@' });
+
+          if (enemies.length === 1) {
+            toks.push({ fill: '#dc2626', label: '!' });
+          } else if (enemies.length > 1) {
+            toks.push({ fill: '#dc2626', label: '!' });
+            toks.push({ fill: '#7f1d1d', label: `+${enemies.length - 1}` });
+          }
+
+          const allyBudget = 4 - toks.length;
+          const allyInsert = me ? 1 : 0;
+          if (allies.length === 1 && allyBudget >= 1) {
+            toks.splice(allyInsert, 0, { fill: '#818cf8', label: '@' });
+          } else if (allies.length > 1) {
+            if (allyBudget >= 2) {
+              toks.splice(allyInsert, 0,
+                { fill: '#818cf8', label: '@' },
+                { fill: '#94a3b8', label: `+${allies.length - 1}` },
+              );
+            } else if (allyBudget >= 1) {
+              toks.splice(allyInsert, 0, { fill: '#94a3b8', label: `+${allies.length}` });
+            }
+          }
+
+          const n = toks.length;
+          const r = n === 1 ? 7 : 6;
+          const offs = subOffsets[Math.min(n, 4)] ?? subOffsets[4];
+
+          toks.forEach((tok, i) => {
+            const [ox, oy] = offs[i] ?? [0, 0];
+            const isOverflow = tok.label.startsWith('+');
+            charTokens.push(
+              <g key={`char-${slot}-${i}`}>
+                <circle cx={scx + ox} cy={scy + oy} r={r} fill={tok.fill} />
+                <text
+                  x={scx + ox} y={scy + oy + (isOverflow ? 3 : 4)}
+                  textAnchor="middle" fontSize={isOverflow ? 7 : 9}
+                  fill="white" fontWeight="bold"
+                >
+                  {tok.label}
+                </text>
+              </g>
+            );
+          });
+        }
 
         // Empty slot dots for current room
         const emptyDots = isCurrentRoom
@@ -411,38 +478,22 @@ function DungeonMap({ mapData, currentRoomInstanceId }: { mapData: MapData; curr
         );
       })}
     </svg>
-  );
-}
-
-// ─── Legend ───────────────────────────────────────────────────────────────────
-
-function MapLegend({ mapData }: { mapData: MapData | null }) {
-  if (!mapData) return null;
-
-  // Collect unique visible non-exit POIs for legend
-  const seen = new Map<string, string>();
-  for (const room of mapData.rooms) {
-    for (const poi of room.pois) {
-      if (poi.poi_type === 'open_space' || poi.poi_type === 'exit') continue;
-      const abbr = poi.name.replace(/^(The |A |An )/i, '').split(/\s+/).map((w: string) => w[0]).join('').slice(0, 3).toUpperCase();
-      if (!seen.has(abbr)) seen.set(abbr, poi.name);
-    }
-  }
-
-  return (
-    <div className="px-3 py-2 border-t border-slate-100 text-xs text-slate-500">
-      <div className="flex flex-wrap gap-x-4 gap-y-1">
-        <span><span className="font-mono font-bold text-indigo-600">@</span> Player</span>
-        <span><span className="font-mono font-bold text-red-600">!</span> Enemy</span>
-        <span><span className="font-mono">·</span> Empty slot</span>
-        <span><span className="font-mono">▮</span> Locked door</span>
-        <span><span className="font-mono">▯</span> Open door</span>
-        <span>(gap) Archway</span>
-        {[...seen.entries()].map(([abbr, name]) => (
-          <span key={abbr}><span className="font-mono font-medium">{abbr}</span> {name}</span>
-        ))}
+    {showLegend && (
+      <div className="px-3 py-2 border-t border-slate-100 text-xs text-slate-500">
+        <div className="flex flex-wrap gap-x-4 gap-y-1">
+          <span><span className="font-mono font-bold text-indigo-600">@</span> Player</span>
+          <span><span className="font-mono font-bold text-red-600">!</span> Enemy</span>
+          <span><span className="font-mono">·</span> Empty slot</span>
+          <span><span className="font-mono">▮</span> Locked door</span>
+          <span><span className="font-mono">▯</span> Open door</span>
+          <span>(gap) Archway</span>
+          {[...legendEntries.entries()].map(([a, name]) => (
+            <span key={a}><span className="font-mono font-medium">{a}</span> {name}</span>
+          ))}
+        </div>
       </div>
-    </div>
+    )}
+    </>
   );
 }
 
@@ -519,14 +570,13 @@ function MapSheet({ sessionId, characterId, roomInstanceId, roomName, refreshKey
         <div className="flex-1 overflow-auto">
           <div className="p-2">
             {mapData?.rooms ? (
-              <DungeonMap mapData={mapData} currentRoomInstanceId={roomInstanceId} />
+              <DungeonMap mapData={mapData} currentRoomInstanceId={roomInstanceId} showLegend={sheetState === 'full'} />
             ) : (
               <div className="flex items-center justify-center h-20 text-slate-400 text-xs">
                 {mapData ? 'Map unavailable' : 'Loading map…'}
               </div>
             )}
           </div>
-          {sheetState === 'full' && <MapLegend mapData={mapData} />}
         </div>
       )}
     </div>
@@ -614,10 +664,7 @@ function MapTab({ sessionId, characterId, roomInstanceId, refreshKey }: {
   return (
     <div className="flex-1 overflow-auto p-3">
       {mapData?.rooms ? (
-        <>
-          <DungeonMap mapData={mapData} currentRoomInstanceId={roomInstanceId} />
-          <MapLegend mapData={mapData} />
-        </>
+        <DungeonMap mapData={mapData} currentRoomInstanceId={roomInstanceId} showLegend />
       ) : (
         <div className="flex items-center justify-center h-full text-slate-400 text-sm">
           {mapData ? 'Map unavailable' : 'Loading map…'}
@@ -2274,6 +2321,7 @@ function PlayContent() {
   const suppressScrollRef = useRef(false);
   const prevScrollHeightRef = useRef(0);
   const sendingRef = useRef(false);
+  const newestTimestampRef = useRef<string | null>(null);
 
   // Ping lastSeenAt on mount
   useEffect(() => {
@@ -2302,6 +2350,9 @@ function PlayContent() {
         const entries: HistoryEntry[] = logs ?? [];
         console.log('[history] initial load — count:', entries.length, 'hasMore:', more,
           'oldest:', entries[0]?.createdAt, 'newest:', entries[entries.length - 1]?.createdAt);
+        if (entries.length > 0) {
+          newestTimestampRef.current = entries[entries.length - 1].createdAt;
+        }
         setHistory(prev => {
           // Merge rather than replace: if sendAction already ran and populated state,
           // preserve those newer messages instead of wiping them with a stale load.
@@ -2329,14 +2380,15 @@ function PlayContent() {
 
   // Poll room state every 3s — skip when it's my combat turn (I'm the one acting)
   useEffect(() => {
-    if (!activeRoomInstanceId || !characterId) return;
+    if (!activeRoomInstanceId || !characterId || !sessionId) return;
     const isMyTurn = combatState?.activeActorId === characterId;
     if (isMyTurn) return;
     const poll = async () => {
       try {
-        const res = await fetch(`/api/v2/room/state?roomInstanceId=${activeRoomInstanceId}&characterId=${characterId}`);
-        if (!res.ok) return;
-        const data = await res.json();
+        // 1. Fetch game state (combat, stats, party, POIs)
+        const stateRes = await fetch(`/api/v2/room/state?roomInstanceId=${activeRoomInstanceId}&characterId=${characterId}`);
+        if (!stateRes.ok) return;
+        const data = await stateRes.json();
         if (data.gameState) setGameState(data.gameState as 'exploration' | 'combat');
         setCombatState(data.combatState ?? null);
         if (data.characterStats) setCharacterStats(data.characterStats);
@@ -2344,19 +2396,36 @@ function PlayContent() {
         setProximityPoi(data.characterProximityPoi ?? null);
         if (data.partyMembers) setPartyMembers(data.partyMembers);
         if (data.poiIndex) setAvailablePois(Object.entries(data.poiIndex as Record<string, string>).map(([id, name]) => ({ id, name })));
-        if (data.currentNarrative && !sendingRef.current) {
-          const incoming = data.currentNarrative as HistoryEntry[];
-          setHistory(prev => {
-            const existingIds = new Set(prev.map(e => e.id));
-            const fresh = incoming.filter(e => !existingIds.has(e.id));
-            return fresh.length > 0 ? [...prev, ...fresh] : prev;
-          });
+
+        // 2. Fetch new messages since last known timestamp (all rooms in session)
+        if (!sendingRef.current) {
+          const histParams = new URLSearchParams({ sessionId });
+          if (newestTimestampRef.current) histParams.set('since', newestTimestampRef.current);
+          const histRes = await fetch(`/api/v2/room/history?${histParams}`);
+          if (histRes.ok) {
+            const { logs: newLogs } = await histRes.json();
+            const incoming = (newLogs ?? []) as HistoryEntry[];
+            if (incoming.length > 0) {
+              newestTimestampRef.current = incoming[incoming.length - 1].createdAt;
+              setHistory(prev => {
+                const existingIds = new Set(prev.map(e => e.id));
+                const fresh = incoming.filter(e => !existingIds.has(e.id));
+                return fresh.length > 0 ? [...prev, ...fresh] : prev;
+              });
+              // If any ally acted, refresh the map so ally positions update
+              const hasAllyAction = incoming.some(
+                e => (e.mechanicalSummary as { type?: string } | null)?.type === 'player_action' &&
+                     e.authorCharacterId !== characterId,
+              );
+              if (hasAllyAction) setMapRefreshKey(k => k + 1);
+            }
+          }
         }
       } catch { /* silent */ }
     };
     const id = setInterval(poll, 3000);
     return () => clearInterval(id);
-  }, [activeRoomInstanceId, characterId, combatState?.activeActorId]);
+  }, [activeRoomInstanceId, characterId, sessionId, combatState?.activeActorId]);
 
   // After load-more prepends: restore scroll position so viewport doesn't jump.
   // useLayoutEffect fires before paint — adjusts scrollTop while suppressScrollRef is still true.
@@ -2429,6 +2498,12 @@ function PlayContent() {
       console.log('[sendAction] currentNarrative length:', data.currentNarrative?.length);
 
       const newNarrative: HistoryEntry[] = data.currentNarrative ?? [];
+      if (newNarrative.length > 0) {
+        const newest = newNarrative[newNarrative.length - 1].createdAt;
+        if (!newestTimestampRef.current || newest > newestTimestampRef.current) {
+          newestTimestampRef.current = newest;
+        }
+      }
       const isRoomChange = data.roomInstanceId && data.roomInstanceId !== activeRoomInstanceId;
       const nextGameState = (data.gameState as 'exploration' | 'combat') ?? prevGameState;
       const isTransition = prevGameState !== nextGameState;
@@ -2490,6 +2565,12 @@ function PlayContent() {
       const data = await res.json();
       if (!res.ok) { setError(data.error ?? 'Action failed'); return; }
       const newNarrative: HistoryEntry[] = data.currentNarrative ?? [];
+      if (newNarrative.length > 0) {
+        const newest = newNarrative[newNarrative.length - 1].createdAt;
+        if (!newestTimestampRef.current || newest > newestTimestampRef.current) {
+          newestTimestampRef.current = newest;
+        }
+      }
       const nextGs = (data.gameState as 'exploration' | 'combat') ?? prevGs;
       setHistory(prev => {
         const existingIds = new Set(prev.map(e => e.id));

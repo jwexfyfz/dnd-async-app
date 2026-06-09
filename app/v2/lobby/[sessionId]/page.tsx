@@ -18,7 +18,7 @@ type LobbyMember = {
 
 type LobbyState =
   | { gameState: 'lobby'; members: LobbyMember[]; hostCharacterId: string; dungeonName: string; shareUrl: string }
-  | { gameState: 'active'; redirectTo: string; roomInstanceId: string }
+  | { gameState: 'active'; redirectTo: string; myCharacterId: string | null; roomInstanceId: string }
   | { gameState: 'completed' }
   | null;
 
@@ -94,11 +94,7 @@ function LobbyContent() {
       const data = await res.json();
       if (data.gameState === 'active') {
         setLobby(data);
-        // Find my characterId from the lobby state we had
-        const myCharId = lobby && lobby.gameState === 'lobby'
-          ? lobby.members.find(m => m.userId === user?.id)?.characterId
-          : null;
-        const charParam = myCharId ? `&char=${myCharId}` : '';
+        const charParam = data.myCharacterId ? `&char=${data.myCharacterId}` : '';
         router.replace(`/v2/play?session=${sessionId}${charParam}`);
         return;
       }

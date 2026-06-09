@@ -36,9 +36,24 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ sess
     if (session.gameState === 'active') {
       const roomInstanceId = session.roomInstances[0]?.id ?? '';
       const hostCharacterId = session.hostCharacterId ?? '';
+
+      // Try to find the requesting user's character from the saved lobbyState
+      let myCharacterId: string | null = null;
+      try {
+        const supabase = await createSupabaseServerClient();
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          const members = session.lobbyState as LobbyMember[];
+          myCharacterId = members.find(m => m.userId === user.id)?.characterId ?? null;
+        }
+      } catch {
+        // auth unavailable — fall through
+      }
+
       return NextResponse.json({
         gameState: 'active',
-        redirectTo: `/v2/play?session=${sessionId}&char=${hostCharacterId}`,
+        redirectTo: `/v2/play?session=${sessionId}&char=${myCharacterId ?? hostCharacterId}`,
+        myCharacterId,
         roomInstanceId,
       });
     }

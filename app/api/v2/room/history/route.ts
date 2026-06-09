@@ -33,7 +33,23 @@ export async function GET(req: NextRequest) {
       authorAvatarUrl: null as null,
     }));
 
+  const since = req.nextUrl.searchParams.get('since');
+
   try {
+    // since= mode: return all messages newer than the given ISO timestamp, ordered asc, no pagination
+    if (since) {
+      const sinceDate = new Date(since);
+      if (isNaN(sinceDate.getTime())) {
+        return NextResponse.json({ error: 'Invalid since value' }, { status: 400 });
+      }
+      const raw = await prisma.messageLog.findMany({
+        where: { ...baseWhere, createdAt: { gt: sinceDate } },
+        orderBy: { createdAt: 'asc' },
+        select,
+      });
+      return NextResponse.json({ logs: flatten(raw), hasMore: false });
+    }
+
     if (!cursor) {
       const raw = await prisma.messageLog.findMany({
         where: baseWhere,
