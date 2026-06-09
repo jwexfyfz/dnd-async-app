@@ -192,7 +192,14 @@ export async function POST(req: NextRequest) {
           combatState: Prisma.JsonNull,
           processingAction: false,
           poiInstances: {
-            create: roomTemplate.poiTemplates.map(tpl => ({ poiTemplateId: tpl.id, currentProperties: {} })),
+            create: roomTemplate.poiTemplates.map(tpl => {
+              const dp = tpl.defaultProperties as Record<string, unknown>;
+              const initAwareness = dp.initial_awareness_state as string | undefined;
+              const currentProperties = initAwareness
+                ? { awareness_state: initAwareness, current_hp: (dp.combat_stats as { max_hp?: number } | undefined)?.max_hp ?? 10, hostile_to: ['player'] }
+                : {};
+              return { poiTemplateId: tpl.id, currentProperties };
+            }),
           },
         },
         select: { id: true },

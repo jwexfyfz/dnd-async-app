@@ -46,7 +46,7 @@ export async function GET(req: NextRequest) {
             characterId: true,
             combatState: true,
             lastActiveAt: true,
-            character: { select: { id: true, name: true } },
+            character: { select: { id: true, name: true, characterClass: true } },
           },
         },
       },
@@ -119,6 +119,7 @@ export async function GET(req: NextRequest) {
       const characters: {
         characterId: string;
         name: string;
+        characterClass: string | null;
         grid_slot: string;
         stance: string | null;
         type: 'player' | 'enemy';
@@ -133,6 +134,7 @@ export async function GET(req: NextRequest) {
         return {
           characterId: p.characterId,
           name: p.character.name,
+          characterClass: p.character.characterClass,
           grid_slot: proximityTemplate?.grid_slot ?? 'C',
           stance: cs.stance ?? null,
           type: 'player' as const,
@@ -151,6 +153,7 @@ export async function GET(req: NextRequest) {
           characters.push({
             characterId: entry.id,
             name: entry.name,
+            characterClass: null,
             grid_slot: template?.grid_slot ?? 'C',
             stance: null,
             type: 'enemy',

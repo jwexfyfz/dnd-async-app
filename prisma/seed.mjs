@@ -639,6 +639,36 @@ async function main() {
       },
     },
     {
+      id: "ec000001-ec00-ec00-ec00-ec0000000001",
+      name: "Cultist Acolyte",
+      keywordIdentifier: "cultist",
+      grid_slot: "SE",
+      visibility_level: 1,
+      exit_direction: null,
+      exit_wall_section: "C",
+      exit_arch_width: 1,
+      defaultProperties: {
+        poi_type: "npc",
+        visibility: "always",
+        initial_awareness_state: "alert",
+        examine_text: "A lean figure in a grey robe, hood drawn back. Eyes too wide, jaw set. A short blade at their hip, a Bane sigil burned into their right palm.",
+        examine_details: [
+          { skill: "insight", dc: 11, text: "They're scared but committed. The kind of scared that makes people do reckless things." },
+          { skill: "religion", dc: 13, text: "The brand on their palm is a Bane initiation mark — this person took a formal oath of service within the last month." },
+        ],
+        perception_details: [
+          { dc: 10, text: "Their eyes track movement toward the northern passage. Whatever they're guarding is up there." },
+          { dc: 13, text: "Their breathing is fast and shallow. Not seasoned — this may be their first real assignment." },
+        ],
+        combat_stats: {
+          ac: 11,
+          max_hp: 10,
+          damage: "1d6",
+          attack_bonus: 2,
+        },
+      },
+    },
+    {
       id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
       name: "Open Space",
       keywordIdentifier: "open_space",
@@ -861,6 +891,36 @@ async function main() {
           },
         ],
         items: [],
+      },
+    },
+    {
+      id: "fp000001-fp00-fp00-fp00-fp0000000001",
+      name: "Restless Dead",
+      keywordIdentifier: "restless_dead",
+      grid_slot: "NW",
+      visibility_level: 1,
+      exit_direction: null,
+      exit_wall_section: "C",
+      exit_arch_width: 1,
+      defaultProperties: {
+        poi_type: "npc",
+        visibility: "always",
+        initial_awareness_state: "unaware",
+        examine_text: "A body half-submerged in the black water, face-down. Worker's clothes, waterlogged and dark. It moves — a slow, rhythmic drift that doesn't match any current.",
+        examine_details: [
+          { skill: "arcana", dc: 12, text: "The dark energy animating it is diffuse — residual corruption from sustained ritual work nearby. It has no real will, just proximity to the binding ritual." },
+          { skill: "medicine", dc: 11, text: "The body has been dead for days at least. Whatever is moving it isn't life." },
+        ],
+        perception_details: [
+          { dc: 10, text: "It hasn't noticed you. Its movements are aimless — no head turning, no orientation toward sound." },
+          { dc: 14, text: "A coin pouch still attached to the belt. One of the missing workers." },
+        ],
+        combat_stats: {
+          ac: 10,
+          max_hp: 8,
+          damage: "1d4+1",
+          attack_bonus: 1,
+        },
       },
     },
     {

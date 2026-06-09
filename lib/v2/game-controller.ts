@@ -1566,10 +1566,16 @@ async function handleMoveToRoom(
           sessionId,
           roomTemplateId: resolvedTemplateId,
           poiInstances: {
-            create: targetTemplate.poiTemplates.map(pt => ({
-              poiTemplateId: pt.id,
-              currentProperties: {},
-            })),
+            create: targetTemplate.poiTemplates.map(pt => {
+              const dp = pt.defaultProperties as Record<string, unknown>;
+              const initAwareness = dp.initial_awareness_state as string | undefined;
+              return {
+                poiTemplateId: pt.id,
+                currentProperties: initAwareness
+                  ? { awareness_state: initAwareness, current_hp: (dp.combat_stats as { max_hp?: number } | undefined)?.max_hp ?? 10, hostile_to: ['player'] }
+                  : {},
+              };
+            }),
           },
         },
         include: { poiInstances: { include: { template: true } } },
@@ -3684,7 +3690,16 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
                 sessionId: roomInstance.session.id,
                 roomTemplateId: proximityCtx.targetRoomTemplateId,
                 poiInstances: {
-                  create: adjTemplate.poiTemplates.map(pt => ({ poiTemplateId: pt.id, currentProperties: {} })),
+                  create: adjTemplate.poiTemplates.map(pt => {
+                    const dp = pt.defaultProperties as Record<string, unknown>;
+                    const initAwareness = dp.initial_awareness_state as string | undefined;
+                    return {
+                      poiTemplateId: pt.id,
+                      currentProperties: initAwareness
+                        ? { awareness_state: initAwareness, current_hp: (dp.combat_stats as { max_hp?: number } | undefined)?.max_hp ?? 10, hostile_to: ['player'] }
+                        : {},
+                    };
+                  }),
                 },
               },
               include: { template: true, poiInstances: { include: { template: true } } },
@@ -3796,7 +3811,16 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
               sessionId: roomInstance.session.id,
               roomTemplateId: fallbackExit.targetRoomTemplateId!,
               poiInstances: {
-                create: adjTemplate.poiTemplates.map(pt => ({ poiTemplateId: pt.id, currentProperties: {} })),
+                create: adjTemplate.poiTemplates.map(pt => {
+                  const dp = pt.defaultProperties as Record<string, unknown>;
+                  const initAwareness = dp.initial_awareness_state as string | undefined;
+                  return {
+                    poiTemplateId: pt.id,
+                    currentProperties: initAwareness
+                      ? { awareness_state: initAwareness, current_hp: (dp.combat_stats as { max_hp?: number } | undefined)?.max_hp ?? 10, hostile_to: ['player'] }
+                      : {},
+                  };
+                }),
               },
             },
             include: { template: true, poiInstances: { include: { template: true } } },

@@ -28,6 +28,7 @@ interface MapPoi {
 interface MapCharacter {
   characterId: string;
   name: string;
+  characterClass: string | null;
   grid_slot: string;
   stance: string | null;
   type: 'player' | 'enemy';
@@ -211,6 +212,15 @@ function DungeonMap({ mapData, currentRoomInstanceId, showLegend }: { mapData: M
   for (const p of allVisiblePois) {
     const a = abbrev(p.name);
     if (!legendEntries.has(a)) legendEntries.set(a, p.name);
+  }
+
+  const allyLegend = new Map<string, { name: string; characterClass: string | null }>();
+  for (const room of mapData.rooms) {
+    for (const c of room.characters) {
+      if (c.type === 'player' && c.characterId !== mapData.character.characterId) {
+        allyLegend.set(c.characterId, { name: c.name, characterClass: c.characterClass });
+      }
+    }
   }
 
   return (
@@ -403,11 +413,11 @@ function DungeonMap({ mapData, currentRoomInstanceId, showLegend }: { mapData: M
           const allyBudget = 4 - toks.length;
           const allyInsert = me ? 1 : 0;
           if (allies.length === 1 && allyBudget >= 1) {
-            toks.splice(allyInsert, 0, { fill: '#818cf8', label: '@' });
+            toks.splice(allyInsert, 0, { fill: '#818cf8', label: classEmoji(allies[0].characterClass ?? '') });
           } else if (allies.length > 1) {
             if (allyBudget >= 2) {
               toks.splice(allyInsert, 0,
-                { fill: '#818cf8', label: '@' },
+                { fill: '#818cf8', label: classEmoji(allies[0].characterClass ?? '') },
                 { fill: '#94a3b8', label: `+${allies.length - 1}` },
               );
             } else if (allyBudget >= 1) {
@@ -481,7 +491,10 @@ function DungeonMap({ mapData, currentRoomInstanceId, showLegend }: { mapData: M
     {showLegend && (
       <div className="px-3 py-2 border-t border-slate-100 text-xs text-slate-500">
         <div className="flex flex-wrap gap-x-4 gap-y-1">
-          <span><span className="font-mono font-bold text-indigo-600">@</span> Player</span>
+          <span><span className="font-mono font-bold text-indigo-600">@</span> You</span>
+          {[...allyLegend.values()].map(a => (
+            <span key={a.name}>{classEmoji(a.characterClass ?? '')} {a.name}</span>
+          ))}
           <span><span className="font-mono font-bold text-red-600">!</span> Enemy</span>
           <span><span className="font-mono">·</span> Empty slot</span>
           <span><span className="font-mono">▮</span> Locked door</span>
@@ -2221,6 +2234,9 @@ function CombatResumeCard({ combatState, roomName, characterId, onDismiss }: {
 }
 
 function ChatMessage({ entry, characterId }: { entry: HistoryEntry; characterId?: string }) {
+  if (typeof entry.text !== 'string') {
+    console.error('[ChatMessage] non-string text — this will throw React error #31:', entry);
+  }
   const summary = entry.mechanicalSummary;
   const type = summary?.type as string | undefined;
 
@@ -2348,6 +2364,8 @@ function PlayContent() {
         if (!result) return;
         const [{ logs, hasMore: more }, state] = result;
         const entries: HistoryEntry[] = logs ?? [];
+        const badEntries = entries.filter(e => typeof e.text !== 'string');
+        if (badEntries.length > 0) console.error('[history] initial load — entries with non-string text:', badEntries);
         console.log('[history] initial load — count:', entries.length, 'hasMore:', more,
           'oldest:', entries[0]?.createdAt, 'newest:', entries[entries.length - 1]?.createdAt);
         if (entries.length > 0) {
@@ -2369,6 +2387,9 @@ function PlayContent() {
         setOldestCursor(entries.length > 0 ? entries[0].createdAt : null);
         if (state.roomName) setRoomName(state.roomName);
         if (state.gameState) setGameState(state.gameState);
+        if (state.combatState && typeof (state.combatState as Record<string,unknown>).code === 'string') {
+          console.error('[init] combatState looks like a DB error object:', state.combatState);
+        }
         setCombatState(state.combatState ?? null);
         if (state.characterStats) setCharacterStats(state.characterStats);
         if (state.characterInventory) setCharacterInventory(state.characterInventory);
@@ -2389,6 +2410,9 @@ function PlayContent() {
         const stateRes = await fetch(`/api/v2/room/state?roomInstanceId=${activeRoomInstanceId}&characterId=${characterId}`);
         if (!stateRes.ok) return;
         const data = await stateRes.json();
+        if (data.combatState && typeof (data.combatState as Record<string,unknown>).code === 'string') {
+          console.error('[poll] combatState looks like a DB error object:', data.combatState);
+        }
         if (data.gameState) setGameState(data.gameState as 'exploration' | 'combat');
         setCombatState(data.combatState ?? null);
         if (data.characterStats) setCharacterStats(data.characterStats);
@@ -2405,6 +2429,8 @@ function PlayContent() {
           if (histRes.ok) {
             const { logs: newLogs } = await histRes.json();
             const incoming = (newLogs ?? []) as HistoryEntry[];
+            const badPoll = incoming.filter(e => typeof e.text !== 'string');
+            if (badPoll.length > 0) console.error('[poll] incoming entries with non-string text:', badPoll);
             if (incoming.length > 0) {
               newestTimestampRef.current = incoming[incoming.length - 1].createdAt;
               setHistory(prev => {
@@ -2498,12 +2524,6 @@ function PlayContent() {
       console.log('[sendAction] currentNarrative length:', data.currentNarrative?.length);
 
       const newNarrative: HistoryEntry[] = data.currentNarrative ?? [];
-      if (newNarrative.length > 0) {
-        const newest = newNarrative[newNarrative.length - 1].createdAt;
-        if (!newestTimestampRef.current || newest > newestTimestampRef.current) {
-          newestTimestampRef.current = newest;
-        }
-      }
       const isRoomChange = data.roomInstanceId && data.roomInstanceId !== activeRoomInstanceId;
       const nextGameState = (data.gameState as 'exploration' | 'combat') ?? prevGameState;
       const isTransition = prevGameState !== nextGameState;
@@ -2565,12 +2585,6 @@ function PlayContent() {
       const data = await res.json();
       if (!res.ok) { setError(data.error ?? 'Action failed'); return; }
       const newNarrative: HistoryEntry[] = data.currentNarrative ?? [];
-      if (newNarrative.length > 0) {
-        const newest = newNarrative[newNarrative.length - 1].createdAt;
-        if (!newestTimestampRef.current || newest > newestTimestampRef.current) {
-          newestTimestampRef.current = newest;
-        }
-      }
       const nextGs = (data.gameState as 'exploration' | 'combat') ?? prevGs;
       setHistory(prev => {
         const existingIds = new Set(prev.map(e => e.id));
