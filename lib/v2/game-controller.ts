@@ -839,10 +839,38 @@ export async function enterCombat(
     currentTurnUsage: { actionUsed: false, bonusActionUsed: false, movementUsed: false, reactionUsed: false },
   };
 
-  await prisma.roomInstance.update({
-    where: { id: roomInstance.id },
-    data: { gameState: 'combat', combatState: combatState as object },
+  // Build the rich roll breakdown for the combat_start message
+  const initiativeRolls = slots.map(slot => {
+    const entry = initiativeOrder.find(e => e.id === slot.actorId);
+    return {
+      id: slot.actorId,
+      name: entry?.name ?? slot.actorId,
+      type: slot.actorType === 'CHARACTER' ? 'character' : 'enemy',
+      d20Roll: slot.d20Roll,
+      modifier: slot.modifier,
+      initiative: slot.initiative,
+    };
   });
+
+  await Promise.all([
+    prisma.roomInstance.update({
+      where: { id: roomInstance.id },
+      data: { gameState: 'combat', combatState: combatState as object },
+    }),
+    prisma.messageLog.create({
+      data: {
+        roomInstanceId: roomInstance.id,
+        isMechanicalEvent: false,
+        mechanicalSummary: {
+          type: 'combat_start',
+          round: 1,
+          initiativeRolls,
+          activeActorId: combatState.activeActorId,
+        },
+        text: `[COMBAT] Initiative rolled — ${initiativeRolls.map(r => `${r.name} ${r.d20Roll}${r.modifier !== 0 ? (r.modifier > 0 ? `+${r.modifier}` : `${r.modifier}`) : ''}=${r.initiative}`).join(', ')}. First to act: ${initiativeOrder.find(e => e.id === combatState.activeActorId)?.name ?? 'unknown'}.`,
+      },
+    }),
+  ]);
 
   console.log(`[stage3:combat] entering combat — room=${roomInstance.id} pcs=${roomParticipants.length} enemies=${alertEnemies.length}`);
   console.log(`[stage3:initiative] order=[${initiativeOrder.map(e => e.name).join(' → ')}]`);
@@ -2154,6 +2182,17 @@ async function mutateGameState(
             text: `[MECHANICAL] ${characterName} ${verb} ${poiName}.`,
           },
         });
+
+        // Move player to the POI they interacted with
+        const partRow = await tx.roomParticipant.findUnique({
+          where: { roomInstanceId_characterId: { roomInstanceId, characterId } },
+        });
+        const partCs = (partRow?.combatState ?? {}) as Record<string, unknown>;
+        await tx.roomParticipant.upsert({
+          where: { roomInstanceId_characterId: { roomInstanceId, characterId } },
+          update: { combatState: { ...partCs, proximity_target_id: action.target_poi_instance_id }, lastActiveAt: new Date() },
+          create: { roomInstanceId, characterId, combatState: { proximity_target_id: action.target_poi_instance_id } },
+        });
       });
 
       appliedActions.push({ action, poiName, itemName: null, overrideFact: interactOverrideFact });
@@ -2479,6 +2518,17 @@ async function mutateGameState(
             mechanicalSummary: { event: 'pick_up', item_id: itemId, item: pickedItem.name, from_poi: poiName },
             text: `[MECHANICAL] ${characterName} picked up ${pickedItem.name} from ${poiName}.`,
           },
+        });
+
+        // Move player to the POI they picked up from
+        const partRow = await tx.roomParticipant.findUnique({
+          where: { roomInstanceId_characterId: { roomInstanceId, characterId } },
+        });
+        const partCs = (partRow?.combatState ?? {}) as Record<string, unknown>;
+        await tx.roomParticipant.upsert({
+          where: { roomInstanceId_characterId: { roomInstanceId, characterId } },
+          update: { combatState: { ...partCs, proximity_target_id: sourcePoi }, lastActiveAt: new Date() },
+          create: { roomInstanceId, characterId, combatState: { proximity_target_id: sourcePoi } },
         });
       });
 
@@ -4036,6 +4086,20 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
           }
         }
       }
+
+      // Melee attack: move attacker to the target's grid position
+      const attackAction = parsedActions[0];
+      if (attackAction.action_type === 'attack' && attackAction.target_poi_instance_id && equippedWeapon?.weaponType !== 'ranged') {
+        const existingPart = await prisma.roomParticipant.findUnique({
+          where: { roomInstanceId_characterId: { roomInstanceId, characterId } },
+        });
+        const existingCs = (existingPart?.combatState ?? {}) as Record<string, unknown>;
+        await prisma.roomParticipant.upsert({
+          where: { roomInstanceId_characterId: { roomInstanceId, characterId } },
+          update: { combatState: { ...existingCs, proximity_target_id: attackAction.target_poi_instance_id }, lastActiveAt: new Date() },
+          create: { roomInstanceId, characterId, combatState: { proximity_target_id: attackAction.target_poi_instance_id } },
+        });
+      }
     }
 
     // Stage 3
@@ -4174,7 +4238,60 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
         const activeRoomInstance = newRoomInstanceId
           ? await prisma.roomInstance.findUniqueOrThrow({ where: { id: activeRoomId }, include: { poiInstances: { include: { template: true } } } })
           : roomInstance;
-        await enterCombat(activeRoomInstance);
+        let freshCs = await enterCombat(activeRoomInstance);
+
+        // If the first actor is an enemy, auto-resolve all leading enemy turns immediately
+        // so players are never stuck waiting for the game to unblock.
+        if (freshCs.initiativeOrder.find(e => e.id === freshCs.activeActorId)?.type === 'enemy') {
+          let workingCs = freshCs;
+          let totalEnemyDamage = 0;
+          const pendingRollData: NonNullable<EnemyTurnResult['rollData']>[] = [];
+
+          while (true) {
+            const activeEntry = workingCs.initiativeOrder.find(e => e.id === workingCs.activeActorId);
+            if (!activeEntry || activeEntry.type === 'character') break;
+
+            const poiForEnemy = activeRoomInstance.poiInstances.find(p => p.id === activeEntry.id);
+            const defaultProps = (poiForEnemy?.template?.defaultProperties ?? {}) as Record<string, unknown>;
+
+            const result = resolveEnemyTurn(activeEntry, workingCs, characterId, character.name, defaultProps);
+            allCombatFacts.push(...result.facts);
+            totalEnemyDamage += result.hpDamage;
+            if (result.rollData) pendingRollData.push(result.rollData);
+
+            workingCs = {
+              ...workingCs,
+              initiativeOrder: workingCs.initiativeOrder.map(e =>
+                e.id === activeEntry.id ? result.updatedEntry : e,
+              ),
+            };
+
+            if (totalEnemyDamage >= character.currentHp) break;
+            workingCs = advanceTurn(workingCs);
+          }
+
+          if (totalEnemyDamage > 0) {
+            const newHp = Math.max(0, character.currentHp - totalEnemyDamage);
+            await prisma.character.update({ where: { id: characterId }, data: { currentHp: newHp } });
+          }
+
+          await prisma.roomInstance.update({
+            where: { id: activeRoomInstance.id },
+            data: { combatState: workingCs as object },
+          });
+
+          for (const rollData of pendingRollData) {
+            await prisma.messageLog.create({
+              data: {
+                roomInstanceId: activeRoomInstance.id,
+                characterId,
+                isMechanicalEvent: false,
+                mechanicalSummary: rollData,
+                text: `[COMBAT] ${rollData.action}`,
+              },
+            });
+          }
+        }
       }
     }
 

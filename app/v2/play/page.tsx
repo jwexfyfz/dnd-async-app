@@ -720,7 +720,7 @@ function buildBannerEntry(type: 'combat_start' | 'combat_end', cs?: CombatState 
     mechanicalSummary: {
       type: 'combat_start',
       round: cs?.round ?? 1,
-      initiativeOrder: cs?.initiativeOrder ?? [],
+      activeActorId: cs?.activeActorId ?? '',
     },
     createdAt: new Date().toISOString(),
   };
@@ -2110,14 +2110,22 @@ function CombatRollBadge({ data }: { data: CombatRollData }) {
   );
 }
 
-function CombatBanner({ type, round, initiativeSnapshot, characterId }: {
+interface InitiativeRollEntry {
+  id: string;
+  name: string;
+  type: 'character' | 'enemy';
+  d20Roll: number;
+  modifier: number;
+  initiative: number;
+}
+
+function CombatBanner({ type, round, initiativeRolls, activeActorId, characterId }: {
   type: 'combat_start' | 'combat_end';
   round?: number;
-  initiativeSnapshot?: InitiativeEntry[];
+  initiativeRolls?: InitiativeRollEntry[];
+  activeActorId?: string;
   characterId?: string;
 }) {
-  const [expanded, setExpanded] = useState(false);
-
   if (type === 'combat_end') {
     return (
       <div className="my-3 px-4 py-2 rounded-lg border border-slate-200 bg-slate-50 text-sm text-slate-500 text-center">
@@ -2128,25 +2136,30 @@ function CombatBanner({ type, round, initiativeSnapshot, characterId }: {
 
   return (
     <div className="my-3 rounded-lg border border-red-300 bg-red-50 overflow-hidden">
-      <div className="flex items-center justify-between px-4 py-2">
-        <span className="text-sm font-semibold text-red-700">⚔ Combat started — Round {round ?? 1}</span>
-        {initiativeSnapshot && initiativeSnapshot.length > 0 && (
-          <button
-            onClick={() => setExpanded(e => !e)}
-            className="text-xs text-red-500 hover:text-red-700 underline"
-          >
-            {expanded ? 'Hide snapshot' : 'Show snapshot'}
-          </button>
-        )}
+      <div className="px-4 py-2 border-b border-red-200">
+        <span className="text-sm font-semibold text-red-700">⚔ Combat started — Initiative rolled</span>
       </div>
-      {expanded && initiativeSnapshot && (
-        <div className="px-4 pb-2 space-y-1 border-t border-red-200 pt-2">
-          {initiativeSnapshot.map(e => (
-            <div key={e.id} className="flex items-center justify-between text-xs text-slate-600">
-              <span>{e.name}{e.id === characterId ? ' (you)' : ''}</span>
-              <span className="text-slate-400">Initiative {e.initiative}</span>
-            </div>
-          ))}
+      {initiativeRolls && initiativeRolls.length > 0 && (
+        <div className="px-4 py-2 space-y-1.5">
+          {initiativeRolls.map((e, i) => {
+            const isFirst = e.id === activeActorId;
+            const isYou = e.id === characterId;
+            const modStr = e.modifier > 0 ? `+${e.modifier}` : e.modifier < 0 ? `${e.modifier}` : '';
+            return (
+              <div key={e.id} className={`flex items-center justify-between text-xs rounded px-2 py-1 ${isFirst ? 'bg-red-100 border border-red-300' : 'bg-white border border-slate-100'}`}>
+                <span className={`font-medium ${isFirst ? 'text-red-800' : e.type === 'enemy' ? 'text-slate-600' : 'text-indigo-700'}`}>
+                  {i + 1}. {e.name}{isYou ? ' (you)' : ''}
+                  {isFirst && <span className="ml-1.5 text-red-600 font-semibold">← goes first</span>}
+                </span>
+                <span className="flex items-center gap-1 text-slate-500 font-mono">
+                  <span>{e.d20Roll}</span>
+                  {modStr && <span className="text-slate-400">{modStr}</span>}
+                  <span className="text-slate-300">=</span>
+                  <span className="font-bold text-slate-700">{e.initiative}</span>
+                </span>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
@@ -2282,7 +2295,8 @@ function ChatMessage({ entry, characterId }: { entry: HistoryEntry; characterId?
       <CombatBanner
         type="combat_start"
         round={summary?.round as number | undefined}
-        initiativeSnapshot={summary?.initiativeOrder as InitiativeEntry[] | undefined}
+        initiativeRolls={summary?.initiativeRolls as InitiativeRollEntry[] | undefined}
+        activeActorId={summary?.activeActorId as string | undefined}
         characterId={characterId}
       />
     );
@@ -2536,7 +2550,12 @@ function PlayContent() {
         console.log('[sendAction] fresh entries:', fresh.length, fresh.map(e => (e.mechanicalSummary as Record<string,unknown>)?.type));
         const base = [...withoutOptimistic, ...fresh];
         if (isTransition) {
-          base.push(buildBannerEntry(nextGameState === 'combat' ? 'combat_start' : 'combat_end', data.combatState as CombatState | null));
+          const hasCombatStartInFresh = fresh.some(e => (e.mechanicalSummary as Record<string,unknown> | null)?.type === 'combat_start');
+          if (nextGameState === 'combat' && !hasCombatStartInFresh) {
+            base.push(buildBannerEntry('combat_start', data.combatState as CombatState | null));
+          } else if (nextGameState === 'exploration') {
+            base.push(buildBannerEntry('combat_end'));
+          }
         }
         return base;
       });
@@ -2590,7 +2609,14 @@ function PlayContent() {
         const existingIds = new Set(prev.map(e => e.id));
         const fresh = newNarrative.filter(e => !existingIds.has(e.id));
         const base = [...prev, ...fresh];
-        if (prevGs !== nextGs) base.push(buildBannerEntry(nextGs === 'combat' ? 'combat_start' : 'combat_end', data.combatState as CombatState | null));
+        if (prevGs !== nextGs) {
+          const hasCombatStartInFresh = fresh.some(e => (e.mechanicalSummary as Record<string,unknown> | null)?.type === 'combat_start');
+          if (nextGs === 'combat' && !hasCombatStartInFresh) {
+            base.push(buildBannerEntry('combat_start', data.combatState as CombatState | null));
+          } else if (nextGs === 'exploration') {
+            base.push(buildBannerEntry('combat_end'));
+          }
+        }
         return base;
       });
       if (data.gameState) setGameState(data.gameState);

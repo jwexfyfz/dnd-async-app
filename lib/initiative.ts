@@ -4,6 +4,8 @@ export interface InitiativeSlot {
   actorId:     string;
   actorType:   "CHARACTER" | "ENEMY";
   initiative:  number;
+  d20Roll:     number;
+  modifier:    number;
   hasReaction: boolean;
   isSurprised: boolean;
 }
@@ -18,11 +20,11 @@ export function rollInitiative(
   actors: InitiativeActor[],
   rollFn: () => number = () => Math.ceil(Math.random() * 20),
 ): InitiativeSlot[] {
-  const withRolls = actors.map((a) => ({
-    ...a,
-    initiative: rollFn() + abilityModifier(a.dexterity),
-    tieBreaker: rollFn(),
-  }));
+  const withRolls = actors.map((a) => {
+    const d20 = rollFn();
+    const mod = abilityModifier(a.dexterity);
+    return { ...a, d20Roll: d20, modifier: mod, initiative: d20 + mod, tieBreaker: rollFn() };
+  });
 
   withRolls.sort((a, b) => {
     // 1. Higher total initiative wins
@@ -37,10 +39,12 @@ export function rollInitiative(
     return b.tieBreaker - a.tieBreaker;
   });
 
-  return withRolls.map(({ actorId, actorType, initiative }) => ({
+  return withRolls.map(({ actorId, actorType, initiative, d20Roll, modifier }) => ({
     actorId,
     actorType,
     initiative,
+    d20Roll,
+    modifier,
     hasReaction: true,
     isSurprised: false,
   }));
