@@ -13,7 +13,7 @@ function abilityMod(score: number): string {
 function makeStats(overrides: Partial<CharacterStats> = {}): CharacterStats {
   return {
     name: 'Rogue', currentHp: 14, maxHp: 18, ac: 12, level: 3, xp: 0, characterClass: 'Rogue',
-    attackBonus: 4, initiativeMod: 2,
+    attackBonus: 4, weaponDamage: { main: null, off: null }, initiativeMod: 2,
     baseStrength: 10, baseDexterity: 14, baseConstitution: 12,
     baseIntelligence: 10, baseWisdom: 10, baseCharisma: 8,
     skillsModifiers: { Stealth: 6, Perception: 2, Athletics: 0 },
@@ -295,7 +295,7 @@ function partyMemberToStats(m: PartyMemberInfo): CharacterStats {
   return {
     name: m.characterName,
     currentHp: m.currentHp, maxHp: m.maxHp, ac: m.ac, level: m.level, xp: m.xp,
-    characterClass: m.characterClass, attackBonus: m.attackBonus, initiativeMod: m.initiativeMod,
+    characterClass: m.characterClass, attackBonus: m.attackBonus, weaponDamage: { main: null, off: null }, initiativeMod: m.initiativeMod,
     baseStrength: m.baseStrength, baseDexterity: m.baseDexterity,
     baseConstitution: m.baseConstitution, baseIntelligence: m.baseIntelligence,
     baseWisdom: m.baseWisdom, baseCharisma: m.baseCharisma,

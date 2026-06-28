@@ -93,7 +93,7 @@ describe('CharacterStats pendingChoicesQueue', () => {
   function makeStats(overrides: Partial<CharacterStats> = {}): CharacterStats {
     return {
       name: 'Tomas', currentHp: 18, maxHp: 18, ac: 14, level: 1, xp: 0,
-      characterClass: 'Fighter', attackBonus: 3, initiativeMod: 1,
+      characterClass: 'Fighter', attackBonus: 3, weaponDamage: { main: null, off: null }, initiativeMod: 1,
       baseStrength: 16, baseDexterity: 12, baseConstitution: 14,
       baseIntelligence: 10, baseWisdom: 10, baseCharisma: 8,
       skillsModifiers: {}, skillProficiencies: [],
@@ -132,7 +132,7 @@ describe('CharacterStats pendingChoicesQueue', () => {
 function makeStats(overrides: Partial<CharacterStats> = {}): CharacterStats {
   return {
     name: 'Tomas', currentHp: 18, maxHp: 18, ac: 14, level: 1, xp: 0,
-    characterClass: 'Fighter', attackBonus: 3, initiativeMod: 1,
+    characterClass: 'Fighter', attackBonus: 3, weaponDamage: { main: null, off: null }, initiativeMod: 1,
     baseStrength: 16, baseDexterity: 12, baseConstitution: 14,
     baseIntelligence: 10, baseWisdom: 10, baseCharisma: 8,
     skillsModifiers: {}, skillProficiencies: [],

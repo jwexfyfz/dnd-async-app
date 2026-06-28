@@ -16,6 +16,7 @@ function partyMemberToStats(m: PartyMemberInfo): CharacterStats {
     level: m.level,
     characterClass: m.characterClass,
     attackBonus: m.attackBonus,
+    weaponDamage: { main: null, off: null },
     initiativeMod: m.initiativeMod,
     baseStrength: m.baseStrength,
     baseDexterity: m.baseDexterity,

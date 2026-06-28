@@ -3,7 +3,7 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { rollD20Check, abilityModifier } from '@/lib/dice';
 import { rollStealthCheck } from '@/lib/stealth';
-import { normalizeInventory, extractPoiItems, inventorySummary } from '@/lib/v2/item-helpers';
+import { normalizeInventory, extractPoiItems, inventorySummary, resolveEquipSlot } from '@/lib/v2/item-helpers';
 import { extractExitInfo, extractAvailableStances } from '@/lib/v2/poi-context-helpers';
 import { slotGridDistance, isPoiVisibleThroughExit } from '@/lib/v2/room-geometry';
 import { computeIsLockable, computeEffectivePeek } from '@/lib/v2/poi-utils';
@@ -1398,7 +1398,7 @@ export async function mutateGameState(
         const item = inv.bag[itemIdx];
         if (!item.equip_slot) throw new Error(`"${item.name}" has no equip slot`);
 
-        const slot = item.equip_slot;
+        const slot = resolveEquipSlot(item, inv);
         const currentEquipped = inv.equipped[slot];
         equippedItemName = item.name;
 

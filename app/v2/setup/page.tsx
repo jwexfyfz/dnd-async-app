@@ -58,6 +58,7 @@ interface Character {
   activeGame: ActiveGame | null;
   activeSession: ActiveSession | null;
   situationSummary: string | null;
+  isDead: boolean;
 }
 
 interface Session {
@@ -649,6 +650,7 @@ function SetupContent() {
   const [confirmName,      setConfirmName]      = useState('');
   const [isDeleting,       setIsDeleting]       = useState(false);
   const [deleteError,      setDeleteError]      = useState('');
+  const [fallenOpen,       setFallenOpen]       = useState(false);
   const [error,            setError]            = useState('');
   const [loginLoading,     setLoginLoading]     = useState(false);
   const [loginError,       setLoginError]       = useState('');
@@ -870,7 +872,11 @@ function SetupContent() {
           </div>
           {error && <p className="text-red-600 text-sm mb-4">{error}</p>}
 
-          {characters.length === 0 ? (
+          {(() => {
+            const aliveChars = characters.filter(c => !c.isDead);
+            const deadChars  = characters.filter(c => c.isDead);
+            return (<>
+          {aliveChars.length === 0 && deadChars.length === 0 ? (
             <div className="text-center py-10 space-y-3">
               <p className="text-slate-500 font-medium">No heroes yet.</p>
               <p className="text-sm text-slate-400">Create your first character to begin your adventure.</p>
@@ -883,7 +889,7 @@ function SetupContent() {
             </div>
           ) : (
             <div className="grid grid-cols-1 min-[1000px]:grid-cols-2 gap-4">
-              {characters.map(c => {
+              {aliveChars.map(c => {
                 const g = c.activeGame;
                 const s = c.activeSession;
                 const inGame = !!(g || s);
@@ -1111,6 +1117,66 @@ function SetupContent() {
               </button>
             </div>
           )}
+
+          {/* Fallen Heroes */}
+          {deadChars.length > 0 && (
+            <div className="mt-8">
+              <button
+                onClick={() => setFallenOpen(o => !o)}
+                className="flex items-center gap-2 text-sm font-semibold text-slate-400 hover:text-slate-600 transition-colors mb-3"
+              >
+                <span>{fallenOpen ? '▾' : '▸'}</span>
+                <span>Fallen Heroes ({deadChars.length})</span>
+              </button>
+              {fallenOpen && (
+                <div className="grid grid-cols-1 min-[1000px]:grid-cols-2 gap-4">
+                  {deadChars.map(c => (
+                    <div key={c.id} className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden opacity-70">
+                      {/* Fallen banner */}
+                      <div className="px-4 py-1.5 text-xs font-semibold bg-slate-100 border-b border-slate-200 text-slate-500">
+                        ☠ Fallen
+                      </div>
+                      <div className="p-4 space-y-4">
+                        {/* Header */}
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <span className="text-2xl grayscale">{classEmoji(c.characterClass)}</span>
+                            <div>
+                              <p className="font-semibold text-slate-500 text-sm">{c.name}</p>
+                              <p className="text-xs text-slate-400">{c.characterClass} · Lv {c.level}</p>
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => { setDeleteTarget(c); setConfirmName(''); setDeleteError(''); }}
+                            className="p-1 text-slate-300 hover:text-red-400 transition-colors shrink-0"
+                            aria-label={`Delete ${c.name}`}
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/>
+                            </svg>
+                          </button>
+                        </div>
+                        {/* HP at 0 */}
+                        <div className="border-t border-slate-100 pt-3 space-y-2">
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-widest w-6 shrink-0">HP</span>
+                            <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
+                              <div className="h-full rounded-full bg-slate-200" style={{ width: '0%' }} />
+                            </div>
+                            <span className="text-xs font-medium tabular-nums shrink-0 text-slate-400">0/{c.maxHp}</span>
+                          </div>
+                          {c.situationSummary && (
+                            <p className="text-xs text-slate-400 italic leading-relaxed pt-0.5">{c.situationSummary}</p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          </>);})()}
         </div>
 
         {/* Delete character dialog */}

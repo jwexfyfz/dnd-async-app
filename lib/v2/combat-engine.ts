@@ -344,6 +344,8 @@ export async function joinCombat(
   // initiative roll; they keep their existing slot in the turn order.
   if (existingEntry) {
     if (!existingEntry.remoteRoomInstanceId) return; // already fully present — no-op
+    // Still remote and being re-enrolled from outside (e.g. LoS re-check) — no-op.
+    if (enrolledFromRoomId) return;
 
     const updatedOrder = cs.initiativeOrder.map(e => {
       if (e.id !== characterId) return e;
@@ -406,7 +408,7 @@ export async function joinCombat(
     status_effects: resolvedIsHiding ? ['hiding'] : [],
     constitutionSave: abilityModifier(character.baseConstitution),
     isDormant: false,
-    ...(enrolledFromRoomId ? { enrolledFromRoomId } : {}),
+    ...(enrolledFromRoomId ? { remoteRoomInstanceId: enrolledFromRoomId } : {}),
   };
 
   const insertIdx = cs.initiativeOrder.findIndex(e => e.initiative < newInitiative);

@@ -144,7 +144,10 @@ export function InventoryTab({ characterInventory, gameState, onExplorationActio
                         <p className="text-[9px] font-semibold text-amber-600 uppercase tracking-wider leading-none mb-0.5">
                           {SLOT_LABELS[slot]}
                         </p>
-                        <p className="text-sm font-medium text-slate-800 truncate">{item.name}</p>
+                        <div className="flex items-baseline gap-1.5">
+                          <p className="text-sm font-medium text-slate-800 truncate">{item.name}</p>
+                          {item.damage_dice && <span className="text-[11px] text-slate-400 shrink-0">{item.damage_dice}</span>}
+                        </div>
                       </div>
                       <span className="text-[10px] text-slate-300 shrink-0">{isExpanded ? '▴' : '▾'}</span>
                     </div>
@@ -220,9 +223,12 @@ export function InventoryTab({ characterInventory, gameState, onExplorationActio
                   </span>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-baseline justify-between gap-1">
-                      <p className="text-sm font-medium text-slate-800 truncate">
-                        {item.name}{item.quantity && item.quantity > 1 ? ` ×${item.quantity}` : ''}
-                      </p>
+                      <div className="flex items-baseline gap-1.5 min-w-0">
+                        <p className="text-sm font-medium text-slate-800 truncate">
+                          {item.name}{item.quantity && item.quantity > 1 ? ` ×${item.quantity}` : ''}
+                        </p>
+                        {item.damage_dice && <span className="text-[11px] text-slate-400 shrink-0">{item.damage_dice}</span>}
+                      </div>
                       <span className="shrink-0 text-[10px] text-slate-300">{isExpanded ? '▴' : '▾'}</span>
                     </div>
                     {bonusStr && !isExpanded && (

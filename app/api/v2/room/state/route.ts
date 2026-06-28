@@ -158,13 +158,25 @@ export async function GET(req: NextRequest) {
         if (state.current < max) { canShortRest = true; break; }
       }
 
+      const mainWeapon = inv.equipped.main_hand ?? null;
+      const offWeapon = inv.equipped.off_hand?.weapon_type ? inv.equipped.off_hand : null;
+      const weaponAtkMod = (wt: string | undefined) =>
+        wt === 'ranged' ? dexMod : wt === 'finesse' ? Math.max(strMod, dexMod) : strMod;
+      const fmtDmg = (dice: string, mod: number) =>
+        mod === 0 ? dice : mod > 0 ? `${dice}+${mod}` : `${dice}-${Math.abs(mod)}`;
+      const mainAtkMod = weaponAtkMod(mainWeapon?.weapon_type);
+      const weaponDamage = {
+        main: mainWeapon?.damage_dice ? fmtDmg(mainWeapon.damage_dice, mainAtkMod) : null,
+        off:  offWeapon?.damage_dice ?? null,
+      };
+
       const charFeatureIds = (charRow.featuresUnlocked ?? []) as string[];
       characterStats = {
         name: charRow.name,
         currentHp: charRow.currentHp, maxHp: charRow.maxHp,
         ac: 10 + dexMod + armorBonus,
         level: charRow.level, xp: charRow.xp ?? 0, characterClass: charRow.characterClass,
-        attackBonus: strMod + profBonus, initiativeMod: dexMod,
+        attackBonus: mainAtkMod + profBonus, weaponDamage, initiativeMod: dexMod,
         baseStrength: charRow.baseStrength, baseDexterity: charRow.baseDexterity,
         baseConstitution: charRow.baseConstitution, baseIntelligence: charRow.baseIntelligence,
         baseWisdom: charRow.baseWisdom, baseCharisma: charRow.baseCharisma,

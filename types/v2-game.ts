@@ -51,6 +51,7 @@ export interface ItemDefinition {
   equip_bonus?: Record<string, number>;
   damage_dice?: string;
   weapon_type?: 'melee' | 'ranged' | 'finesse';
+  two_handed?: boolean;
   throwable?: boolean;
   throw_damage_type?: string;
   throw_effect?: 'ignite';
@@ -145,7 +146,6 @@ export interface InitiativeEntry {
   passive_perception?: number;
   constitutionSave?: number;
   isDormant?: boolean;
-  enrolledFromRoomId?: string;
   remoteRoomInstanceId?: string;
   deathSaveSuccesses?: number;
   deathSaveFailures?: number;
@@ -222,6 +222,7 @@ export interface CharacterStats {
   xp: number;
   characterClass: string;
   attackBonus: number;
+  weaponDamage: { main: string | null; off: string | null };
   initiativeMod: number;
   baseStrength: number;
   baseDexterity: number;

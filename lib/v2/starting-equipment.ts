@@ -3,7 +3,7 @@ import type { CharacterInventory, ItemDefinition } from '@/types/v2-game';
 const longsword: ItemDefinition = { id: 'starting_longsword', name: 'Longsword', damage_dice: '1d8', weapon_type: 'melee', equip_slot: 'main_hand' };
 const shortsword: ItemDefinition = { id: 'starting_shortsword', name: 'Shortsword', damage_dice: '1d6', weapon_type: 'finesse', equip_slot: 'main_hand' };
 const rapier: ItemDefinition = { id: 'starting_rapier', name: 'Rapier', damage_dice: '1d8', weapon_type: 'finesse', equip_slot: 'main_hand' };
-const greataxe: ItemDefinition = { id: 'starting_greataxe', name: 'Greataxe', damage_dice: '1d12', weapon_type: 'melee', equip_slot: 'main_hand' };
+const greataxe: ItemDefinition = { id: 'starting_greataxe', name: 'Greataxe', damage_dice: '1d12', weapon_type: 'melee', equip_slot: 'main_hand', two_handed: true };
 const mace: ItemDefinition = { id: 'starting_mace', name: 'Mace', damage_dice: '1d6', weapon_type: 'melee', equip_slot: 'main_hand' };
 const scimitar: ItemDefinition = { id: 'starting_scimitar', name: 'Scimitar', damage_dice: '1d6', weapon_type: 'finesse', equip_slot: 'main_hand' };
 const quarterstaff: ItemDefinition = { id: 'starting_quarterstaff', name: 'Quarterstaff', damage_dice: '1d6', weapon_type: 'melee', equip_slot: 'main_hand' };
@@ -15,9 +15,9 @@ const scaleMail: ItemDefinition = { id: 'starting_scale_mail', name: 'Scale Mail
 const leatherArmor: ItemDefinition = { id: 'starting_leather_armor', name: 'Leather Armor', equip_slot: 'chest', equip_bonus: { ac: 1 } };
 const shortbow: ItemDefinition = { id: 'starting_shortbow', name: 'Shortbow', damage_dice: '1d6', weapon_type: 'ranged', equip_slot: 'main_hand' };
 const lightCrossbow: ItemDefinition = { id: 'starting_light_crossbow', name: 'Light Crossbow', damage_dice: '1d8', weapon_type: 'ranged', equip_slot: 'main_hand' };
-const handaxe: ItemDefinition = { id: 'starting_handaxe', name: 'Handaxe', damage_dice: '1d6', weapon_type: 'melee', throwable: true };
+const handaxe: ItemDefinition = { id: 'starting_handaxe', name: 'Handaxe', damage_dice: '1d6', weapon_type: 'melee', equip_slot: 'main_hand', throwable: true };
 const handaxe2: ItemDefinition = { ...handaxe, id: 'starting_handaxe_2' };
-const javelin: ItemDefinition = { id: 'starting_javelin', name: 'Javelin', damage_dice: '1d6', weapon_type: 'melee', throwable: true };
+const javelin: ItemDefinition = { id: 'starting_javelin', name: 'Javelin', damage_dice: '1d6', weapon_type: 'melee', equip_slot: 'main_hand', throwable: true };
 const dart: ItemDefinition = { id: 'starting_dart', name: 'Dart', damage_dice: '1d4', weapon_type: 'ranged', throwable: true };
 
 export const STARTING_EQUIPMENT: Record<string, CharacterInventory> = {
@@ -31,7 +31,7 @@ export const STARTING_EQUIPMENT: Record<string, CharacterInventory> = {
   },
   Ranger: {
     equipped: { main_hand: shortsword, chest: scaleMail },
-    bag: [{ ...shortsword, id: 'starting_shortsword_2' }, shortbow],
+    bag: [shortbow],
   },
   Barbarian: {
     equipped: { main_hand: greataxe },

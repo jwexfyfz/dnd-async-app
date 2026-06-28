@@ -1600,6 +1600,10 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
             select: { id: true, gameState: true },
           });
           if (!adjRoom) continue;
+          // Skip rooms already in combat — enterCombat's LoS scan handles enrollment
+          // when combat starts; a player who arrives later shouldn't be dragged into an
+          // existing fight in another room just by looking around.
+          if (adjRoom.gameState === 'combat') continue;
           // Build contexts for adjacent room
           const adjFull = await prisma.roomInstance.findUniqueOrThrow({
             where: { id: adjRoom.id },

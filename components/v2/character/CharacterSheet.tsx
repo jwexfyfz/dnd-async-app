@@ -27,6 +27,7 @@ const COMBAT_STAT_META: Record<string, { labelColor: string; description: string
   HP:   { labelColor: 'text-red-400',    description: 'Your remaining hit points. Reach 0 and you fall unconscious — allies must stabilize you before you die.' },
   AC:   { labelColor: 'text-blue-500',   description: 'Armor Class — how hard you are to hit. An attacker must roll this number or higher to land a strike.' },
   Atk:  { labelColor: 'text-orange-500', description: 'Your attack bonus added to the d20 roll whenever you strike. Higher means you hit more reliably.' },
+  Dmg:  { labelColor: 'text-rose-500',   description: 'Damage roll for your main-hand weapon. Off-hand bonus attacks use only the weapon die (no ability modifier).' },
   Init: { labelColor: 'text-amber-500',  description: 'Initiative modifier rolled at the start of combat. Higher means you act earlier in the turn order.' },
 };
 
@@ -181,6 +182,7 @@ export function CharacterSheet({ stats, isCombat, isOwn, onFeatureActivate, onAs
     { key: 'HP',   label: 'HP',   value: `${stats.currentHp}/${stats.maxHp}`, valueColor: hpValueColor },
     { key: 'AC',   label: 'AC',   value: String(stats.ac),                     valueColor: 'text-slate-800' },
     { key: 'Atk',  label: 'Atk',  value: atkMod,                               valueColor: 'text-slate-800' },
+    { key: 'Dmg',  label: 'Dmg',  value: stats.weaponDamage?.main ?? '—',      valueColor: 'text-slate-800' },
     { key: 'Init', label: 'Init', value: initMod,                              valueColor: 'text-slate-800' },
   ];
 
@@ -207,7 +209,7 @@ export function CharacterSheet({ stats, isCombat, isOwn, onFeatureActivate, onAs
 
       <div>
         <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Combat</p>
-        <div className="grid grid-cols-4 gap-2">
+        <div className="grid grid-cols-5 gap-2">
           {combatStats.map(s => {
             const meta = COMBAT_STAT_META[s.key];
             const isActive = activeStat === s.key;
@@ -251,6 +253,15 @@ export function CharacterSheet({ stats, isCombat, isOwn, onFeatureActivate, onAs
               { label: `Proficiency (lvl ${stats.level})`, value: `+${profBonus}` },
               { label: 'Total', value: fmt(stats.attackBonus) },
             ];
+          } else if (activeStat === 'Dmg') {
+            if (!stats.weaponDamage?.main) {
+              rows = [{ label: 'No weapon equipped', value: '—' }];
+            } else {
+              rows = [{ label: 'Main hand', value: stats.weaponDamage.main }];
+              if (stats.weaponDamage.off) {
+                rows.push({ label: 'Off hand (bonus action)', value: stats.weaponDamage.off });
+              }
+            }
           } else if (activeStat === 'Init') {
             rows = [
               { label: 'DEX modifier', value: fmt(dexMod) },

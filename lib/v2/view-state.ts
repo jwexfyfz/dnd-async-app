@@ -352,6 +352,18 @@ export async function assembleViewState(
     .filter((i): i is import('@/types/v2-game').ItemDefinition => i != null)
     .reduce((acc, item) => acc + ((item.equip_bonus?.ac) ?? 0), 0);
 
+  const mainWeapon = inv.equipped.main_hand ?? null;
+  const offWeapon = inv.equipped.off_hand?.weapon_type ? inv.equipped.off_hand : null;
+  const weaponAtkMod = (wt: string | undefined) =>
+    wt === 'ranged' ? dexMod : wt === 'finesse' ? Math.max(strMod, dexMod) : strMod;
+  const fmtDmg = (dice: string, mod: number) =>
+    mod === 0 ? dice : mod > 0 ? `${dice}+${mod}` : `${dice}-${Math.abs(mod)}`;
+  const mainAtkMod = weaponAtkMod(mainWeapon?.weapon_type);
+  const weaponDamage = {
+    main: mainWeapon?.damage_dice ? fmtDmg(mainWeapon.damage_dice, mainAtkMod) : null,
+    off:  offWeapon?.damage_dice ?? null,
+  };
+
   return {
     roomInstanceId,
     currentNarrative: orderedNarrative,
@@ -374,7 +386,8 @@ export async function assembleViewState(
       level: charRow.level,
       xp: charRow.xp,
       characterClass: charRow.characterClass,
-      attackBonus: strMod + profBonus,
+      attackBonus: mainAtkMod + profBonus,
+      weaponDamage,
       initiativeMod: dexMod,
       baseStrength: charRow.baseStrength,
       baseDexterity: charRow.baseDexterity,

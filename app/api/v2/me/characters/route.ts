@@ -19,7 +19,7 @@ export async function GET() {
       where: { userId: user.id },
       select: {
         id: true, name: true, characterClass: true, level: true, currentHp: true, maxHp: true,
-        xp: true, pendingChoicesQueue: true,
+        xp: true, isDead: true, pendingChoicesQueue: true,
         baseStrength: true, baseDexterity: true, baseConstitution: true,
         baseIntelligence: true, baseWisdom: true, baseCharisma: true,
         games: {
@@ -121,7 +121,7 @@ export async function GET() {
 
       return {
         id: c.id, name: c.name, characterClass: c.characterClass,
-        level: c.level, currentHp: c.currentHp, maxHp: c.maxHp, xp: c.xp,
+        level: c.level, currentHp: c.currentHp, maxHp: c.maxHp, xp: c.xp, isDead: c.isDead,
         hasPendingChoice: Array.isArray(c.pendingChoicesQueue) && (c.pendingChoicesQueue as unknown[]).length > 0,
         baseStrength: c.baseStrength, baseDexterity: c.baseDexterity, baseConstitution: c.baseConstitution,
         baseIntelligence: c.baseIntelligence, baseWisdom: c.baseWisdom, baseCharisma: c.baseCharisma,

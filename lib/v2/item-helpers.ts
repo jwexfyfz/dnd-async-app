@@ -1,17 +1,37 @@
 import type { CharacterInventory, ItemDefinition } from '@/types/v2-game';
 
+function patchEquipSlot(item: ItemDefinition): ItemDefinition {
+  if (!item.equip_slot && item.weapon_type) {
+    return { ...item, equip_slot: 'main_hand' };
+  }
+  return item;
+}
+
 export function normalizeInventory(raw: unknown): CharacterInventory {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     return { bag: [], equipped: {} };
   }
   const inv = raw as Record<string, unknown>;
   return {
-    bag: Array.isArray(inv.bag) ? (inv.bag as ItemDefinition[]) : [],
+    bag: Array.isArray(inv.bag) ? (inv.bag as ItemDefinition[]).map(patchEquipSlot) : [],
     equipped:
       inv.equipped && typeof inv.equipped === 'object' && !Array.isArray(inv.equipped)
         ? (inv.equipped as CharacterInventory['equipped'])
         : {},
   };
+}
+
+// If a one-handed weapon targets main_hand but main_hand is already occupied by
+// another one-handed weapon and off_hand is free, route to off_hand instead.
+export function resolveEquipSlot(item: ItemDefinition, inv: CharacterInventory): NonNullable<ItemDefinition['equip_slot']> {
+  const slot = item.equip_slot!;
+  if (slot === 'main_hand' && !item.two_handed) {
+    const mainHandItem = inv.equipped.main_hand;
+    if (mainHandItem && !mainHandItem.two_handed && !inv.equipped.off_hand) {
+      return 'off_hand';
+    }
+  }
+  return slot;
 }
 
 export function inventorySummary(inv: CharacterInventory): string {
