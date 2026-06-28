@@ -49,7 +49,7 @@ describe('LVL-03 create-character maxHp computation', () => {
   })
 
   it('unknown class throws descriptive error (defense-in-depth, T-03-04)', () => {
-    expect(() => maxHpAtLevel('Paladin', 12, 1)).toThrow('Unknown class: Paladin')
+    expect(() => maxHpAtLevel('Necromancer', 12, 1)).toThrow('Unknown class: Necromancer')
   })
 })
 

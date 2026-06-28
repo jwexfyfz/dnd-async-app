@@ -45,6 +45,7 @@ model RoomTemplate {
   searchFailureNarrative String
   map_x                  Int             @default(0)
   map_y                  Int             @default(0)
+  canLongRest            Boolean         @default(false)
   poiTemplates           PoiTemplate[]
   roomInstances          RoomInstance[]
 }
@@ -164,8 +165,19 @@ model Character {
   stealthRoll Int     @default(0)
   isDead      Boolean @default(false)
 
-  games            Game[]
-  partyMemberships PartyMember[]
+  // ── Leveling / progression (Phase 2) ──
+  featuresUnlocked    String[] @default([])
+  subclass            String?
+  critThreshold       Int      @default(20)
+  pendingChoicesQueue Json[]   @default([])
+  lastLongRest        DateTime?
+
+  // ── Heroic sacrifice / character continuity ──
+  pendingArrivalContext Json?
+
+  games               Game[]
+  partyMemberships    PartyMember[]
+  resourceStates      CharacterResourceState[]
 }
 
 model RoomParticipant {
@@ -176,6 +188,7 @@ model RoomParticipant {
   character      Character    @relation(fields: [characterId], references: [id], onDelete: Cascade)
   combatState    Json // { "proximity_target_id": "poi_instance_id", "stance": "elevated_ground" }
   lastActiveAt   DateTime     @default(now())
+  isActive       Boolean      @default(true)
   room           Room?        @relation(fields: [roomId], references: [id])
   roomId         String?
 
@@ -515,18 +528,79 @@ model ClassProgression {
 
 // ─── Class Feature ───────────────────────────────────────────────────────────
 
+enum FeatureType {
+  PASSIVE
+  STAT_MODIFIER
+  RESOURCE_POOL
+  ACTIVE_ABILITY
+  TRIGGERED_EFFECT
+  REACTION
+  CHOICE_GATE
+  SPELLCASTING
+}
+
+enum FeatureActionType {
+  ACTION
+  BONUS_ACTION
+  REACTION
+  FREE
+}
+
+enum RestType {
+  SHORT_REST
+  LONG_REST
+}
+
 model ClassFeature {
-  id             String @id @default(uuid())
+  id             String           @id @default(uuid())
   characterClass String
   level          Int
   name           String
   description    String
-  icon           String @default("🍃")
-  costType       String @default("free")
+  icon           String           @default("🍃")
+  costType       String           @default("free")
+  featureType    FeatureType      @default(PASSIVE)
+  mechanicsJson  Json?
+  actionType     FeatureActionType?
+  requiresChoice Boolean          @default(false)
+  subclass       String?
+  implemented    Boolean          @default(false)
 
-  classProgression ClassProgression @relation(fields: [characterClass, level], references: [characterClass, level])
+  classProgression ClassProgression   @relation(fields: [characterClass, level], references: [characterClass, level])
+  resourcePool     FeatureResourcePool?
 
   @@index([characterClass, level])
+}
+
+model FeatureResourcePool {
+  poolKey   String        @id
+  featureId String        @unique
+  maxByLevel Json
+  resetOn   RestType
+  dieSize   Int?
+  feature   ClassFeature  @relation(fields: [featureId], references: [id])
+}
+
+model CharacterResourceState {
+  characterId String
+  poolKey     String
+  current     Int
+  character   Character @relation(fields: [characterId], references: [id], onDelete: Cascade)
+
+  @@id([characterId, poolKey])
+}
+
+model Subclass {
+  id             String  @id @default(uuid())
+  characterClass String
+  key            String
+  name           String
+  blurb          String
+  playstyleTag   String
+  keyStat        String
+  available      Boolean @default(true)
+
+  @@unique([characterClass, key])
 }
 
 // ─── Active Turn Queue ────────────────────────────────────────────────────────

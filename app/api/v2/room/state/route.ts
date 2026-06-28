@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { abilityModifier } from '@/lib/dice';
 import { normalizeInventory } from '@/lib/v2/game-controller';
+import { getSessionSituationSummary } from '@/lib/v2/situation-summary';
+import { xpForNextLevel } from '@/lib/xp';
+import { buildClassFeatureDetails } from '@/lib/v2/character-builder';
+import type { CombatState, CombatAlertInfo, RemoteCombatInfo } from '@/types/v2-game';
 
 const DORMANT_MS = 48 * 60 * 60 * 1000;
 
@@ -16,7 +20,7 @@ export async function GET(req: NextRequest) {
       where: { id: roomInstanceId },
       include: {
         session: { select: { id: true } },
-        template: { select: { name: true } },
+        template: { select: { name: true, canLongRest: true } },
         poiInstances: {
           select: { id: true, currentProperties: true, template: { select: { name: true, defaultProperties: true } } },
         },
@@ -28,34 +32,38 @@ export async function GET(req: NextRequest) {
 
     const sessionId = roomInstance.session.id;
 
-    const [participants, sessionPartyData, charRow, messageLogs] = await Promise.all([
+    const [participants, sessionPartyData, charRow, messageLogs, shortRestPools] = await Promise.all([
       prisma.roomParticipant.findMany({
-        where: { roomInstanceId },
+        where: { roomInstanceId, isActive: true },
         include: { character: { select: { id: true, name: true } } },
       }),
       prisma.roomParticipant.findMany({
-        where: { roomInstance: { sessionId } },
+        where: { roomInstance: { sessionId }, isActive: true },
         include: {
           character: {
             select: {
               id: true, name: true, characterClass: true, currentHp: true, maxHp: true, isDead: true,
-              level: true, inventory: true,
+              level: true, xp: true, inventory: true,
               baseStrength: true, baseDexterity: true, baseConstitution: true,
               baseIntelligence: true, baseWisdom: true, baseCharisma: true,
               skillsModifiers: true, skillProficiencies: true,
+              featuresUnlocked: true,
+              resourceStates: { select: { poolKey: true, current: true } },
               user: { select: { avatarUrl: true, lastSeenAt: true } },
             },
           },
-          roomInstance: { select: { id: true, template: { select: { name: true } } } },
+          roomInstance: { select: { id: true, gameState: true, combatState: true, template: { select: { name: true } } } },
         },
-        orderBy: { lastActiveAt: 'asc' },
+        orderBy: { lastActiveAt: 'desc' },
       }),
       characterId ? prisma.character.findUnique({
         where: { id: characterId },
         select: {
-          name: true, inventory: true, currentHp: true, maxHp: true, level: true, characterClass: true,
+          name: true, inventory: true, currentHp: true, maxHp: true, level: true, xp: true, characterClass: true,
           baseStrength: true, baseDexterity: true, baseConstitution: true, baseIntelligence: true,
           baseWisdom: true, baseCharisma: true, skillsModifiers: true, skillProficiencies: true, isHiding: true,
+          pendingChoicesQueue: true, subclass: true, critThreshold: true, featuresUnlocked: true,
+          resourceStates: { select: { poolKey: true, current: true } },
         },
       }) : Promise.resolve(null),
       prisma.messageLog.findMany({
@@ -67,6 +75,10 @@ export async function GET(req: NextRequest) {
           characterId: true,
           character: { select: { name: true, characterClass: true, user: { select: { avatarUrl: true } } } },
         },
+      }),
+      prisma.featureResourcePool.findMany({
+        where: { resetOn: 'SHORT_REST' },
+        select: { poolKey: true, maxByLevel: true },
       }),
     ]);
 
@@ -107,6 +119,21 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    // Batch-build classFeatureDetails for character + all party members
+    const allFeatureIds = new Set<string>();
+    if (charRow) {
+      for (const id of (charRow.featuresUnlocked ?? []) as string[]) allFeatureIds.add(id);
+    }
+    for (const rp of sessionPartyData) {
+      for (const id of (rp.character.featuresUnlocked ?? []) as string[]) allFeatureIds.add(id);
+    }
+    const allFeatureDetails = await buildClassFeatureDetails([...allFeatureIds]);
+    const featureDetailMap = new Map(allFeatureDetails.map(f => [f.id, f]));
+
+    function featureDetailsForIds(ids: string[]): import('@/types/v2-game').CharacterStats['classFeatureDetails'] {
+      return ids.map(id => featureDetailMap.get(id)).filter((f): f is NonNullable<typeof f> => f != null) as import('@/types/v2-game').CharacterStats['classFeatureDetails'];
+    }
+
     let characterStats = null;
     let characterInventory = null;
     if (charRow) {
@@ -118,11 +145,25 @@ export async function GET(req: NextRequest) {
       const armorBonus = Object.values(inv.equipped)
         .filter((i): i is NonNullable<typeof i> => i != null)
         .reduce((acc, item) => acc + ((item.equip_bonus?.ac) ?? 0), 0);
+
+      let canShortRest = false;
+      for (const pool of shortRestPools) {
+        const state = (charRow.resourceStates ?? []).find(s => s.poolKey === pool.poolKey);
+        if (!state) continue;
+        const maxByLevel = pool.maxByLevel as Record<string, number>;
+        let max = 0;
+        for (let l = 1; l <= charRow.level; l++) {
+          if (maxByLevel[String(l)] !== undefined) max = maxByLevel[String(l)];
+        }
+        if (state.current < max) { canShortRest = true; break; }
+      }
+
+      const charFeatureIds = (charRow.featuresUnlocked ?? []) as string[];
       characterStats = {
         name: charRow.name,
         currentHp: charRow.currentHp, maxHp: charRow.maxHp,
         ac: 10 + dexMod + armorBonus,
-        level: charRow.level, characterClass: charRow.characterClass,
+        level: charRow.level, xp: charRow.xp ?? 0, characterClass: charRow.characterClass,
         attackBonus: strMod + profBonus, initiativeMod: dexMod,
         baseStrength: charRow.baseStrength, baseDexterity: charRow.baseDexterity,
         baseConstitution: charRow.baseConstitution, baseIntelligence: charRow.baseIntelligence,
@@ -130,6 +171,13 @@ export async function GET(req: NextRequest) {
         skillsModifiers: (charRow.skillsModifiers as Record<string, number>) ?? {},
         skillProficiencies: charRow.skillProficiencies ?? [],
         isHiding: charRow.isHiding,
+        pendingChoicesQueue: (charRow.pendingChoicesQueue ?? []) as unknown as import('@/types/v2-game').PendingLevelUpChoice[],
+        subclass: charRow.subclass ?? null,
+        critThreshold: charRow.critThreshold ?? 20,
+        featuresUnlocked: charRow.featuresUnlocked ?? [],
+        resourceStates: charRow.resourceStates ?? [],
+        canShortRest,
+        classFeatureDetails: featureDetailsForIds(charFeatureIds),
       };
     }
 
@@ -147,6 +195,7 @@ export async function GET(req: NextRequest) {
       const memberArmorBonus = Object.values(memberInv.equipped)
         .filter((i): i is NonNullable<typeof i> => i != null)
         .reduce((acc, item) => acc + ((item.equip_bonus?.ac) ?? 0), 0);
+      const memberFeatureIds = (c.featuresUnlocked ?? []) as string[];
       partyMembers.push({
         characterId: c.id,
         characterName: c.name,
@@ -171,6 +220,11 @@ export async function GET(req: NextRequest) {
         baseCharisma: c.baseCharisma,
         skillsModifiers: (c.skillsModifiers as Record<string, number>) ?? {},
         skillProficiencies: c.skillProficiencies ?? [],
+        xp: c.xp ?? 0,
+        xpToNextLevel: xpForNextLevel(c.level) !== null ? (xpForNextLevel(c.level)! - (c.xp ?? 0)) : null,
+        nextFeature: null,
+        resourceStates: (c.resourceStates ?? []) as Array<{ poolKey: string; current: number }>,
+        classFeatureDetails: featureDetailsForIds(memberFeatureIds),
       });
     }
 
@@ -187,10 +241,68 @@ export async function GET(req: NextRequest) {
       authorAvatarUrl: null as null, // always use class sprite, never profile photo
     }));
 
+    const situationSummary = roomInstance.gameState !== 'combat'
+      ? await getSessionSituationSummary(sessionId)
+      : null;
+
+    // combatAlert: session has active combat and this character is NOT enrolled
+    let combatAlert: CombatAlertInfo | null = null;
+    if (characterId) {
+      for (const rp of sessionPartyData) {
+        const ri = rp.roomInstance as { id: string; gameState: string; combatState: unknown; template: { name: string } };
+        if (ri.gameState !== 'combat' || !ri.combatState) continue;
+        const cs = ri.combatState as CombatState;
+        if (cs.initiativeOrder.some(e => e.id === characterId)) continue;
+        combatAlert = {
+          roomName: ri.template.name,
+          fightingCharacters: cs.initiativeOrder.filter(e => e.type === 'character').map(e => e.name),
+          round: cs.round,
+        };
+        break;
+      }
+    }
+
+    // remoteCombat: character is enrolled in another room's combat as a remote participant
+    // (e.g. LoS auto-enroll) while physically remaining here.
+    let remoteCombat: RemoteCombatInfo | null = null;
+    if (characterId) {
+      for (const rp of sessionPartyData) {
+        const ri = rp.roomInstance as { id: string; gameState: string; combatState: unknown; template: { name: string } };
+        if (ri.id === roomInstanceId || ri.gameState !== 'combat' || !ri.combatState) continue;
+        const cs = ri.combatState as CombatState;
+        const entry = cs.initiativeOrder.find(e => e.id === characterId);
+        if (!entry) continue;
+        remoteCombat = {
+          roomInstanceId: ri.id,
+          roomName: ri.template.name,
+          combatState: charRow
+            ? { ...cs, initiativeOrder: cs.initiativeOrder.map(e => e.id === characterId ? { ...e, hp: charRow.currentHp } : e) }
+            : cs,
+        };
+        break;
+      }
+    }
+
+    // Self's hp in initiativeOrder can lag character.currentHp — e.g. enemy/opportunity
+    // attack damage updates currentHp but not the persisted combatState entry. Override
+    // with the authoritative DB value, matching lib/v2/view-state.ts's assembleViewState.
+    const rawCombatState = roomInstance.combatState as unknown as CombatState | null;
+    const resolvedCombatState = (rawCombatState && charRow)
+      ? {
+          ...rawCombatState,
+          initiativeOrder: rawCombatState.initiativeOrder.map(e =>
+            e.id === characterId ? { ...e, hp: charRow.currentHp } : e
+          ),
+        }
+      : rawCombatState;
+
     return NextResponse.json({
       activeState: roomInstance.gameState,
       gameState: roomInstance.gameState,
-      combatState: roomInstance.combatState ?? null,
+      canLongRest: (roomInstance.template as { canLongRest?: boolean }).canLongRest ?? false,
+      combatState: resolvedCombatState ?? null,
+      combatAlert,
+      remoteCombat,
       sessionId,
       roomName: roomInstance.template.name,
       poiIndex,
@@ -201,6 +313,7 @@ export async function GET(req: NextRequest) {
       characterProximityPoi,
       partyMembers,
       currentNarrative,
+      situationSummary,
     });
   } catch {
     return NextResponse.json({ error: 'Failed to fetch room state' }, { status: 500 });

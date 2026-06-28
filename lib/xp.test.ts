@@ -50,8 +50,16 @@ describe('computeLevel', () => {
     expect(computeLevel(6500)).toBe(5)
   })
 
-  it('99999 XP → level 5 (XP far above cap stays at level 5)', () => {
-    expect(computeLevel(99999)).toBe(5)
+  it('99999 XP → level 11 (between L11 threshold 85000 and L12 threshold 100000)', () => {
+    expect(computeLevel(99999)).toBe(11)
+  })
+
+  it('355000 XP → level 20 (exactly at cap)', () => {
+    expect(computeLevel(355000)).toBe(20)
+  })
+
+  it('999999 XP → level 20 (XP far above cap stays at level 20, not above)', () => {
+    expect(computeLevel(999999)).toBe(20)
   })
 
   it('-1 XP → level 1 (negative XP floors to level 1 — never below minimum)', () => {
@@ -78,8 +86,12 @@ describe('xpForNextLevel', () => {
     expect(xpForNextLevel(4)).toBe(6500)
   })
 
-  it('level 5 → null (at level cap — no next level)', () => {
-    expect(xpForNextLevel(5)).toBeNull()
+  it('level 5 → 14000 (L6 threshold — no longer the cap)', () => {
+    expect(xpForNextLevel(5)).toBe(14000)
+  })
+
+  it('level 20 → null (at level cap — no next level)', () => {
+    expect(xpForNextLevel(20)).toBeNull()
   })
 })
 
@@ -102,15 +114,19 @@ describe('XP_BY_DIFFICULTY', () => {
 // ─── XP_THRESHOLDS ────────────────────────────────────────────────────────────
 
 describe('XP_THRESHOLDS', () => {
-  it('has exactly 5 entries for levels 1–5', () => {
-    expect(XP_THRESHOLDS).toHaveLength(5)
+  it('has exactly 20 entries for levels 1–20', () => {
+    expect(XP_THRESHOLDS).toHaveLength(20)
   })
 
-  it('threshold values are [0, 300, 900, 2700, 6500] in order', () => {
+  it('first 5 threshold values are [0, 300, 900, 2700, 6500]', () => {
     expect(XP_THRESHOLDS[0]).toBe(0)
     expect(XP_THRESHOLDS[1]).toBe(300)
     expect(XP_THRESHOLDS[2]).toBe(900)
     expect(XP_THRESHOLDS[3]).toBe(2700)
     expect(XP_THRESHOLDS[4]).toBe(6500)
+  })
+
+  it('last entry is 355000 (L20 threshold)', () => {
+    expect(XP_THRESHOLDS[19]).toBe(355000)
   })
 })

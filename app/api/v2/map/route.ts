@@ -46,7 +46,7 @@ export async function GET(req: NextRequest) {
             characterId: true,
             combatState: true,
             lastActiveAt: true,
-            character: { select: { id: true, name: true, characterClass: true } },
+            character: { select: { id: true, name: true, characterClass: true, isHiding: true } },
           },
         },
       },
@@ -59,6 +59,7 @@ export async function GET(req: NextRequest) {
       select: {
         roomInstanceId: true,
         combatState: true,
+        character: { select: { isHiding: true } },
       },
     });
 
@@ -152,6 +153,7 @@ export async function GET(req: NextRequest) {
           grid_slot: gridSlot,
           stance: cs.stance ?? null,
           type: 'player' as const,
+          isHiding: p.character.isHiding ?? false,
         };
       });
 
@@ -193,6 +195,7 @@ export async function GET(req: NextRequest) {
       characterId,
       roomInstanceId: currentParticipant?.roomInstanceId ?? null,
       proximityTargetId: combatState?.proximity_target_id ?? null,
+      isHiding: currentParticipant?.character?.isHiding ?? false,
     };
 
     // Include adjacent unvisited rooms reachable through peekable exits

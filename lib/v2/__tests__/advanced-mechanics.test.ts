@@ -337,4 +337,129 @@ describe('re-hiding mid-combat', () => {
     expect(result.playerGainedHidden).toBe(false);
     expect(result.facts[0]).toContain('Perception 15');
   });
+
+  it('rollStealthCheck is called with the dex modifier (not Math.random)', () => {
+    const spy = vi.mocked(rollStealthCheck);
+    spy.mockReturnValue(18);
+    const char = makeChar();
+    const enemy = makeEnemy({ passive_perception: 12 });
+    const cs = makeCs(char, enemy);
+    resolveCombatAction(
+      { action_type: 'hide', target_poi_instance_id: null, resulting_stance: null, interaction_result: null, target_room_template_id: null, item_id: null, target_character_id: null },
+      cs,
+      // baseDexterity 14 → dexMod 2
+      { id: 'char-1', name: 'Tomas', characterClass: 'Rogue', level: 1, baseDexterity: 14, baseStrength: 10, baseCharisma: 10, baseWisdom: 10 },
+      null,
+    );
+    expect(spy).toHaveBeenCalledWith(2);
+  });
+
+  it('dead enemies are excluded from perception check', () => {
+    vi.mocked(rollStealthCheck).mockReturnValue(5);
+    const char = makeChar();
+    const deadEnemy = makeEnemy({ id: 'enemy-dead', hp: 0, passive_perception: 20 });
+    const aliveEnemy = makeEnemy({ id: 'enemy-alive', hp: 5, passive_perception: 8 });
+    const cs: CombatState = {
+      round: 1,
+      initiativeOrder: [char, deadEnemy, aliveEnemy],
+      activeActorId: 'char-1',
+      currentTurnUsage: { actionUsed: false, bonusActionUsed: false, movementUsed: false, reactionUsed: false },
+    };
+    const result = resolveCombatAction(
+      { action_type: 'hide', target_poi_instance_id: null, resulting_stance: null, interaction_result: null, target_room_template_id: null, item_id: null, target_character_id: null },
+      cs,
+      { id: 'char-1', name: 'Tomas', characterClass: 'Rogue', level: 1, baseDexterity: 10, baseStrength: 10, baseCharisma: 10, baseWisdom: 10 },
+      null,
+    );
+    // stealth 5 < alive enemy perception 8 → fail, dead enemy's 20 is ignored
+    expect(result.playerGainedHidden).toBe(false);
+    expect(result.facts[0]).toContain('Perception 8');
+  });
+});
+
+// ─── Improvised Thrown Weapons ─────────────────────────────────────────────────
+
+describe('improvised thrown weapons', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('throwable item with no special effect: 1d4 improvised damage', () => {
+    vi.mocked(rollD20Check).mockReturnValue(mockHit);
+    vi.mocked(computeAttackDamage).mockReturnValue({ total: 3, expr: '[3]' });
+    const char = makeChar();
+    const enemy = makeEnemy();
+    const cs = makeCs(char, enemy);
+    const inventory = { bag: [{ id: 'rock', name: 'Rock', throwable: true }], equipped: {} };
+    const result = resolveCombatAction(
+      { action_type: 'throw_item', target_poi_instance_id: 'enemy-1', resulting_stance: null, interaction_result: null, target_room_template_id: null, item_id: 'rock', target_character_id: null },
+      cs,
+      { id: 'char-1', name: 'Tomas', characterClass: 'Fighter', level: 1, baseDexterity: 10, baseStrength: 10, baseCharisma: 10, baseWisdom: 10 },
+      null,
+      inventory,
+    );
+    const enemy2 = result.updatedCombatState.initiativeOrder.find(e => e.id === 'enemy-1');
+    expect(enemy2?.hp).toBe(7); // 10 - 3
+    expect(result.facts[0]).toContain('threw Rock at Guard');
+    expect(result.facts[0]).toContain('dealt 3 damage');
+    expect(result.facts[0]).not.toContain('ignit');
+  });
+
+  it('item with throw_effect "ignite": adds bonus fire damage', () => {
+    vi.mocked(rollD20Check).mockReturnValue(mockHit);
+    vi.mocked(computeAttackDamage).mockReturnValue({ total: 3, expr: '[3]' });
+    const char = makeChar();
+    const enemy = makeEnemy();
+    const cs = makeCs(char, enemy);
+    const inventory = { bag: [{ id: 'torch_bundle', name: 'Torch Bundle', throwable: true, throw_effect: 'ignite' as const, throw_damage_type: 'fire' }], equipped: {} };
+    const result = resolveCombatAction(
+      { action_type: 'throw_item', target_poi_instance_id: 'enemy-1', resulting_stance: null, interaction_result: null, target_room_template_id: null, item_id: 'torch_bundle', target_character_id: null },
+      cs,
+      { id: 'char-1', name: 'Tomas', characterClass: 'Fighter', level: 1, baseDexterity: 10, baseStrength: 10, baseCharisma: 10, baseWisdom: 10 },
+      null,
+      inventory,
+    );
+    const enemy2 = result.updatedCombatState.initiativeOrder.find(e => e.id === 'enemy-1');
+    expect(enemy2?.hp).toBe(4); // 10 - (3 base + 3 ignite)
+    expect(result.facts[0]).toContain('dealt 6 damage');
+    expect(result.facts[0]).toContain('igniting them for 3 extra fire damage');
+  });
+
+  it('throw_damage_type matching target resistance: damage halved', () => {
+    vi.mocked(rollD20Check).mockReturnValue(mockHit);
+    vi.mocked(computeAttackDamage).mockReturnValue({ total: 3, expr: '[3]' });
+    const char = makeChar();
+    const enemy = makeEnemy({ resistances: ['fire'] });
+    const cs = makeCs(char, enemy);
+    const inventory = { bag: [{ id: 'torch_bundle', name: 'Torch Bundle', throwable: true, throw_effect: 'ignite' as const, throw_damage_type: 'fire' }], equipped: {} };
+    const result = resolveCombatAction(
+      { action_type: 'throw_item', target_poi_instance_id: 'enemy-1', resulting_stance: null, interaction_result: null, target_room_template_id: null, item_id: 'torch_bundle', target_character_id: null },
+      cs,
+      { id: 'char-1', name: 'Tomas', characterClass: 'Fighter', level: 1, baseDexterity: 10, baseStrength: 10, baseCharisma: 10, baseWisdom: 10 },
+      null,
+      inventory,
+    );
+    const enemy2 = result.updatedCombatState.initiativeOrder.find(e => e.id === 'enemy-1');
+    // base 6 (3 + 3 ignite) halved → 3 → hp 10-3=7
+    expect(enemy2?.hp).toBe(7);
+    expect(result.facts[0]).toContain('(resisted)');
+  });
+
+  it('item with damage_dice (a real weapon) is not treated as improvised: no damage applied', () => {
+    vi.mocked(rollD20Check).mockReturnValue(mockHit);
+    const char = makeChar();
+    const enemy = makeEnemy();
+    const cs = makeCs(char, enemy);
+    const inventory = { bag: [{ id: 'pipe_dagger', name: "Explorer's Dagger", throwable: true, damage_dice: '1d4+1', weapon_type: 'finesse' as const }], equipped: {} };
+    const result = resolveCombatAction(
+      { action_type: 'throw_item', target_poi_instance_id: 'enemy-1', resulting_stance: null, interaction_result: null, target_room_template_id: null, item_id: 'pipe_dagger', target_character_id: null },
+      cs,
+      { id: 'char-1', name: 'Tomas', characterClass: 'Fighter', level: 1, baseDexterity: 10, baseStrength: 10, baseCharisma: 10, baseWisdom: 10 },
+      null,
+      inventory,
+    );
+    const enemy2 = result.updatedCombatState.initiativeOrder.find(e => e.id === 'enemy-1');
+    expect(enemy2?.hp).toBe(10); // unchanged
+    expect(result.facts[0]).toBe("Tomas used Explorer's Dagger.");
+  });
 });

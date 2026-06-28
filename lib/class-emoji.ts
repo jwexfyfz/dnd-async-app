@@ -19,5 +19,6 @@ export function classEmoji(characterClass: string): string {
 }
 
 export function classSprite(characterClass: string): string {
+  if (!characterClass) return `/sprites/fighter.png`;
   return `/sprites/${characterClass.toLowerCase()}.png`;
 }

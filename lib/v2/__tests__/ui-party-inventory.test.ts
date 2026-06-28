@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import type { CharacterStats, CharacterInventory, ItemDefinition } from '@/types/v2-game';
+import type { CharacterStats, CharacterInventory, ItemDefinition, PartyMemberInfo } from '@/types/v2-game';
 
 // Pure logic tests for PartyTab / CharacterSheet / InventoryTab.
 
@@ -12,13 +12,14 @@ function abilityMod(score: number): string {
 
 function makeStats(overrides: Partial<CharacterStats> = {}): CharacterStats {
   return {
-    currentHp: 14, maxHp: 18, ac: 12, level: 3, characterClass: 'Rogue',
+    name: 'Rogue', currentHp: 14, maxHp: 18, ac: 12, level: 3, xp: 0, characterClass: 'Rogue',
     attackBonus: 4, initiativeMod: 2,
     baseStrength: 10, baseDexterity: 14, baseConstitution: 12,
     baseIntelligence: 10, baseWisdom: 10, baseCharisma: 8,
     skillsModifiers: { Stealth: 6, Perception: 2, Athletics: 0 },
     skillProficiencies: ['Stealth', 'Perception'],
     isHiding: false,
+    pendingChoicesQueue: [], subclass: null, critThreshold: 20, featuresUnlocked: [], resourceStates: [], canShortRest: false, classFeatureDetails: [],
     ...overrides,
   };
 }
@@ -269,5 +270,73 @@ describe('<InventoryTab /> — combat', () => {
     const onCombatUse = () => { tab = 'chat'; };
     onCombatUse();
     expect(tab).toBe('chat');
+  });
+});
+
+// ─── partyMemberToStats — resource passthrough ────────────────────────────────
+
+function makePartyMember(overrides: Partial<PartyMemberInfo> = {}): PartyMemberInfo {
+  return {
+    characterId: 'c1', characterName: 'Arya', characterClass: 'Rogue',
+    avatarUrl: null, currentHp: 14, maxHp: 18, isDead: false,
+    isDormant: false, isInSameRoom: true, currentRoom: 'Guard Room',
+    lastSeenAt: null, level: 2, ac: 13, attackBonus: 3, initiativeMod: 2,
+    baseStrength: 10, baseDexterity: 15, baseConstitution: 12,
+    baseIntelligence: 10, baseWisdom: 10, baseCharisma: 8,
+    skillsModifiers: {}, skillProficiencies: [],
+    xp: 100, xpToNextLevel: 200, nextFeature: null,
+    resourceStates: [],
+    classFeatureDetails: [],
+    ...overrides,
+  };
+}
+
+function partyMemberToStats(m: PartyMemberInfo): CharacterStats {
+  return {
+    name: m.characterName,
+    currentHp: m.currentHp, maxHp: m.maxHp, ac: m.ac, level: m.level, xp: m.xp,
+    characterClass: m.characterClass, attackBonus: m.attackBonus, initiativeMod: m.initiativeMod,
+    baseStrength: m.baseStrength, baseDexterity: m.baseDexterity,
+    baseConstitution: m.baseConstitution, baseIntelligence: m.baseIntelligence,
+    baseWisdom: m.baseWisdom, baseCharisma: m.baseCharisma,
+    skillsModifiers: m.skillsModifiers, skillProficiencies: m.skillProficiencies,
+    isHiding: false, pendingChoicesQueue: [], subclass: null, critThreshold: 20,
+    featuresUnlocked: [],
+    resourceStates: m.resourceStates ?? [],
+    canShortRest: false,
+    classFeatureDetails: m.classFeatureDetails ?? [],
+  };
+}
+
+describe('partyMemberToStats — resource passthrough', () => {
+  it('resourceStates from PartyMemberInfo passes through to CharacterStats', () => {
+    const m = makePartyMember({ resourceStates: [{ poolKey: 'ki', current: 2 }] });
+    const stats = partyMemberToStats(m);
+    expect(stats.resourceStates).toEqual([{ poolKey: 'ki', current: 2 }]);
+  });
+
+  it('classFeatureDetails from PartyMemberInfo passes through to CharacterStats', () => {
+    const detail: CharacterStats['classFeatureDetails'][0] = {
+      id: 'f1', name: 'Ki', featureType: 'RESOURCE_POOL', mechanicsJson: null,
+      actionType: null, implemented: false, level: 2, subclass: null,
+      description: 'Harness mystic energy', icon: '☯️',
+      resourcePool: { poolKey: 'ki', maxByLevel: { '2': 2 }, resetOn: 'SHORT_REST', dieSize: null },
+    };
+    const m = makePartyMember({ classFeatureDetails: [detail] });
+    const stats = partyMemberToStats(m);
+    expect(stats.classFeatureDetails).toHaveLength(1);
+    expect(stats.classFeatureDetails[0].name).toBe('Ki');
+  });
+
+  it('empty resourceStates → empty array in CharacterStats (no crash)', () => {
+    const m = makePartyMember({ resourceStates: [] });
+    const stats = partyMemberToStats(m);
+    expect(stats.resourceStates).toEqual([]);
+  });
+
+  it('empty classFeatureDetails → empty array in CharacterStats (no crash)', () => {
+    const m = makePartyMember({ classFeatureDetails: [] });
+    const stats = partyMemberToStats(m);
+    expect(stats.classFeatureDetails).toEqual([]);
   });
 });

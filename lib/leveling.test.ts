@@ -26,6 +26,10 @@ describe('HIT_DIE_BY_CLASS', () => {
   it('Wizard → { die: 6, avg: 4 } (d6 hit die, average 4 per level after L1)', () => {
     expect(HIT_DIE_BY_CLASS['Wizard']).toEqual({ die: 6, avg: 4 })
   })
+
+  it('Paladin → { die: 10, avg: 6 } (d10 hit die, same as Fighter/Ranger)', () => {
+    expect(HIT_DIE_BY_CLASS['Paladin']).toEqual({ die: 10, avg: 6 })
+  })
 })
 
 // ─── maxHpAtLevel — LVL-01 base cases (level 1, max die + CON mod) ────────────
@@ -45,6 +49,14 @@ describe('maxHpAtLevel level-1 base cases', () => {
 
   it('"Wizard", 6, 1 → 4 (6 + (-2) CON mod)', () => {
     expect(maxHpAtLevel('Wizard', 6, 1)).toBe(4)
+  })
+
+  it('"Paladin", 10, 1 → 10 (d10 + 0 CON mod)', () => {
+    expect(maxHpAtLevel('Paladin', 10, 1)).toBe(10)
+  })
+
+  it('"Paladin", 14, 1 → 12 (d10 + 2 CON mod)', () => {
+    expect(maxHpAtLevel('Paladin', 14, 1)).toBe(12)
   })
 })
 
@@ -315,13 +327,17 @@ describe('maxHpAtLevel multi-level-up consistency (LVL-02)', () => {
   it('"Cleric", 16, 5 → 43 (11 + 8 + 8 + 8 + 8 — stepwise: avg 5 + mod 3 = 8 per level after L1)', () => {
     expect(maxHpAtLevel('Cleric', 16, 5)).toBe(43)
   })
+
+  it('"Paladin", 10, 5 → 34 (10 + 6 + 6 + 6 + 6 — d10 at L1, avg 6 per level after)', () => {
+    expect(maxHpAtLevel('Paladin', 10, 5)).toBe(34)
+  })
 })
 
 // ─── maxHpAtLevel — V5 Input Validation (unknown class throws) ────────────────
 
 describe('maxHpAtLevel unknown class throws (V5 input validation)', () => {
-  it('"Paladin", 14, 1 → throws Error with message containing "Unknown class: Paladin"', () => {
-    expect(() => maxHpAtLevel('Paladin', 14, 1)).toThrow(/Unknown class: Paladin/)
+  it('"Necromancer", 14, 1 → throws Error with message containing "Unknown class: Necromancer"', () => {
+    expect(() => maxHpAtLevel('Necromancer', 14, 1)).toThrow(/Unknown class: Necromancer/)
   })
 
   it('"", 14, 1 → throws Error with message containing "Unknown class:"', () => {

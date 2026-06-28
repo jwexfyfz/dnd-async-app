@@ -8,8 +8,9 @@ export function computeIsLockable(lockedBy: unknown): boolean {
  * Resolves the effective peek-through visibility for an exit POI.
  * - destroyed door → full LoS regardless of lock state
  * - locked (lockable and not yet unlocked) → no LoS
- * - rawPeek 'none' but door has been opened (interacted) → obvious_only
- * - otherwise → rawPeek as-is
+ * - otherwise → rawPeek as-is (peek_visibility: 'none' means no LoS, period —
+ *   matches flavor text where the passage has no visual cues at all,
+ *   regardless of whether it's been opened/walked through)
  */
 export function computeEffectivePeek(
   rawPeek: string,
@@ -19,6 +20,5 @@ export function computeEffectivePeek(
 ): 'none' | 'obvious_only' | 'full' {
   if (destroyed) return 'full';
   if (isLocked) return 'none';
-  if (rawPeek === 'none' && interacted) return 'full';
   return rawPeek as 'none' | 'obvious_only' | 'full';
 }

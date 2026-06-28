@@ -1,10 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import Anthropic from '@anthropic-ai/sdk';
 import { prisma } from '@/lib/prisma';
 import { Prisma } from '@prisma/client';
 import { createSupabaseServerClient } from '@/lib/supabase-server';
-
-const anthropic = new Anthropic({ maxRetries: 4 });
 
 export async function GET(req: NextRequest) {
   const supabase = await createSupabaseServerClient();
@@ -152,9 +149,7 @@ export async function POST(req: NextRequest) {
     const roomTemplate = await prisma.roomTemplate.findUniqueOrThrow({
       where: { id: dungeon.startRoomTemplateId },
       select: {
-        name: true,
-        baseDescription: true,
-        poiTemplates: { select: { id: true, name: true, defaultProperties: true } },
+        poiTemplates: { select: { id: true, defaultProperties: true } },
       },
     });
 
@@ -210,46 +205,6 @@ export async function POST(req: NextRequest) {
         create: { roomInstanceId: roomInstance.id, characterId, combatState: { proximity_target_id: null, stance: null } },
       });
       return { characterId, sessionId: session.id, roomInstanceId: roomInstance.id };
-    });
-
-    let narrativeText = `You enter ${roomTemplate.name}. ${roomTemplate.baseDescription}`;
-    try {
-      const visiblePois = roomTemplate.poiTemplates.filter(t => {
-        const props = t.defaultProperties as Record<string, unknown>;
-        return props.visibility !== 'proximity_only' && props.poi_type !== 'open_space';
-      });
-      const poiList = visiblePois.map(t => `- ${t.name}`).join('\n') || '(empty room)';
-
-      const response = await anthropic.messages.create({
-        model: 'claude-haiku-4-5-20251001',
-        max_tokens: 512,
-        system: `You are a Dungeon Master narrating a D&D adventure. Write an atmospheric opening scene (2-4 sentences) as the character enters the room. Use vivid, present-tense prose. Do not ask what the player does next.
-
-ROOM: ${roomTemplate.name}
-DESCRIPTION: ${roomTemplate.baseDescription}
-VISIBLE FEATURES:
-${poiList}`,
-        messages: [
-          {
-            role: 'user',
-            content: `${character.name} (${character.characterClass}, level ${character.level}) enters. Set the opening scene.`,
-          },
-        ],
-      });
-
-      const textBlock = response.content.find((b): b is Anthropic.TextBlock => b.type === 'text');
-      if (textBlock?.text) narrativeText = textBlock.text;
-    } catch (err) {
-      console.error('[sessions] opening narrative AI call failed — using fallback:', err instanceof Error ? err.message : err);
-    }
-
-    await prisma.messageLog.create({
-      data: {
-        roomInstanceId: result.roomInstanceId,
-        characterId,
-        isMechanicalEvent: false,
-        text: narrativeText,
-      },
     });
 
     return NextResponse.json(result, { status: 201 });
