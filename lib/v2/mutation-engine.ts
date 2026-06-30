@@ -1426,7 +1426,7 @@ export async function mutateGameState(
           data: { inventory: inv as unknown as object },
         });
 
-        const swappedNames = [currentEquipped?.name, displacedOffHand?.name].filter(Boolean);
+        const swappedNames = [currentEquipped?.name, displacedOffHand?.name].filter((n): n is string => !!n);
         await tx.messageLog.create({
           data: {
             roomInstanceId,
