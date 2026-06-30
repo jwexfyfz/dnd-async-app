@@ -9,7 +9,7 @@ import { RollBadge, CombatRollBadge } from '@/components/v2/combat/RollBadge';
 import type { RollResult, CombatRollData } from '@/components/v2/combat/RollBadge';
 import { CombatBanner, ExplorationResumeCard, CombatResumeCard, RemoteCombatBanner, buildBannerEntry } from '@/components/v2/combat/CombatBanner';
 import type { HistoryEntry, InitiativeRollEntry } from '@/components/v2/combat/CombatBanner';
-import { InitiativeStrip, InitiativeMiniSheet } from '@/components/v2/combat/InitiativeStrip';
+import { InitiativeStrip, InitiativeMiniSheet, CLASS_FEATURES } from '@/components/v2/combat/InitiativeStrip';
 import { ActionChips, TurnBadge } from '@/components/v2/combat/ActionChips';
 import { InventoryTab, ItemPickerSheet } from '@/components/v2/inventory/InventoryTab';
 import { UseButtons } from '@/components/v2/inventory/UseButtons';
@@ -481,9 +481,14 @@ function PlayContent() {
   }, [characterId, activeRoomInstanceId, refreshStats]);
 
   const handleFeatureActivate = useCallback((label: string) => {
-    setChip(label);
-    setActiveTab('chat');
-  }, []);
+    const feature = Object.values(CLASS_FEATURES).flat().find(f => f.label === label);
+    if (feature?.directFire) {
+      executeDirectAction(label, 'use_class_feature');
+    } else {
+      setChip(label);
+      setActiveTab('chat');
+    }
+  }, [executeDirectAction]);
 
   const populateChatAction = useCallback((text: string, hint: string) => {
     if (hint === 'use_item') {
@@ -601,6 +606,7 @@ function PlayContent() {
   // Auto-advance turn for unconscious characters — death save resolves server-side
   const isMyTurnLocal = combatState?.activeActorId === characterId;
   const isMyTurn = isMyTurnLocal || isRemoteMyTurn;
+  const bonusActionUsed = isMyTurn ? (displayCombatState?.currentTurnUsage.bonusActionUsed ?? false) : undefined;
   const currentRound = combatState?.round ?? remoteCombat?.combatState.round ?? 0;
   useEffect(() => {
     if (!isMyTurn) return;
@@ -850,6 +856,7 @@ function PlayContent() {
             characterId={characterId!}
             partyMembers={partyMembers}
             onEndTurn={handleEndTurn}
+            onFeatureActivate={handleFeatureActivate}
             situationSummary={situationSummary}
             combatAlert={combatAlert}
           />
@@ -878,6 +885,7 @@ function PlayContent() {
             onShortRest={handleShortRest}
             onMakeCamp={handleMakeCamp}
             canLongRest={canLongRest}
+            bonusActionUsed={bonusActionUsed}
           />
         )}
         {activeTab === 'map' && activeRoomInstanceId && (

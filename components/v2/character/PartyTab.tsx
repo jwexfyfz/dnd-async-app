@@ -38,7 +38,7 @@ function partyMemberToStats(m: PartyMemberInfo): CharacterStats {
   };
 }
 
-export function PartyTab({ characterStats, gameState, onFeatureActivate, partyMembers, characterId, onAsiResolve, onSubclassResolve, onShortRest, onMakeCamp, canLongRest }: {
+export function PartyTab({ characterStats, gameState, onFeatureActivate, partyMembers, characterId, onAsiResolve, onSubclassResolve, onShortRest, onMakeCamp, canLongRest, bonusActionUsed }: {
   characterStats: CharacterStats | null;
   gameState: 'exploration' | 'combat';
   onFeatureActivate: (label: string) => void;
@@ -49,6 +49,7 @@ export function PartyTab({ characterStats, gameState, onFeatureActivate, partyMe
   onShortRest?: () => Promise<void>;
   onMakeCamp?: () => Promise<void>;
   canLongRest?: boolean;
+  bonusActionUsed?: boolean;
 }) {
   const [selectedId, setSelectedId] = useState<string>(characterId);
   const [resting, setResting] = useState(false);
@@ -147,6 +148,7 @@ export function PartyTab({ characterStats, gameState, onFeatureActivate, partyMe
         onFeatureActivate={isOwn ? onFeatureActivate : () => {}}
         onAsiResolve={isOwn ? onAsiResolve : undefined}
         onSubclassResolve={isOwn ? onSubclassResolve : undefined}
+        bonusActionUsed={isOwn && gameState === 'combat' ? bonusActionUsed : undefined}
       />
     </div>
   );

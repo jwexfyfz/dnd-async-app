@@ -8,7 +8,7 @@ import { ItemPickerSheet } from '@/components/v2/inventory/InventoryTab';
 import { ActionChips } from '@/components/v2/combat/ActionChips';
 import { ChatMessage } from '@/components/v2/chat/ChatMessage';
 
-export function ChatTab({ history, hasMore, loadingMore, loadMore, sending, error, input, setInput, sendAction, handleKeyDown, chip, setChip, gameState, combatState, characterStats, characterInventory, chatEndRef, chatContainerRef, showResumeCard, onDismissResume, roomName, characterId, partyMembers, onEndTurn, situationSummary, combatAlert }: {
+export function ChatTab({ history, hasMore, loadingMore, loadMore, sending, error, input, setInput, sendAction, handleKeyDown, chip, setChip, gameState, combatState, characterStats, characterInventory, chatEndRef, chatContainerRef, showResumeCard, onDismissResume, roomName, characterId, partyMembers, onEndTurn, onFeatureActivate, situationSummary, combatAlert }: {
   history: HistoryEntry[];
   hasMore: boolean;
   loadingMore: boolean;
@@ -33,6 +33,7 @@ export function ChatTab({ history, hasMore, loadingMore, loadMore, sending, erro
   characterId: string;
   partyMembers: PartyMemberInfo[];
   onEndTurn: () => void;
+  onFeatureActivate?: (label: string) => void;
   situationSummary?: string | null;
   combatAlert?: CombatAlertInfo | null;
 }) {
@@ -117,6 +118,7 @@ export function ChatTab({ history, hasMore, loadingMore, loadMore, sending, erro
           setChip={setChip}
           onOpenItemSheet={handleOpenItemSheet}
           onEndTurn={onEndTurn}
+          onFeatureActivate={onFeatureActivate}
         />
       )}
 

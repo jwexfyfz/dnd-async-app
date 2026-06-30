@@ -1410,6 +1410,15 @@ export async function mutateGameState(
           console.log(`[items] equip: ${characterName} equipped "${item.name}" → slot ${slot}`);
         }
         inv.equipped[slot] = item;
+
+        // Two-handed weapons occupy both hands — clear off_hand if it's still occupied
+        let displacedOffHand: ItemDefinition | null = null;
+        if (item.two_handed && inv.equipped.off_hand) {
+          displacedOffHand = inv.equipped.off_hand;
+          inv.bag.push(displacedOffHand);
+          console.log(`[items] equip: ${characterName} unequipped "${displacedOffHand.name}" from off_hand (two-handed weapon equipped)`);
+          delete inv.equipped.off_hand;
+        }
         console.log(`[items] inventory: ${inventorySummary(inv)}`);
 
         await tx.character.update({
@@ -1417,6 +1426,7 @@ export async function mutateGameState(
           data: { inventory: inv as unknown as object },
         });
 
+        const swappedNames = [currentEquipped?.name, displacedOffHand?.name].filter(Boolean);
         await tx.messageLog.create({
           data: {
             roomInstanceId,
@@ -1427,9 +1437,9 @@ export async function mutateGameState(
               item_id: itemId,
               item: item.name,
               slot,
-              swapped_out: currentEquipped?.name ?? null,
+              swapped_out: swappedNames.length ? swappedNames : null,
             },
-            text: `[MECHANICAL] ${characterName} equipped ${item.name}${currentEquipped ? ` (replacing ${currentEquipped.name})` : ''}.`,
+            text: `[MECHANICAL] ${characterName} equipped ${item.name}${swappedNames.length ? ` (replacing ${swappedNames.join(' and ')})` : ''}.`,
           },
         });
       });

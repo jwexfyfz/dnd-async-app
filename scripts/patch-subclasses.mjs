@@ -20,7 +20,7 @@ const SUBCLASSES = [
   // Barbarian
   { characterClass: "Barbarian", key: "berserker",    name: "Berserker",         blurb: "Fury without limit. You can frenzy for additional bonus action attacks.",               playstyleTag: "max damage",        keyStat: "STR",        available: true  },
   { characterClass: "Barbarian", key: "totem_warrior",name: "Totem Warrior",     blurb: "A spiritual warrior who channels the power of animal spirits.",                         playstyleTag: "versatile",         keyStat: "STR/CON",    available: true  },
-  { characterClass: "Barbarian", key: "wild_magic",   name: "Wild Magic",        blurb: "Chaos surges from you in battle. Unpredictable and explosive.",                         playstyleTag: "chaos",             keyStat: "STR",        available: true  },
+  { characterClass: "Barbarian", key: "zealot",       name: "Path of the Zealot",blurb: "A divine warrior who rages in the name of a god. Near-impossible to kill in battle.",  playstyleTag: "divine tank",       keyStat: "STR/CON",    available: true  },
   // Ranger
   { characterClass: "Ranger",  key: "hunter",         name: "Hunter",            blurb: "A relentless pursuer. Colossus Slayer and multi-target techniques.",                    playstyleTag: "damage dealer",     keyStat: "DEX",        available: true  },
   { characterClass: "Ranger",  key: "beast_master",   name: "Beast Master",      blurb: "You and your animal companion fight as one.",                                            playstyleTag: "companion",         keyStat: "DEX/WIS",    available: true  },
@@ -64,6 +64,8 @@ const SUBCLASSES = [
 ];
 
 async function main() {
+  const deleted = await prisma.subclass.deleteMany({ where: { characterClass: "Barbarian", key: "wild_magic" } });
+  if (deleted.count) console.log(`Removed ${deleted.count} spurious Barbarian wild_magic row(s).`);
   console.log(`Upserting ${SUBCLASSES.length} subclass rows...`);
   let inserted = 0;
   let updated = 0;

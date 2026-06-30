@@ -4,23 +4,23 @@ import { useRef, useEffect } from 'react';
 import type { InitiativeEntry, CharacterStats, PartyMemberInfo } from '@/types/v2-game';
 import { classSprite } from '@/lib/class-emoji';
 
-export const CLASS_FEATURES: Record<string, Array<{ id: string; label: string; description: string; cunning?: boolean; ki?: boolean }>> = {
-  'Blood Hunter': [{ id: 'crimson_rite', label: '🩸 Crimson Rite', description: 'Bonus action: imbue your weapon with elemental damage (+1d4) until combat ends. Costs HP to activate.' }],
-  Barbarian: [{ id: 'rage', label: '🪓 Rage', description: 'Bonus action: enter rage. +2 melee damage, resistance to bludgeoning/piercing/slashing damage for 1 minute.' }],
-  Bard: [{ id: 'bardic_inspiration', label: '🎵 Bardic Inspiration', description: "Bonus action: grant an ally a d6 to add to their next attack roll. Say who you're inspiring." }],
-  Cleric: [{ id: 'channel_divinity', label: '⛪ Channel Divinity', description: 'Bonus action: channel divine power. All enemies must make a WIS save or be turned (unable to act) for the rest of combat. Once per short rest.' }],
+export const CLASS_FEATURES: Record<string, Array<{ id: string; label: string; description: string; bonusAction?: boolean; directFire?: boolean; cunning?: boolean; ki?: boolean }>> = {
+  'Blood Hunter': [{ id: 'crimson_rite', label: '🩸 Crimson Rite', bonusAction: true, directFire: true, description: 'Bonus action: imbue your weapon with elemental damage (+1d4) until combat ends. Costs HP to activate.' }],
+  Barbarian: [{ id: 'rage', label: '🪓 Rage', bonusAction: true, directFire: true, description: 'Bonus action: enter rage. +2 melee damage, resistance to bludgeoning/piercing/slashing damage for 1 minute.' }],
+  Bard: [{ id: 'bardic_inspiration', label: '🎵 Bardic Inspiration', bonusAction: true, description: "Bonus action: grant an ally a d6 to add to their next attack roll. Say who you're inspiring." }],
+  Cleric: [{ id: 'channel_divinity', label: '⛪ Channel Divinity', bonusAction: true, directFire: true, description: 'Bonus action: channel divine power. All enemies must make a WIS save or be turned (unable to act) for the rest of combat. Once per short rest.' }],
   Fighter: [
-    { id: 'second_wind', label: '💨 Second Wind', description: 'Bonus action: recover 1d10 + Fighter level HP. Once per short rest.' },
-    { id: 'action_surge', label: '⚡ Action Surge', description: 'Bonus action: gain an extra main action this turn. Once per short rest.' },
+    { id: 'second_wind', label: '💨 Second Wind', bonusAction: true, directFire: true, description: 'Bonus action: recover 1d10 + Fighter level HP. Once per short rest.' },
+    { id: 'action_surge', label: '⚡ Action Surge', bonusAction: true, directFire: true, description: 'Bonus action: gain an extra main action this turn. Once per short rest.' },
   ],
-  Monk: [{ id: 'ki', label: '🌀 Ki', ki: true, description: 'Spend 1 Ki point: Flurry of Blows (2 unarmed strikes), Patient Defense (Dodge), or Step of the Wind (Disengage).' }],
+  Monk: [{ id: 'ki', label: '🌀 Ki', ki: true, bonusAction: true, description: 'Spend 1 Ki point: Flurry of Blows (2 unarmed strikes), Patient Defense (Dodge), or Step of the Wind (Disengage).' }],
   Paladin: [
-    { id: 'divine_smite', label: '✨ Divine Smite', description: 'Bonus action: channel radiant power — your next hit deals +2d8 radiant damage.' },
-    { id: 'lay_on_hands', label: '🤲 Lay on Hands', description: 'Bonus action: heal yourself for 5 HP from your Lay on Hands pool.' },
+    { id: 'divine_smite', label: '✨ Divine Smite', bonusAction: true, directFire: true, description: 'Bonus action: channel radiant power — your next hit deals +2d8 radiant damage.' },
+    { id: 'lay_on_hands', label: '🤲 Lay on Hands', bonusAction: true, directFire: true, description: 'Bonus action: heal yourself for 5 HP from your Lay on Hands pool.' },
   ],
-  Ranger: [{ id: 'hunters_mark', label: "🏹 Hunter's Mark", description: "Bonus action: mark a creature — deal +1d6 damage on each hit against them. Concentration." }],
-  Rogue: [{ id: 'cunning_action', label: '🗡️ Cunning Action', cunning: true, description: 'Bonus action to Dash, Disengage, or Hide.' }],
-  Warlock: [{ id: 'hex', label: '👁️ Hex', description: 'Bonus action: curse a target — deal +1d6 necrotic on each hit against them. Concentration.' }],
+  Ranger: [{ id: 'hunters_mark', label: "🏹 Hunter's Mark", bonusAction: true, directFire: true, description: "Bonus action: mark a creature — deal +1d6 damage on each hit against them. Concentration." }],
+  Rogue: [{ id: 'cunning_action', label: '🗡️ Cunning Action', cunning: true, bonusAction: true, description: 'Bonus action to Dash, Disengage, or Hide.' }],
+  Warlock: [{ id: 'hex', label: '👁️ Hex', bonusAction: true, directFire: true, description: 'Bonus action: curse a target — deal +1d6 necrotic on each hit against them. Concentration.' }],
 };
 
 export function hpRingClass(hp: number, maxHp: number): string {

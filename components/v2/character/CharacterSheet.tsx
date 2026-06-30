@@ -23,12 +23,12 @@ export const ABILITY_LABELS: { key: keyof CharacterStats; short: string; full: s
   { key: 'baseCharisma',     short: 'CHA', full: 'Charisma' },
 ];
 
-const COMBAT_STAT_META: Record<string, { labelColor: string; description: string }> = {
-  HP:   { labelColor: 'text-red-400',    description: 'Your remaining hit points. Reach 0 and you fall unconscious — allies must stabilize you before you die.' },
-  AC:   { labelColor: 'text-blue-500',   description: 'Armor Class — how hard you are to hit. An attacker must roll this number or higher to land a strike.' },
-  Atk:  { labelColor: 'text-orange-500', description: 'Your attack bonus added to the d20 roll whenever you strike. Higher means you hit more reliably.' },
-  Dmg:  { labelColor: 'text-rose-500',   description: 'Damage roll for your main-hand weapon. Off-hand bonus attacks use only the weapon die (no ability modifier).' },
-  Init: { labelColor: 'text-amber-500',  description: 'Initiative modifier rolled at the start of combat. Higher means you act earlier in the turn order.' },
+const COMBAT_STAT_META: Record<string, { title: string; labelColor: string; description: string }> = {
+  HP:   { title: 'Hit Points',     labelColor: 'text-red-400',    description: 'Your remaining hit points. Reach 0 and you fall unconscious — allies must stabilize you before you die.' },
+  AC:   { title: 'Armor Class',    labelColor: 'text-blue-500',   description: 'How hard you are to hit. An attacker must roll this number or higher on a d20 to land a strike.' },
+  Atk:  { title: 'Attack Bonus',   labelColor: 'text-orange-500', description: 'Added to the d20 roll whenever you strike. Higher means you hit more reliably.' },
+  Dmg:  { title: 'Weapon Damage',  labelColor: 'text-rose-500',   description: 'Damage roll for your main-hand weapon. Off-hand bonus attacks use only the weapon die (no ability modifier).' },
+  Init: { title: 'Initiative',     labelColor: 'text-amber-500',  description: 'Rolled at the start of combat to determine turn order. Higher means you act earlier.' },
 };
 
 export function abilityModColor(score: number, isActive: boolean): string {
@@ -156,13 +156,14 @@ function AsiStepper({ stats, onConfirm }: {
   );
 }
 
-export function CharacterSheet({ stats, isCombat, isOwn, onFeatureActivate, onAsiResolve, onSubclassResolve }: {
+export function CharacterSheet({ stats, isCombat, isOwn, onFeatureActivate, onAsiResolve, onSubclassResolve, bonusActionUsed }: {
   stats: CharacterStats;
   isCombat: boolean;
   isOwn: boolean;
   onFeatureActivate?: (label: string) => void;
   onAsiResolve?: (choices: AsiChoices) => Promise<void>;
   onSubclassResolve?: (subclassKey: string) => Promise<void>;
+  bonusActionUsed?: boolean;
 }) {
   const [featureTooltip, setFeatureTooltip] = useState<string | null>(null);
   const [activeStat, setActiveStat] = useState<string | null>(null);
@@ -196,13 +197,18 @@ export function CharacterSheet({ stats, isCombat, isOwn, onFeatureActivate, onAs
     && stats.pendingChoicesQueue.length > 0
     && stats.pendingChoicesQueue[0].type === 'subclass';
 
+  if (showSubclassPicker && onSubclassResolve) {
+    return (
+      <div className="flex-1 flex flex-col overflow-hidden px-4 py-4">
+        <SubclassPicker stats={stats} onConfirm={onSubclassResolve} />
+      </div>
+    );
+  }
+
   return (
     <div className="overflow-y-auto flex-1 px-4 py-4 space-y-5">
       {showAsiStepper && onAsiResolve && (
         <AsiStepper stats={stats} onConfirm={onAsiResolve} />
-      )}
-      {showSubclassPicker && onSubclassResolve && (
-        <SubclassPicker stats={stats} onConfirm={onSubclassResolve} />
       )}
 
       {/* Combat stats */}
@@ -268,14 +274,23 @@ export function CharacterSheet({ stats, isCombat, isOwn, onFeatureActivate, onAs
             ];
           }
 
+          const meta = COMBAT_STAT_META[activeStat];
           return (
-            <div className="mt-2 bg-slate-50 rounded-lg px-3 py-2 space-y-1">
-              {rows.map(r => (
-                <div key={r.label} className="flex justify-between text-xs">
-                  <span className="text-slate-500">{r.label}</span>
-                  <span className="font-mono font-medium text-slate-700">{r.value}</span>
+            <div className="mt-2 bg-slate-50 rounded-lg px-3 py-2.5 space-y-2">
+              <div>
+                <p className={`text-xs font-bold ${meta.labelColor}`}>{meta.title}</p>
+                <p className="text-xs text-slate-500 mt-0.5">{meta.description}</p>
+              </div>
+              {rows.length > 0 && (
+                <div className="border-t border-slate-200 pt-2 space-y-1">
+                  {rows.map(r => (
+                    <div key={r.label} className="flex justify-between text-xs">
+                      <span className="text-slate-500">{r.label}</span>
+                      <span className="font-mono font-medium text-slate-700">{r.value}</span>
+                    </div>
+                  ))}
                 </div>
-              ))}
+              )}
             </div>
           );
         })()}
@@ -290,21 +305,30 @@ export function CharacterSheet({ stats, isCombat, isOwn, onFeatureActivate, onAs
           <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Features</p>
           {isCombat ? (
             <div className="flex flex-col gap-2">
-              {features.map(f => (
-                <div key={f.id} className="flex flex-col gap-0.5">
-                  <button
-                    onClick={() => { if (isOwn && onFeatureActivate) onFeatureActivate(f.label); }}
-                    className={`self-start text-xs px-3 py-1.5 rounded-full border font-medium transition-colors ${
-                      isOwn
-                        ? 'border-indigo-300 text-indigo-700 bg-indigo-50 hover:bg-indigo-100'
-                        : 'border-slate-200 text-slate-300 cursor-default'
-                    }`}
-                  >
-                    {f.label}
-                  </button>
-                  <p className="text-xs text-slate-500 pl-1">{f.description}</p>
-                </div>
-              ))}
+              {features.map(f => {
+                const isBASpent = isOwn && f.bonusAction && bonusActionUsed;
+                return (
+                  <div key={f.id} className="flex flex-col gap-0.5">
+                    <button
+                      onClick={() => { if (isOwn && !isBASpent && onFeatureActivate) onFeatureActivate(f.label); }}
+                      disabled={!!isBASpent}
+                      className={`self-start text-xs px-3 py-1.5 rounded-full border font-medium transition-colors flex items-center gap-1.5 ${
+                        isBASpent
+                          ? 'border-slate-200 text-slate-300 cursor-not-allowed'
+                          : isOwn
+                            ? 'border-indigo-300 text-indigo-700 bg-indigo-50 hover:bg-indigo-100'
+                            : 'border-slate-200 text-slate-300 cursor-default'
+                      }`}
+                    >
+                      {f.label}
+                      {f.bonusAction && (
+                        <span className={`text-[9px] font-bold px-1 py-0.5 rounded leading-none ${isBASpent ? 'bg-slate-100 text-slate-300' : 'bg-indigo-100 text-indigo-500'}`}>BA</span>
+                      )}
+                    </button>
+                    <p className="text-xs text-slate-500 pl-1">{f.description}</p>
+                  </div>
+                );
+              })}
             </div>
           ) : (
             <>
@@ -313,13 +337,16 @@ export function CharacterSheet({ stats, isCombat, isOwn, onFeatureActivate, onAs
                   <button
                     key={f.id}
                     onClick={() => { if (!isOwn) return; setFeatureTooltip(t => t === f.id ? null : f.id); }}
-                    className={`text-xs px-3 py-1.5 rounded-full border font-medium transition-colors ${
+                    className={`text-xs px-3 py-1.5 rounded-full border font-medium transition-colors flex items-center gap-1.5 ${
                       isOwn
                         ? 'border-emerald-200 text-emerald-700 bg-emerald-50 hover:bg-emerald-100'
                         : 'border-slate-200 text-slate-300 cursor-default'
                     }`}
                   >
                     {f.label}
+                    {f.bonusAction && (
+                      <span className="text-[9px] font-bold px-1 py-0.5 rounded leading-none bg-emerald-100 text-emerald-500">BA</span>
+                    )}
                   </button>
                 ))}
               </div>

@@ -331,11 +331,10 @@ async function main() {
     playstyleTag: "versatile", keyStat: "STR/CON", available: true,
   }});
   await prisma.subclass.create({ data: {
-    characterClass: "Barbarian", key: "wild_magic", name: "Wild Magic",
-    blurb: "Chaos surges from you in battle. Unpredictable and explosive.",
-    playstyleTag: "chaos", keyStat: "STR", available: true,
+    characterClass: "Barbarian", key: "zealot", name: "Path of the Zealot",
+    blurb: "A divine warrior who rages in the name of a god. Near-impossible to kill in battle.",
+    playstyleTag: "divine tank", keyStat: "STR/CON", available: true,
   }});
-
   // ── Ranger ───────────────────────────────────────────────────────────────
   const rangerProgressions = [
     { level: 1, proficiencyBonus: 2, featuresUnlocked: ["Favored Enemy", "Natural Explorer"] },

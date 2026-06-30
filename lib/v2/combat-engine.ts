@@ -968,9 +968,16 @@ export function resolveCombatAction(
 
     for (let attackIdx = 0; attackIdx < numAttacks; attackIdx++) {
       const targetId = action.target_poi_instance_id;
-      const currentTargetIdx = targetId
+      let currentTargetIdx = targetId
         ? order.findIndex(e => e.id === targetId && e.hp > 0)
         : order.findIndex(e => e.type === 'enemy' && e.hp > 0);
+
+      // Targeted enemy is dead or absent — fall back to the first alive enemy
+      if (currentTargetIdx === -1 && targetId) {
+        const deadInOrder = order.some(e => e.id === targetId);
+        console.log(`[stage3:attack] targeted ${targetId} not found alive (${deadInOrder ? 'dead in order' : 'absent from order'}) — falling back to first alive enemy`);
+        currentTargetIdx = order.findIndex(e => e.type === 'enemy' && e.hp > 0);
+      }
 
       if (currentTargetIdx === -1) {
         if (attackIdx === 0) facts.push('No valid target found for attack.');

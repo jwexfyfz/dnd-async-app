@@ -1,10 +1,17 @@
 import type { CharacterInventory, ItemDefinition } from '@/types/v2-game';
 
-function patchEquipSlot(item: ItemDefinition): ItemDefinition {
-  if (!item.equip_slot && item.weapon_type) {
-    return { ...item, equip_slot: 'main_hand' };
+// Weapons whose two_handed flag may be missing from older stored JSON.
+const TWO_HANDED_NAME_RE = /greataxe|great.?sword|halberd|glaive|pike|maul/i;
+
+function patchItem(item: ItemDefinition): ItemDefinition {
+  let patched = item;
+  if (!patched.equip_slot && patched.weapon_type) {
+    patched = { ...patched, equip_slot: 'main_hand' };
   }
-  return item;
+  if (!patched.two_handed && TWO_HANDED_NAME_RE.test(patched.name)) {
+    patched = { ...patched, two_handed: true };
+  }
+  return patched;
 }
 
 export function normalizeInventory(raw: unknown): CharacterInventory {
@@ -12,12 +19,14 @@ export function normalizeInventory(raw: unknown): CharacterInventory {
     return { bag: [], equipped: {} };
   }
   const inv = raw as Record<string, unknown>;
+  const rawEquipped = (inv.equipped && typeof inv.equipped === 'object' && !Array.isArray(inv.equipped))
+    ? inv.equipped as Record<string, ItemDefinition | undefined>
+    : {};
   return {
-    bag: Array.isArray(inv.bag) ? (inv.bag as ItemDefinition[]).map(patchEquipSlot) : [],
-    equipped:
-      inv.equipped && typeof inv.equipped === 'object' && !Array.isArray(inv.equipped)
-        ? (inv.equipped as CharacterInventory['equipped'])
-        : {},
+    bag: Array.isArray(inv.bag) ? (inv.bag as ItemDefinition[]).map(patchItem) : [],
+    equipped: Object.fromEntries(
+      Object.entries(rawEquipped).map(([slot, item]) => [slot, item ? patchItem(item) : item])
+    ) as CharacterInventory['equipped'],
   };
 }
 

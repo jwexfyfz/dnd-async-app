@@ -147,6 +147,7 @@ export function InventoryTab({ characterInventory, gameState, onExplorationActio
                         <div className="flex items-baseline gap-1.5">
                           <p className="text-sm font-medium text-slate-800 truncate">{item.name}</p>
                           {item.damage_dice && <span className="text-[11px] text-slate-400 shrink-0">{item.damage_dice}</span>}
+                          {item.two_handed && <span className="text-[9px] font-bold px-1 py-0.5 rounded leading-none bg-slate-100 text-slate-400 shrink-0">2H</span>}
                         </div>
                       </div>
                       <span className="text-[10px] text-slate-300 shrink-0">{isExpanded ? '▴' : '▾'}</span>
@@ -228,6 +229,7 @@ export function InventoryTab({ characterInventory, gameState, onExplorationActio
                           {item.name}{item.quantity && item.quantity > 1 ? ` ×${item.quantity}` : ''}
                         </p>
                         {item.damage_dice && <span className="text-[11px] text-slate-400 shrink-0">{item.damage_dice}</span>}
+                        {item.two_handed && <span className="text-[9px] font-bold px-1 py-0.5 rounded leading-none bg-slate-100 text-slate-400 shrink-0">2H</span>}
                       </div>
                       <span className="shrink-0 text-[10px] text-slate-300">{isExpanded ? '▴' : '▾'}</span>
                     </div>

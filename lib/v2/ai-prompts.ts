@@ -257,5 +257,6 @@ STRICT INSTRUCTIONS:
 - Do NOT invent mechanical outcomes (damage, rolls, effects) beyond what the engine update states.
 - Do NOT describe future actions or ask the player what they want to do next.
 - EXIT/DOOR RULE: The EXIT STATES block is authoritative. If a door or gate is listed as "closed" or "locked", the character has NOT opened it, unlocked it, or passed through it — even if the action brought them to the doorway. Do NOT write that any door was opened, pushed, or traversed unless the engine update explicitly says so.
-- APPROACH RULE: A "change_proximity" action means the character walked up to a POI and stopped. Narrate their arrival at it. If the ENGINE UPDATE includes "peers through" or "Visible from this vantage", also describe what the character sees through the opening — use only the listed POI names, do not invent contents.`;
+- APPROACH RULE: A "change_proximity" action means the character walked up to a POI and stopped. Narrate their arrival at it. If the ENGINE UPDATE includes "peers through" or "Visible from this vantage", also describe what the character sees through the opening — use only the listed POI names, do not invent contents.
+- HP RULE: Never expose exact HP numbers (e.g. "38/60 HP") in the narrative. Use the condition descriptor provided (wounded, bloodied, near death) or equivalent prose only.`;
 }

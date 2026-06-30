@@ -35,7 +35,7 @@ export function TurnBadge({ label, used }: { label: string; used: boolean }) {
   );
 }
 
-export function ActionChips({ characterStats, characterInventory, combatState, chip, setChip, onOpenItemSheet, onEndTurn }: {
+export function ActionChips({ characterStats, characterInventory, combatState, chip, setChip, onOpenItemSheet, onEndTurn, onFeatureActivate }: {
   characterStats: CharacterStats | null;
   characterInventory: CharacterInventory | null;
   combatState: CombatState | null;
@@ -43,6 +43,7 @@ export function ActionChips({ characterStats, characterInventory, combatState, c
   setChip: (v: string | null) => void;
   onOpenItemSheet: () => void;
   onEndTurn: () => void;
+  onFeatureActivate?: (label: string) => void;
 }) {
   const [showCunningPicker, setShowCunningPicker] = useState(false);
   const [showKiPicker, setShowKiPicker] = useState(false);
@@ -200,6 +201,7 @@ export function ActionChips({ characterStats, characterInventory, combatState, c
                     if (bonusUsed) return;
                     if (isCunning) { setShowKiPicker(false); setShowCunningPicker(p => !p); }
                     else if (isKi) { setShowCunningPicker(false); setShowKiPicker(p => !p); }
+                    else if (onFeatureActivate) onFeatureActivate(f.label);
                     else tapChip(f.label);
                   }}
                   className={`px-3 py-1.5 rounded-full border text-xs font-medium whitespace-nowrap flex-shrink-0 transition-colors ${

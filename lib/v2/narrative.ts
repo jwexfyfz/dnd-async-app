@@ -59,7 +59,12 @@ export async function generateAndPersistNarrative(
       const maxHp = (poi.template.defaultProperties as Record<string, unknown>).combat_stats
         ? ((poi.template.defaultProperties as Record<string, unknown>).combat_stats as Record<string, unknown>).max_hp as number | undefined
         : undefined;
-      const hpNote = hp !== undefined && maxHp !== undefined ? ` (HP: ${hp}/${maxHp})` : '';
+      let hpNote = '';
+      if (hp !== undefined && maxHp !== undefined && maxHp > 0) {
+        const pct = hp / maxHp;
+        const condition = pct <= 0.25 ? 'near death' : pct <= 0.5 ? 'bloodied' : pct <= 0.75 ? 'wounded' : 'healthy';
+        hpNote = ` (condition: ${condition})`;
+      }
       return `- ${poi.template.name}${hpNote} [awareness: ${awareness}]`;
     })
     .join('\n');

@@ -943,8 +943,7 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
       }
       const mainActionTypes = new Set(['attack', 'dodge', 'dash', 'disengage', 'hide', 'provoke', 'use_item', 'throw_item']);
       const BONUS_ACTION_HINTS_GATE = ['Cunning Action', 'Second Wind', 'Channel Divinity'];
-      // use_class_feature always costs a bonus action — gated independently of action_hint
-      const isClassFeature = firstType === 'use_class_feature';
+      const isClassFeature = firstType === 'use_class_feature' || action_hint === 'use_class_feature';
       const isThisBonusAction = isClassFeature || (!!action_hint && BONUS_ACTION_HINTS_GATE.some(h => action_hint.includes(h)));
       if (mainActionTypes.has(firstType) && !isThisBonusAction && usage.actionUsed) {
         throw Object.assign(new Error('You have already used your action this turn.'), { status: 400 });
@@ -1119,6 +1118,7 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
         // use_class_feature always marks bonus action (handled in resolveCombatAction's turnUsage)
         const BONUS_ACTION_HINTS = ['Cunning Action', 'Second Wind', 'Channel Divinity'];
         const isBonusAction = parsedActions[0]?.action_type === 'use_class_feature'
+          || action_hint === 'use_class_feature'
           || (!!action_hint && BONUS_ACTION_HINTS.some(h => action_hint.includes(h)));
         const finalUpdatedCs = isBonusAction
           ? { ...combatResult.updatedCombatState, currentTurnUsage: { ...combatResult.updatedCombatState.currentTurnUsage, bonusActionUsed: true } }

@@ -35,7 +35,7 @@ export async function GET() {
             partyMembers: {
               select: {
                 characterId: true,
-                character: { select: { id: true, name: true, characterClass: true, currentHp: true, maxHp: true } },
+                character: { select: { id: true, name: true, characterClass: true, currentHp: true, maxHp: true, isDead: true } },
               },
             },
           },
@@ -55,7 +55,7 @@ export async function GET() {
                 partyMembers: {
                   select: {
                     characterId: true,
-                    character: { select: { id: true, name: true, characterClass: true, currentHp: true, maxHp: true } },
+                    character: { select: { id: true, name: true, characterClass: true, currentHp: true, maxHp: true, isDead: true } },
                   },
                 },
               },
@@ -88,7 +88,7 @@ export async function GET() {
                   select: {
                     characterId: true,
                     lastActiveAt: true,
-                    character: { select: { id: true, name: true, characterClass: true } },
+                    character: { select: { id: true, name: true, characterClass: true, isDead: true } },
                   },
                 },
               },
@@ -116,7 +116,10 @@ export async function GET() {
       // Strip narrativeHistory + worldState from the returned game object (not needed by UI)
       const activeGame = rawGame ? (() => {
         const { narrativeHistory: _nh, worldState: _ws, ...rest } = rawGame as typeof rawGame & { narrativeHistory: string[]; worldState: unknown };
-        return rest;
+        return {
+          ...rest,
+          partyMembers: rest.partyMembers.filter(m => !m.character.isDead),
+        };
       })() : null;
 
       return {
@@ -132,7 +135,7 @@ export async function GET() {
           const partyMembers: { characterId: string; name: string; characterClass: string }[] = [];
           for (const ri of session.roomInstances) {
             for (const p of ri.participants) {
-              if (!seen.has(p.characterId)) {
+              if (!seen.has(p.characterId) && !p.character.isDead) {
                 seen.add(p.characterId);
                 partyMembers.push({ characterId: p.characterId, name: p.character.name, characterClass: p.character.characterClass });
               }
