@@ -82,10 +82,9 @@ interface Dungeon {
 
 // ─── Character creation constants ─────────────────────────────────────────────
 
-const CLASSES = ['Artificer', 'Barbarian', 'Bard', 'Cleric', 'Druid', 'Fighter', 'Monk', 'Paladin', 'Ranger', 'Rogue', 'Sorcerer', 'Warlock', 'Wizard'];
+const CLASSES = ['Barbarian', 'Bard', 'Cleric', 'Druid', 'Fighter', 'Monk', 'Paladin', 'Ranger', 'Rogue', 'Sorcerer', 'Warlock', 'Wizard'];
 
 const CLASS_SKILLS: Record<string, string[]> = {
-  Artificer: ['Arcana', 'History', 'Investigation', 'Medicine', 'Nature', 'Perception', 'Sleight of Hand'],
   Barbarian: ['Animal Handling', 'Athletics', 'Intimidation', 'Nature', 'Perception', 'Survival'],
   Bard:      ['Acrobatics', 'Animal Handling', 'Arcana', 'Athletics', 'Deception', 'History', 'Insight', 'Intimidation', 'Investigation', 'Medicine', 'Nature', 'Perception', 'Performance', 'Persuasion', 'Religion', 'Sleight of Hand', 'Stealth', 'Survival'],
   Cleric:    ['History', 'Insight', 'Medicine', 'Persuasion', 'Religion'],
@@ -101,7 +100,7 @@ const CLASS_SKILLS: Record<string, string[]> = {
 };
 
 const SKILL_COUNT: Record<string, number> = {
-  Artificer: 2, Barbarian: 2, Bard: 3, Cleric: 2, Druid: 2, Fighter: 2,
+  Barbarian: 2, Bard: 3, Cleric: 2, Druid: 2, Fighter: 2,
   Monk: 2, Paladin: 2, Ranger: 3, Rogue: 4, Sorcerer: 2, Warlock: 2, Wizard: 2,
 };
 

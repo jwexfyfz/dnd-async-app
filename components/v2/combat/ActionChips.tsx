@@ -3,16 +3,8 @@
 import { useState } from 'react';
 import type { CharacterStats, CharacterInventory, CombatState } from '@/types/v2-game';
 import { CLASS_FEATURES } from '@/components/v2/combat/InitiativeStrip';
-
-const STANDARD_CHIPS = [
-  { id: 'attack',     label: 'Attack' },
-  { id: 'dodge',      label: 'Dodge' },
-  { id: 'dash',       label: 'Dash' },
-  { id: 'disengage',  label: 'Disengage' },
-  { id: 'hide',       label: 'Hide' },
-  { id: 'use_item',   label: 'Use Item' },
-  { id: 'provoke',    label: 'Provoke' },
-];
+import { scoreChips, myHpPct } from '@/components/v2/combat/chip-scoring';
+import type { ChipVariant } from '@/components/v2/combat/chip-scoring';
 
 const CUNNING_SUB = [
   { id: 'cunning_hide',       label: 'Hide' },
@@ -26,6 +18,17 @@ const KI_SUB = [
   { id: 'ki_wind',     label: 'Step of the Wind' },
 ];
 
+const GLOSSARY: { label: string; desc: string }[] = [
+  { label: 'Attack', desc: 'Roll d20 + attack bonus vs. enemy AC. A hit deals weapon damage.' },
+  { label: 'Shove', desc: 'Strength contest to knock a nearby enemy prone. Prone enemies grant advantage on attacks against them.' },
+  { label: 'Dodge', desc: 'Until your next turn, attacks against you have disadvantage and you have advantage on DEX saves.' },
+  { label: 'Dash', desc: 'Sprint — doubles your movement this turn.' },
+  { label: 'Back Off', desc: 'Disengage — move away without provoking opportunity attacks.' },
+  { label: 'Hide', desc: 'Roll Stealth vs. highest enemy Perception. If hidden, your next attack is a Sneak Attack.' },
+  { label: 'Provoke', desc: 'Intimidation check (DC 12) to force an enemy to focus on you for 2 rounds.' },
+  { label: 'Use Item', desc: 'Use a consumable or combat item from your bag.' },
+];
+
 export function TurnBadge({ label, used }: { label: string; used: boolean }) {
   return (
     <span className={`flex items-center gap-1 text-[11px] font-medium ${used ? 'text-slate-300' : 'text-emerald-600'}`}>
@@ -35,26 +38,81 @@ export function TurnBadge({ label, used }: { label: string; used: boolean }) {
   );
 }
 
-export function ActionChips({ characterStats, characterInventory, combatState, chip, setChip, onOpenItemSheet, onEndTurn, onFeatureActivate }: {
+function variantCls(variant: ChipVariant, disabled: boolean): string {
+  if (disabled) return 'border-slate-200 text-slate-300 cursor-not-allowed';
+  switch (variant) {
+    case 'primary': return 'bg-indigo-500 text-white border-indigo-500';
+    case 'success': return 'bg-emerald-500 text-white border-emerald-500';
+    case 'danger':  return 'bg-red-500 text-white border-red-400';
+    case 'class':   return 'bg-purple-500 text-white border-purple-400';
+    case 'dim':     return 'border-slate-200 text-slate-300 opacity-60 pointer-events-none';
+    default:        return 'border-slate-300 text-slate-600 bg-white hover:bg-slate-50';
+  }
+}
+
+const ROLL_SHEET_HINTS = new Set(['attack', 'shove', 'hide', 'provoke']);
+
+export function ActionChips({
+  characterStats,
+  characterInventory,
+  combatState,
+  chip,
+  setChip,
+  characterId,
+  onOpenItemSheet,
+  onEndTurn,
+  onFeatureActivate,
+  onOpenRollSheet,
+}: {
   characterStats: CharacterStats | null;
   characterInventory: CharacterInventory | null;
   combatState: CombatState | null;
   chip: string | null;
   setChip: (v: string | null) => void;
+  characterId: string;
   onOpenItemSheet: () => void;
   onEndTurn: () => void;
   onFeatureActivate?: (label: string) => void;
+  onOpenRollSheet?: (hint: 'attack' | 'hide' | 'provoke' | 'shove') => void;
 }) {
   const [showCunningPicker, setShowCunningPicker] = useState(false);
   const [showKiPicker, setShowKiPicker] = useState(false);
   const [confirmingEndTurn, setConfirmingEndTurn] = useState(false);
+  const [showGlossary, setShowGlossary] = useState(false);
   const isDying = (characterStats?.currentHp ?? 1) <= 0;
 
   const actionUsed = combatState?.currentTurnUsage.actionUsed ?? false;
   const bonusUsed  = combatState?.currentTurnUsage.bonusActionUsed ?? false;
   const moveUsed   = combatState?.currentTurnUsage.movementUsed ?? false;
-  const hasCombatItems = (characterInventory?.bag ?? []).some(i => i.combat_usable);
   const features = CLASS_FEATURES[characterStats?.characterClass ?? ''] ?? [];
+
+  const hasCombatItems = (characterInventory?.bag ?? []).some(i => i.combat_usable);
+  const hasHealingItems = (characterInventory?.bag ?? []).some(
+    i => i.combat_usable && (i.use_effect?.includes('heal') || i.name?.toLowerCase().includes('potion')),
+  );
+
+  const scoredChips = combatState ? scoreChips(
+    combatState,
+    characterId,
+    characterStats?.characterClass ?? '',
+    hasHealingItems,
+    hasCombatItems,
+  ) : null;
+
+  // Danger reorder: dodge + disengage pin to front when HP <= 25% with a close enemy
+  let orderedChips = scoredChips ?? [];
+  if (scoredChips && combatState) {
+    const hpPct = myHpPct(combatState, characterId);
+    const closeEnemies = combatState.initiativeOrder.filter(e => e.type === 'enemy' && e.hp > 0 && e.proximity === 'close');
+    if (hpPct <= 0.25 && closeEnemies.length >= 1) {
+      const dodge = scoredChips.find(c => c.id === 'dodge');
+      const disengage = scoredChips.find(c => c.id === 'disengage');
+      const rest = scoredChips.filter(c => c.id !== 'dodge' && c.id !== 'disengage');
+      orderedChips = [dodge, disengage, ...rest].filter(Boolean) as typeof scoredChips;
+    }
+  }
+
+  const isHiding = characterStats?.isHiding ?? false;
 
   const unusedResources: string[] = [];
   if (!actionUsed) unusedResources.push('action');
@@ -80,12 +138,6 @@ export function ActionChips({ characterStats, characterInventory, combatState, c
     }
   }
 
-  const endTurnBtnCls = allUsed
-    ? 'border-indigo-400 text-indigo-700 bg-indigo-50 font-semibold'
-    : actionUsed
-    ? 'border-slate-300 text-slate-500'
-    : 'border-slate-200 text-slate-300';
-
   function tapChip(label: string) {
     setChip(chip === label ? null : label);
   }
@@ -99,6 +151,12 @@ export function ActionChips({ characterStats, characterInventory, combatState, c
     setChip(`Ki: ${sublabel}`);
     setShowKiPicker(false);
   }
+
+  const endTurnBtnCls = allUsed
+    ? 'border-indigo-400 text-indigo-700 bg-indigo-50 font-semibold'
+    : actionUsed
+    ? 'border-slate-300 text-slate-500'
+    : 'border-slate-200 text-slate-300';
 
   return (
     <div className="bg-white border-t border-slate-100 flex-shrink-0">
@@ -123,6 +181,17 @@ export function ActionChips({ characterStats, characterInventory, combatState, c
           )}
         </div>
       )}
+
+      {/* Hidden status badge */}
+      {isHiding && (
+        <div className="px-4 pt-1.5 pb-0">
+          <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-700">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 flex-shrink-0" />
+            Hidden — Sneak Attack active
+          </span>
+        </div>
+      )}
+
       {!isDying && confirmingEndTurn && (
         <div className="flex items-center gap-2 px-4 py-2 bg-amber-50 border-t border-amber-100">
           <span className="text-xs text-amber-800 flex-1">{confirmMessage}</span>
@@ -162,33 +231,59 @@ export function ActionChips({ characterStats, characterInventory, combatState, c
           ))}
         </div>
       )}
-      <div className="flex gap-2 overflow-x-auto px-4 py-2" style={{ scrollbarWidth: 'none' }}>
+
+      {/* Glossary bottom sheet */}
+      {showGlossary && (
+        <div className="fixed inset-0 z-50 flex flex-col justify-end" onClick={() => setShowGlossary(false)}>
+          <div className="bg-white rounded-t-2xl shadow-2xl p-5 pb-8 max-h-[60vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <span className="text-sm font-semibold text-slate-800">Combat Actions</span>
+              <button onClick={() => setShowGlossary(false)} className="text-slate-400 text-xl leading-none">×</button>
+            </div>
+            <div className="space-y-3">
+              {GLOSSARY.map(g => (
+                <div key={g.label}>
+                  <span className="text-xs font-semibold text-slate-700">{g.label}</span>
+                  <p className="text-xs text-slate-500 mt-0.5">{g.desc}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="flex items-center gap-2 px-4 py-2">
+        <div className="flex gap-2 overflow-x-auto flex-1 min-w-0" style={{ scrollbarWidth: 'none' }}>
         {!isDying && (
           <>
-            {STANDARD_CHIPS.map(c => {
-              const isUseItem = c.id === 'use_item';
-              const greyed = actionUsed || (isUseItem && !hasCombatItems);
-              const isActive = chip?.startsWith('Use:') && isUseItem ? true : chip === c.label;
+            {orderedChips.map(scored => {
+              if (!scored.visible) return null;
+              const isUseItem = scored.id === 'use_item';
+              const isRollSheet = ROLL_SHEET_HINTS.has(scored.hint);
+              const disabled = actionUsed || (isUseItem && !hasCombatItems);
+
+              const cls = `px-3 py-1.5 rounded-full border text-xs font-medium whitespace-nowrap flex-shrink-0 transition-colors ${variantCls(scored.variant, disabled)} ${scored.killBlow && !disabled ? 'ring-2 ring-offset-1 ring-amber-400 animate-pulse' : ''}`;
+
               return (
                 <button
-                  key={c.id}
-                  disabled={actionUsed}
+                  key={scored.id}
+                  disabled={disabled}
                   onClick={() => {
-                    if (isUseItem) onOpenItemSheet();
-                    else tapChip(c.label);
+                    if (disabled) return;
+                    if (isUseItem) { onOpenItemSheet(); return; }
+                    if (isRollSheet && onOpenRollSheet) {
+                      onOpenRollSheet(scored.hint as 'attack' | 'hide' | 'provoke' | 'shove');
+                    } else {
+                      tapChip(scored.label);
+                    }
                   }}
-                  className={`px-3 py-1.5 rounded-full border text-xs font-medium whitespace-nowrap flex-shrink-0 transition-colors ${
-                    isActive
-                      ? 'bg-indigo-600 text-white border-indigo-600'
-                      : greyed
-                      ? 'border-slate-200 text-slate-300 cursor-not-allowed'
-                      : 'border-slate-300 text-slate-600 hover:bg-slate-50'
-                  }`}
+                  className={cls}
                 >
-                  {c.label}
+                  {scored.label}
                 </button>
               );
             })}
+
             {features.map(f => {
               const isCunning = !!f.cunning;
               const isKi = !!f.ki;
@@ -216,7 +311,19 @@ export function ActionChips({ characterStats, characterInventory, combatState, c
                 </button>
               );
             })}
+
           </>
+        )}
+        </div>
+
+        {/* Pinned help button — always visible outside scroll */}
+        {!isDying && (
+          <button
+            onClick={() => setShowGlossary(true)}
+            className="flex-shrink-0 w-7 h-7 rounded-full border border-slate-200 text-slate-400 text-xs font-medium flex items-center justify-center hover:bg-slate-50 hover:text-slate-600 transition-colors"
+          >
+            ?
+          </button>
         )}
       </div>
     </div>

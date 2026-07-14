@@ -1,7 +1,9 @@
 import { prisma } from '@/lib/prisma';
-import { DUNGEON_ACTS } from '@/lib/v2/act-definitions';
+import { DUNGEON_ACTS, PROVING_GROUNDS_ACTS } from '@/lib/v2/act-definitions';
 import type { ActMutation } from '@/lib/v2/act-definitions';
 import { applyXpAward } from '@/lib/v2/xp-helpers';
+
+const PROVING_GROUNDS_DUNGEON_ID = 'd9d00001-d9d0-d9d0-d9d0-d9d000000001';
 
 // ─── Act Progression ──────────────────────────────────────────────────────────
 
@@ -30,18 +32,25 @@ async function applyActOnStartMutations(
 export async function checkAndAdvanceAct(sessionId: string): Promise<void> {
   const session = await prisma.gameSession.findUniqueOrThrow({
     where: { id: sessionId },
-    select: { storyFlags: true, currentObjective: true },
+    select: {
+      storyFlags: true,
+      currentObjective: true,
+      roomInstances: { select: { template: { select: { dungeonTemplateId: true } } }, take: 1 },
+    },
   });
+  const dungeonId = session.roomInstances[0]?.template?.dungeonTemplateId;
+  const actDefs = dungeonId === PROVING_GROUNDS_DUNGEON_ID ? PROVING_GROUNDS_ACTS : DUNGEON_ACTS;
+
   const flags = (session.storyFlags as Record<string, unknown>) ?? {};
   const currentAct = typeof flags.current_act === 'number' ? flags.current_act : 1;
 
-  const actDef = DUNGEON_ACTS.find(a => a.act === currentAct);
+  const actDef = actDefs.find(a => a.act === currentAct);
   if (!actDef) return;
 
   const isComplete = actDef.completionFlags.some(f => flags[f] === true);
   if (!isComplete) return;
 
-  const nextActDef = DUNGEON_ACTS.find(a => a.act === currentAct + 1);
+  const nextActDef = actDefs.find(a => a.act === currentAct + 1);
   const milestoneXp = (actDef as { milestoneXp?: number }).milestoneXp ?? 0;
   console.log(`[act] act ${currentAct} complete → advancing to act ${currentAct + 1} (${milestoneXp} milestone XP)`);
 

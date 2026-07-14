@@ -8,7 +8,7 @@ import { ItemPickerSheet } from '@/components/v2/inventory/InventoryTab';
 import { ActionChips } from '@/components/v2/combat/ActionChips';
 import { ChatMessage } from '@/components/v2/chat/ChatMessage';
 
-export function ChatTab({ history, hasMore, loadingMore, loadMore, sending, error, input, setInput, sendAction, handleKeyDown, chip, setChip, gameState, combatState, characterStats, characterInventory, chatEndRef, chatContainerRef, showResumeCard, onDismissResume, roomName, characterId, partyMembers, onEndTurn, onFeatureActivate, situationSummary, combatAlert }: {
+export function ChatTab({ history, hasMore, loadingMore, loadMore, sending, error, input, setInput, sendAction, handleKeyDown, chip, setChip, gameState, combatState, characterStats, characterInventory, chatEndRef, chatContainerRef, showResumeCard, onDismissResume, roomName, characterId, partyMembers, onEndTurn, onFeatureActivate, onOpenRollSheet, situationSummary, combatAlert }: {
   history: HistoryEntry[];
   hasMore: boolean;
   loadingMore: boolean;
@@ -34,6 +34,7 @@ export function ChatTab({ history, hasMore, loadingMore, loadMore, sending, erro
   partyMembers: PartyMemberInfo[];
   onEndTurn: () => void;
   onFeatureActivate?: (label: string) => void;
+  onOpenRollSheet?: (hint: 'attack' | 'hide' | 'provoke' | 'shove') => void;
   situationSummary?: string | null;
   combatAlert?: CombatAlertInfo | null;
 }) {
@@ -116,9 +117,11 @@ export function ChatTab({ history, hasMore, loadingMore, loadMore, sending, erro
           combatState={combatState}
           chip={chip}
           setChip={setChip}
+          characterId={characterId}
           onOpenItemSheet={handleOpenItemSheet}
           onEndTurn={onEndTurn}
           onFeatureActivate={onFeatureActivate}
+          onOpenRollSheet={onOpenRollSheet}
         />
       )}
 

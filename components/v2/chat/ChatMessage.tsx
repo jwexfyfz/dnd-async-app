@@ -7,6 +7,21 @@ import { CombatBanner } from '@/components/v2/combat/CombatBanner';
 import type { HistoryEntry, InitiativeRollEntry } from '@/components/v2/combat/CombatBanner';
 
 export function ChatMessage({ entry, characterId }: { entry: HistoryEntry; characterId?: string }) {
+  if (entry.isShimmer) {
+    return (
+      <div className="flex justify-start my-2 gap-2">
+        <div className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center bg-slate-100 text-xs mt-1">
+          <span>🎲</span>
+        </div>
+        <div className="max-w-sm px-4 py-3 bg-white border border-slate-200 rounded-2xl rounded-bl-sm space-y-2 animate-pulse">
+          <div className="h-2.5 bg-slate-200 rounded-full w-48" />
+          <div className="h-2.5 bg-slate-200 rounded-full w-64" />
+          <div className="h-2.5 bg-slate-200 rounded-full w-36" />
+        </div>
+      </div>
+    );
+  }
+
   if (typeof entry.text !== 'string') {
     console.error('[ChatMessage] non-string text — this will throw React error #31:', entry);
   }
@@ -157,6 +172,19 @@ export function ChatMessage({ entry, characterId }: { entry: HistoryEntry; chara
               {slot !== undefined && <span className="ml-1 text-slate-400">(#{slot})</span>}
             </span>
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (type === 'mechanical_summary') {
+    return (
+      <div className="flex justify-start my-2 gap-2">
+        <div className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center bg-slate-100 text-xs mt-1">
+          <span>⚙</span>
+        </div>
+        <div className="max-w-sm px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl rounded-bl-sm text-xs text-slate-500 font-mono leading-relaxed">
+          {entry.text}
         </div>
       </div>
     );

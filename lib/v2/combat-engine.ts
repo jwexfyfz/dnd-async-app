@@ -158,6 +158,7 @@ export async function enterCombat(
       proximity: 'close',
       grid_slot: enemyPoi?.template.grid_slot ?? 'C',
       status_effects: [],
+      str_score: enemy.combatStats.str_score,
       resistances: enemy.combatStats.resistances ?? [],
       passive_perception: enemy.combatStats.passive_perception ?? (10 + abilityModifier(enemy.combatStats.wis_score ?? 10)),
     };
@@ -547,14 +548,20 @@ export function resolveEnemyTurn(
   let hpDamage = 0;
   let updatedEntry = { ...entry };
 
+  // Clear prone at the start of this enemy's turn (they spend movement to stand)
+  if (updatedEntry.status_effects.includes('prone')) {
+    updatedEntry = { ...updatedEntry, status_effects: updatedEntry.status_effects.filter(s => s !== 'prone') };
+    facts.push(`${entry.name} stands up.`);
+  }
+
   if (entry.surprised) {
-    updatedEntry = { ...entry, surprised: false };
+    updatedEntry = { ...updatedEntry, surprised: false };
     facts.push(`${entry.name} is surprised and loses their turn.`);
     console.log(`[stage3:enemy-turn] ${entry.name} — action=skip (surprised)`);
     return { facts, hpDamage, updatedEntry };
   }
 
-  if (entry.status_effects.includes('turned')) {
+  if (updatedEntry.status_effects.includes('turned')) {
     facts.push(`${entry.name} is turned — cowering in fear, unable to act.`);
     console.log(`[stage3:enemy-turn] ${entry.name} — action=skip (turned)`);
     return { facts, hpDamage, updatedEntry };
@@ -1093,7 +1100,9 @@ export function resolveCombatAction(
 
         if (newHp <= 0) {
           console.log(`[stage3:enemy-dead] ${target.name} dropped to 0 HP — removed from initiative`);
-          facts.push(`${target.name} dropped to 0 HP and is dead.`);
+          const overkill = effectiveDamage - target.hp;
+          const overkillNote = overkill > 0 ? ` (overkill by ${overkill} — they had ${target.hp} HP left)` : '';
+          facts.push(`${target.name} dropped to 0 HP and is dead.${overkillNote}`);
           const isSilentKill = isHidden && (equippedWeapon?.silent ?? false);
           deadEnemyPoiIds.push(target.id);
           if (!isSilentKill) silentKillIds.delete(target.id);
@@ -1163,6 +1172,35 @@ export function resolveCombatAction(
         facts.push(`${character.name} provokes ${target.name} — Intimidation ${check.total} vs DC ${intimidDC}, failure. ${target.name} gains advantage on next attack.`);
       }
       rollLogs.push({ type: 'combat_roll', action: `${character.name} intimidates ${target.name}`, d20: check.roll, modifier: chaMod, total: check.total, vsTarget: `DC ${intimidDC}`, success: check.success });
+    }
+
+  } else if (action.action_type === 'shove') {
+    const targetId = action.target_poi_instance_id;
+    const targetIdx = targetId
+      ? order.findIndex(e => e.id === targetId && e.proximity === 'close' && e.hp > 0)
+      : order.findIndex(e => e.type === 'enemy' && e.proximity === 'close' && e.hp > 0);
+
+    if (targetIdx === -1) {
+      facts.push(`${character.name} tries to shove but no enemy is close enough.`);
+    } else {
+      const target = order[targetIdx];
+      const strMod = abilityModifier(character.baseStrength);
+      const profBonus = character.level >= 5 ? 3 : 2;
+      const playerContest = randomInt(1, 21) + strMod + profBonus;
+      const d20Roll = playerContest - strMod - profBonus;
+
+      const enemyStrScore = target.str_score ?? 10;
+      const enemyContest = randomInt(1, 21) + abilityModifier(enemyStrScore);
+
+      if (playerContest > enemyContest) {
+        order[targetIdx] = { ...target, status_effects: [...target.status_effects.filter(s => s !== 'prone'), 'prone'] };
+        facts.push(`${character.name} shoves ${target.name} — contest ${playerContest} vs ${enemyContest}, success. ${target.name} is knocked prone (attacks against them have advantage; their attacks have disadvantage).`);
+        rollLogs.push({ type: 'combat_roll', action: `${character.name} shoves ${target.name}`, d20: d20Roll, modifier: strMod + profBonus, total: playerContest, vsTarget: `Contest ${enemyContest}`, success: true });
+      } else {
+        facts.push(`${character.name} attempts to shove ${target.name} — contest ${playerContest} vs ${enemyContest}, failed.`);
+        rollLogs.push({ type: 'combat_roll', action: `${character.name} shoves ${target.name}`, d20: d20Roll, modifier: strMod + profBonus, total: playerContest, vsTarget: `Contest ${enemyContest}`, success: false });
+      }
+      turnUsage = { ...turnUsage, actionUsed: true };
     }
 
   } else if (action.action_type === 'change_proximity') {

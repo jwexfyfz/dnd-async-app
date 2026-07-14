@@ -26,6 +26,7 @@ ACTION TYPES:
 - "disengage"        — Player takes the Disengage action to avoid opportunity attacks.
 - "hide"             — Player attempts to hide. No target needed.
 - "provoke"          — Player attempts to taunt or intimidate an enemy. Set target_poi_instance_id to the enemy's POI instance ID if identifiable.
+- "shove"            — Player attempts to shove, push, trip, or knock down an enemy. Requires target_poi_instance_id. Only valid against enemies at close range. Uses a Strength contest.
 - "death_save"       — Player at 0 HP makes a death saving throw. No target needed.
 - "use_class_feature" — Player activates a class feature that costs a bonus action. Set interaction_result to the feature key (see list below). Set target_poi_instance_id to the enemy target if the feature targets one.
   Feature keys:
@@ -38,7 +39,6 @@ ACTION TYPES:
   • "bardic_inspiration" — Bard grants an ally a d6 inspiration die to add to their next attack roll (bonus action). Set target_character_id to the ally.
   • "sacred_weapon"    — Paladin (Devotion) consecrates their weapon via Channel Divinity (bonus action).
   • "vow_of_enmity"    — Paladin (Vengeance) swears Vow of Enmity against a target via Channel Divinity (bonus action). Set target_poi_instance_id.
-  • "crimson_rite"     — Blood Hunter activates Crimson Rite to imbue weapon with elemental damage (bonus action).
   • "flurry_of_blows"  — Monk spends 1 Ki to make 2 rapid unarmed strikes (bonus action). Set target_poi_instance_id.
   • "patient_defense"  — Monk spends 1 Ki to take the Dodge action (bonus action).
   • "step_of_the_wind" — Monk spends 1 Ki to Dash or Disengage (bonus action).
@@ -258,5 +258,20 @@ STRICT INSTRUCTIONS:
 - Do NOT describe future actions or ask the player what they want to do next.
 - EXIT/DOOR RULE: The EXIT STATES block is authoritative. If a door or gate is listed as "closed" or "locked", the character has NOT opened it, unlocked it, or passed through it — even if the action brought them to the doorway. Do NOT write that any door was opened, pushed, or traversed unless the engine update explicitly says so.
 - APPROACH RULE: A "change_proximity" action means the character walked up to a POI and stopped. Narrate their arrival at it. If the ENGINE UPDATE includes "peers through" or "Visible from this vantage", also describe what the character sees through the opening — use only the listed POI names, do not invent contents.
-- HP RULE: Never expose exact HP numbers (e.g. "38/60 HP") in the narrative. Use the condition descriptor provided (wounded, bloodied, near death) or equivalent prose only.`;
+- HP RULE: Never expose exact HP numbers (e.g. "38/60 HP") in the narrative. Use the condition descriptor provided (wounded, bloodied, near death) or equivalent prose only.
+- FLAVOR TEXT RULE: If the ENGINE UPDATE contains a "PLAYER FLAVOR:" line, you are bound to honor it. Rules:
+  1. Use the player's described action literally — if they say "kick him in the nuts", the narration must involve a kick to the groin specifically. Do not substitute a generic "strike" or "attack."
+  2. Mirror tone exactly. Comedic input demands comedy in return. Dramatic input demands drama.
+  3. The world takes the action seriously even when it's absurd. A sneeze attack is still an attack. Commit to the bit.
+  4. On a miss or fumble, the failure must also honor the flavor — the absurd plan fails in an even more absurd way.
+  5. On a hit, the enemy's reaction must match the flavor.
+  6. On a critical, go further — the universe rewards audacity. Something extra happens.
+- OVERKILL RULE: If the ENGINE UPDATE states the enemy was killed with "overkill by N", acknowledge the excess in one dry or darkly comic beat — the universe noticed. Scale the absurdity to the margin: 1–3 overkill = barely worth mentioning, 10+ = genuinely excessive.
+- ROLL SEVERITY RULE: If the ENGINE UPDATE contains "ROLL SEVERITY:", scale your narration's drama, length, and specificity to match the d20 value.
+  d20=1 (FUMBLE): Something goes wrong beyond just missing. The failure is specific and slightly humiliating.
+  d20=2–5 (BAD MISS): Embarrassingly off-target. The enemy barely had to move. Short and deflating.
+  d20=6–11 (CLEAN MISS): A genuine attempt that didn't connect. Neutral, matter-of-fact.
+  d20=12–16 (SOLID HIT): Workmanlike and confident. The blow lands. Don't over-dramatize.
+  d20=17–19 (DECISIVE HIT): Clearly felt. One concrete physical detail about the impact.
+  d20=20 (CRITICAL HIT): Legendary. Longer sentence — one extra detail about the enemy's reaction or something unexpected.`;
 }

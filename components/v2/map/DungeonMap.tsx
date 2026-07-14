@@ -178,8 +178,13 @@ export function DungeonMap({ mapData, currentRoomInstanceId, showLegend }: { map
   const visibleDeadPoisByRoom = new Map<string, MapPoi[]>();
   for (const room of mapData.rooms) {
     const isCurrentRoom = room.instanceId === currentRoomInstanceId;
+    // Suppress POI labels for living enemies already rendered as character tokens
+    const activeCombatEnemyIds = new Set(
+      room.characters.filter(c => c.type === 'enemy' && !c.isDead).map(c => c.characterId)
+    );
     const visibilityFilter = (p: MapPoi) => {
       if (p.poi_type === 'open_space' || p.poi_type === 'exit') return false;
+      if (p.instanceId && activeCombatEnemyIds.has(p.instanceId)) return false;
       if (!isCurrentRoom) {
         const sourcePos = currentRoom ? roomPx.get(currentRoom.instanceId) : null;
         if (!sourcePos || !currentRoom) return false;

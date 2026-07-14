@@ -4,6 +4,7 @@ export interface PoiCombatStats {
   dex_score?: number;
   wis_score?: number;
   con_score?: number;
+  str_score?: number;
   attack_bonus?: number;
   damage?: string;
   max_hp?: number;

@@ -69,8 +69,4 @@ export const STARTING_EQUIPMENT: Record<string, CharacterInventory> = {
     equipped: { main_hand: shortsword, chest: leatherArmor },
     bag: [{ ...dagger, id: 'starting_warlock_dagger' }],
   },
-  Artificer: {
-    equipped: { main_hand: { id: 'starting_hand_crossbow', name: 'Hand Crossbow', damage_dice: '1d6', weapon_type: 'ranged', equip_slot: 'main_hand' }, chest: scaleMail },
-    bag: [{ ...dagger, id: 'starting_artificer_dagger' }],
-  },
 };

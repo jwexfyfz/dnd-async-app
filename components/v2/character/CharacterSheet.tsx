@@ -4,6 +4,7 @@ import { useState } from 'react';
 import type { CharacterStats } from '@/types/v2-game';
 import { CLASS_FEATURES } from '@/components/v2/combat/InitiativeStrip';
 import { ABILITY_DESCRIPTIONS, ABILITY_PASSIVE_NOTES, SKILL_ABILITY, SKILL_DESCRIPTIONS } from '@/lib/v2/skill-descriptions';
+import { proficiencyBonus } from '@/lib/dice';
 import type { AsiChoices, StatKey } from '@/lib/v2/asi-helpers';
 import { computeConHpDelta } from '@/lib/v2/asi-helpers';
 import { SubclassPicker } from '@/components/v2/character/SubclassPicker';
@@ -170,9 +171,21 @@ export function CharacterSheet({ stats, isCombat, isOwn, onFeatureActivate, onAs
   const [activeAbility, setActiveAbility] = useState('STR');
   const features = CLASS_FEATURES[stats.characterClass] ?? [];
 
-  const skillsModifiers = stats.skillsModifiers as Record<string, number>;
-  const activeSkills = Object.entries(skillsModifiers)
-    .filter(([skill]) => SKILL_ABILITY[skill] === activeAbility)
+  const ABILITY_TO_BASE: Record<string, keyof CharacterStats> = {
+    STR: 'baseStrength', DEX: 'baseDexterity', CON: 'baseConstitution',
+    INT: 'baseIntelligence', WIS: 'baseWisdom', CHA: 'baseCharisma',
+  };
+  const profBonus = proficiencyBonus(stats.level);
+  const storedMods = stats.skillsModifiers as Record<string, number>;
+  const activeSkills: [string, number][] = Object.entries(SKILL_ABILITY)
+    .filter(([, ability]) => ability === activeAbility)
+    .map(([skill]) => {
+      const baseKey = ABILITY_TO_BASE[activeAbility];
+      const abilMod = Math.floor(((stats[baseKey] as number) - 10) / 2);
+      const isProficient = stats.skillProficiencies.includes(skill);
+      const mod = skill in storedMods ? storedMods[skill] : abilMod + (isProficient ? profBonus : 0);
+      return [skill, mod] as [string, number];
+    })
     .sort(([a], [b]) => a.localeCompare(b));
 
   const atkMod = stats.attackBonus >= 0 ? `+${stats.attackBonus}` : `${stats.attackBonus}`;
@@ -228,7 +241,7 @@ export function CharacterSheet({ stats, isCombat, isOwn, onFeatureActivate, onAs
                 }`}
               >
                 <div className={`text-xs font-semibold leading-none mb-1.5 ${meta.labelColor}`}>{s.label}</div>
-                <div className={`text-2xl font-bold tracking-tight ${s.valueColor}`}>{s.value}</div>
+                <div className={`font-bold tracking-tight leading-tight ${s.value.length >= 4 ? 'text-sm' : 'text-2xl'} ${s.valueColor}`}>{s.value}</div>
               </button>
             );
           })}

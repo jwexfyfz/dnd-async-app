@@ -3,6 +3,7 @@ export interface GameActionRequest {
   roomInstanceId: string;
   playerActionText: string;
   action_hint?: string | null;
+  target_poi_instance_id?: string | null;
 }
 
 export type ActionType =
@@ -22,6 +23,7 @@ export type ActionType =
   | 'use_item'
   | 'throw_item'
   | 'attack'
+  | 'shove'
   | 'dodge'
   | 'dash'
   | 'disengage'
@@ -141,6 +143,7 @@ export interface InitiativeEntry {
   status_effects: string[];
   priority_target?: string;
   priority_target_until_round?: number;
+  str_score?: number;
   reactionUsed?: boolean;
   resistances?: string[];
   passive_perception?: number;
@@ -287,4 +290,13 @@ export interface ViewStatePayload {
   adjacentRoomPreviews: Record<string, AdjacentRoomPreview>;
   characterStats: CharacterStats;
   partyMembers: PartyMemberInfo[];
+  rollResult?: {
+    d20: number;
+    allRolls?: number[];
+    success: boolean;
+    isCrit: boolean;
+    damage?: number;
+    targetDefeated?: boolean;
+    rollType?: 'attack' | 'hide' | 'provoke' | 'shove';
+  };
 }

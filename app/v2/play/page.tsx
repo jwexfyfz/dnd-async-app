@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useLayoutEffect, useRef, useState, useCallback, Suspense } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import type { CombatState, CharacterStats, InitiativeEntry, CharacterInventory, ItemDefinition, PartyMemberInfo, CombatAlertInfo, RemoteCombatInfo } from '@/types/v2-game';
 import { classEmoji, classSprite } from '@/lib/class-emoji';
@@ -11,6 +11,8 @@ import { CombatBanner, ExplorationResumeCard, CombatResumeCard, RemoteCombatBann
 import type { HistoryEntry, InitiativeRollEntry } from '@/components/v2/combat/CombatBanner';
 import { InitiativeStrip, InitiativeMiniSheet, CLASS_FEATURES } from '@/components/v2/combat/InitiativeStrip';
 import { ActionChips, TurnBadge } from '@/components/v2/combat/ActionChips';
+import { CombatRollSheet } from '@/components/v2/combat/CombatRollSheet';
+import type { TargetOption, RollSheetResult } from '@/components/v2/combat/CombatRollSheet';
 import { InventoryTab, ItemPickerSheet } from '@/components/v2/inventory/InventoryTab';
 import { UseButtons } from '@/components/v2/inventory/UseButtons';
 import { PartyTab } from '@/components/v2/character/PartyTab';
@@ -45,6 +47,15 @@ import type { AsiChoices } from '@/lib/v2/asi-helpers';
 
 
 // ─── ChatMessage — see imports (ChatMessage from chat/ChatMessage) ─────────────
+
+// Maps chip display labels to their canonical action_hint values.
+// Without this, "Back Off" gets sent as action_hint and the intent parser
+// mis-reads it as change_proximity (movement) instead of disengage (action).
+const CHIP_HINT_MAP: Record<string, string> = {
+  'Back Off': 'disengage',
+  'Dodge': 'dodge',
+  'Dash': 'dash',
+};
 
 function PlayContent() {
   const router = useRouter();
@@ -83,6 +94,10 @@ function PlayContent() {
   const [popupDismissed, setPopupDismissed] = useState(false);
   const [sacrificeModalOpen, setSacrificeModalOpen] = useState(false);
   const [sacrificeConfirming, setSacrificeConfirming] = useState(false);
+  const [rollSheetAction, setRollSheetAction] = useState<{ hint: 'attack' | 'hide' | 'provoke' | 'shove'; validTargets: TargetOption[] } | null>(null);
+  const [chatRollResult, setChatRollResult] = useState<{ hint: 'attack' | 'hide' | 'provoke' | 'shove'; result: RollSheetResult } | null>(null);
+  const narrativePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const rollNarrativeArrivedRef = useRef(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const suppressScrollRef = useRef(false);
@@ -296,7 +311,7 @@ function PlayContent() {
       const res = await fetch('/api/v2/game/action', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ characterId, roomInstanceId: activeRoomInstanceId, playerActionText: text, action_hint: chip ?? undefined }),
+        body: JSON.stringify({ characterId, roomInstanceId: activeRoomInstanceId, playerActionText: text, action_hint: CHIP_HINT_MAP[chip ?? ''] ?? chip ?? undefined }),
       });
       const data = await res.json();
       if (!res.ok) { setError(data.error ?? 'Something went wrong'); return; }
@@ -356,6 +371,56 @@ function PlayContent() {
       setChip(null);
 
       setMapRefreshKey(k => k + 1);
+
+      // If the server took the fire-and-forget narrative path (roll occurred), show dice
+      // animation and poll for the narrative that arrives asynchronously.
+      const rawRollResult = data.rollResult as { d20?: number; success?: boolean; isCrit?: boolean; damage?: number; targetDefeated?: boolean; rollType?: string } | undefined;
+      if (rawRollResult) {
+        const hint = (rawRollResult.rollType ?? 'attack') as 'attack' | 'hide' | 'provoke' | 'shove';
+        setChatRollResult({
+          hint,
+          result: {
+            d20: rawRollResult.d20 ?? 0,
+            success: rawRollResult.success ?? false,
+            isCrit: rawRollResult.isCrit ?? false,
+            damageDealt: rawRollResult.damage,
+            targetDefeated: rawRollResult.targetDefeated,
+          },
+        });
+        // Poll for the narrative that will be written after this response returns
+        const since = newestTimestampRef.current;
+        if (since && sessionId) {
+          rollNarrativeArrivedRef.current = false;
+          if (narrativePollRef.current) clearInterval(narrativePollRef.current);
+          let attempts = 0;
+          narrativePollRef.current = setInterval(async () => {
+            attempts++;
+            try {
+              const r = await fetch(`/api/v2/room/history?sessionId=${sessionId}&since=${since}`);
+              const { logs } = await r.json() as { logs: HistoryEntry[] };
+              if (logs?.length > 0) {
+                clearInterval(narrativePollRef.current!);
+                narrativePollRef.current = null;
+                rollNarrativeArrivedRef.current = true;
+                setHistory(prev => {
+                  const withoutShimmer = prev.filter(e => !e.isShimmer);
+                  const ids = new Set(withoutShimmer.map(e => e.id));
+                  const fresh = logs.filter(e => !ids.has(e.id));
+                  if (fresh.length === 0) return prev;
+                  const newest = fresh[fresh.length - 1].createdAt;
+                  if (!newestTimestampRef.current || newest > newestTimestampRef.current) {
+                    newestTimestampRef.current = newest;
+                  }
+                  return [...withoutShimmer, ...fresh];
+                });
+              } else if (attempts >= 12) {
+                clearInterval(narrativePollRef.current!);
+                narrativePollRef.current = null;
+              }
+            } catch { /* ignore poll errors */ }
+          }, 500);
+        }
+      }
     } catch {
       setError('Network error — please try again.');
       setHistory(prev => prev.filter(e => !e.id.startsWith('optimistic-')));
@@ -363,13 +428,74 @@ function PlayContent() {
       setSending(false);
       sendingRef.current = false;
     }
-  }, [input, sending, activeRoomInstanceId, characterId, chip, gameState]);
+  }, [input, sending, activeRoomInstanceId, characterId, chip, gameState, sessionId]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendAction(); }
   };
 
-  // Fires a game action directly (e.g. from inventory buttons) without touching the chat input.
+  // Apply API response data to local state (shared between chat send, direct actions, and roll sheet)
+  const applyActionResponse = useCallback((data: Record<string, unknown>, prevGs: 'exploration' | 'combat', opts?: { switchToChat?: boolean; stripShimmer?: boolean }) => {
+    const newNarrative: HistoryEntry[] = (data.currentNarrative as HistoryEntry[]) ?? [];
+    const nextGs = (data.gameState as 'exploration' | 'combat') ?? prevGs;
+    setHistory(prev => {
+      const withoutInjected = prev.filter(e => e.id !== 'injected-current' && !(opts?.stripShimmer && e.isShimmer));
+      const existingIds = new Set(withoutInjected.map(e => e.id));
+      const fresh = newNarrative.filter(e => !existingIds.has(e.id));
+      const base = [...withoutInjected, ...fresh];
+      if (prevGs !== nextGs) {
+        const hasCombatStartInFresh = fresh.some(e => (e.mechanicalSummary as Record<string,unknown> | null)?.type === 'combat_start');
+        if (nextGs === 'combat' && !hasCombatStartInFresh) {
+          base.push(buildBannerEntry('combat_start', data.combatState as CombatState | null));
+        } else if (nextGs === 'exploration') {
+          base.push(buildBannerEntry('combat_end'));
+        }
+      }
+      return base;
+    });
+    if (newNarrative.length > 0) {
+      const newest = newNarrative[newNarrative.length - 1].createdAt;
+      if (!newestTimestampRef.current || newest > newestTimestampRef.current) {
+        newestTimestampRef.current = newest;
+      }
+    }
+    if (data.gameState) setGameState(data.gameState as 'exploration' | 'combat');
+    setCombatState((data.combatState as CombatState | null) ?? null);
+    setCombatAlert((data.combatAlert as CombatAlertInfo | null) ?? null);
+    setRemoteCombat((data.remoteCombat as RemoteCombatInfo | null) ?? null);
+    if (data.characterStats) setCharacterStats(data.characterStats as CharacterStats);
+    if (data.characterInventory) setCharacterInventory(data.characterInventory as CharacterInventory);
+    if (data.roomName) setRoomName(data.roomName as string);
+    setProximityPoi((data.characterProximityPoi as { id: string; name: string } | null) ?? null);
+    if (data.partyMembers) setPartyMembers(data.partyMembers as PartyMemberInfo[]);
+    if (data.poiIndex) setAvailablePois(Object.entries(data.poiIndex as Record<string,string>).map(([id, name]) => ({ id, name })));
+    setMapRefreshKey(k => k + 1);
+    if (opts?.switchToChat) setActiveTab('chat');
+  }, []);
+
+  // Fetch wrapper with 15s timeout — returns raw API data, throws on error
+  const dispatchAction = useCallback(async (text: string, hint: string, targetPoiId?: string | null): Promise<Record<string, unknown>> => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
+    try {
+      const res = await fetch('/api/v2/game/action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ characterId, roomInstanceId: activeRoomInstanceId, playerActionText: text, action_hint: hint, target_poi_instance_id: targetPoiId }),
+        signal: controller.signal,
+      });
+      const data = await res.json() as Record<string, unknown>;
+      if (!res.ok) throw new Error((data.error as string) ?? 'Action failed');
+      return data;
+    } catch (err) {
+      if ((err as Error).name === 'AbortError') throw new Error('The action timed out — try again.');
+      throw err;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }, [characterId, activeRoomInstanceId]);
+
+  // Fires a game action directly (e.g. from direct-fire chips: dodge, dash, disengage)
   const executeDirectAction = useCallback(async (text: string, hint: string, switchToChat = true) => {
     if (sending || !activeRoomInstanceId || !characterId) return;
     const prevGs = gameState;
@@ -378,53 +504,107 @@ function PlayContent() {
     setError('');
     setShowResumeCard(false);
     try {
-      const res = await fetch('/api/v2/game/action', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ characterId, roomInstanceId: activeRoomInstanceId, playerActionText: text, action_hint: hint }),
-      });
-      const data = await res.json();
-      if (!res.ok) { setError(data.error ?? 'Action failed'); return; }
-      const newNarrative: HistoryEntry[] = data.currentNarrative ?? [];
-      const nextGs = (data.gameState as 'exploration' | 'combat') ?? prevGs;
-      setHistory(prev => {
-        const withoutInjected = prev.filter(e => e.id !== 'injected-current');
-        const existingIds = new Set(withoutInjected.map(e => e.id));
-        const fresh = newNarrative.filter(e => !existingIds.has(e.id));
-        const base = [...withoutInjected, ...fresh];
-        if (prevGs !== nextGs) {
-          const hasCombatStartInFresh = fresh.some(e => (e.mechanicalSummary as Record<string,unknown> | null)?.type === 'combat_start');
-          if (nextGs === 'combat' && !hasCombatStartInFresh) {
-            base.push(buildBannerEntry('combat_start', data.combatState as CombatState | null));
-          } else if (nextGs === 'exploration') {
-            base.push(buildBannerEntry('combat_end'));
-          }
-        }
-        return base;
-      });
-      if (newNarrative.length > 0) {
-        const newest = newNarrative[newNarrative.length - 1].createdAt;
-        if (!newestTimestampRef.current || newest > newestTimestampRef.current) {
-          newestTimestampRef.current = newest;
-        }
-      }
-      if (data.gameState) setGameState(data.gameState);
-      setCombatState(data.combatState ?? null);
-      setCombatAlert((data.combatAlert as CombatAlertInfo | null) ?? null);
-      setRemoteCombat((data.remoteCombat as RemoteCombatInfo | null) ?? null);
-      if (data.characterStats) setCharacterStats(data.characterStats);
-      if (data.characterInventory) setCharacterInventory(data.characterInventory);
-      if (data.roomName) setRoomName(data.roomName);
-      setProximityPoi(data.characterProximityPoi ?? null);
-      if (data.partyMembers) setPartyMembers(data.partyMembers);
-      if (data.poiIndex) setAvailablePois(Object.entries(data.poiIndex as Record<string,string>).map(([id, name]) => ({ id, name })));
-      setMapRefreshKey(k => k + 1);
-      if (switchToChat) setActiveTab('chat');
+      const data = await dispatchAction(text, hint);
+      applyActionResponse(data, prevGs, { switchToChat });
+    } catch (err) {
+      setError((err as Error).message ?? 'Action failed');
     } finally {
       setSending(false);
       sendingRef.current = false;
     }
-  }, [sending, activeRoomInstanceId, characterId, gameState]);
+  }, [sending, activeRoomInstanceId, characterId, gameState, dispatchAction, applyActionResponse]);
+
+  // Roll sheet submit — fires action and drives animation
+  const handleRoll = useCallback(async (
+    hint: 'attack' | 'hide' | 'provoke' | 'shove',
+    flavorText: string,
+    targetId: string | null,
+  ): Promise<RollSheetResult> => {
+    const text = flavorText.trim() || hint;
+    const prevGs = gameState;
+    setSending(true);
+    sendingRef.current = true;
+    setError('');
+    rollNarrativeArrivedRef.current = false;
+    if (narrativePollRef.current) { clearInterval(narrativePollRef.current); narrativePollRef.current = null; }
+    try {
+      const data = await dispatchAction(text, hint, targetId);
+      applyActionResponse(data, prevGs, { switchToChat: true });
+
+      // Poll for fire-and-forget narrative starting immediately after server responds
+      const since = newestTimestampRef.current;
+      if (since && sessionId) {
+        let attempts = 0;
+        narrativePollRef.current = setInterval(async () => {
+          attempts++;
+          try {
+            const r = await fetch(`/api/v2/room/history?sessionId=${sessionId}&since=${since}`);
+            const { logs } = await r.json() as { logs: HistoryEntry[] };
+            if (logs?.length > 0) {
+              clearInterval(narrativePollRef.current!);
+              narrativePollRef.current = null;
+              rollNarrativeArrivedRef.current = true;
+              setHistory(prev => {
+                const withoutShimmer = prev.filter(e => !e.isShimmer);
+                const ids = new Set(withoutShimmer.map(e => e.id));
+                const fresh = logs.filter(e => !ids.has(e.id));
+                if (fresh.length === 0) return prev;
+                const newest = fresh[fresh.length - 1].createdAt;
+                if (!newestTimestampRef.current || newest > newestTimestampRef.current) {
+                  newestTimestampRef.current = newest;
+                }
+                return [...withoutShimmer, ...fresh];
+              });
+            } else if (attempts >= 8) {
+              clearInterval(narrativePollRef.current!);
+              narrativePollRef.current = null;
+            }
+          } catch { /* ignore poll errors */ }
+        }, 500);
+      }
+
+      const rollResult = data.rollResult as { d20?: number; allRolls?: number[]; success?: boolean; isCrit?: boolean; damage?: number; targetDefeated?: boolean } | undefined;
+      return {
+        d20: rollResult?.d20 ?? 0,
+        allRolls: rollResult?.allRolls,
+        success: rollResult?.success ?? false,
+        isCrit: rollResult?.isCrit ?? false,
+        damageDealt: rollResult?.damage,
+        targetDefeated: rollResult?.targetDefeated,
+      };
+    } finally {
+      setSending(false);
+      sendingRef.current = false;
+    }
+  }, [gameState, dispatchAction, applyActionResponse, sessionId]);
+
+  const handleRollSheetDismiss = useCallback(() => {
+    setRollSheetAction(null);
+    if (!rollNarrativeArrivedRef.current) {
+      setHistory(prev => [...prev, {
+        id: `shimmer-${Date.now()}`,
+        text: '',
+        isMechanicalEvent: false,
+        mechanicalSummary: null,
+        createdAt: new Date().toISOString(),
+        isShimmer: true,
+      }]);
+    }
+  }, []);
+
+  const handleChatRollDismiss = useCallback(() => {
+    setChatRollResult(null);
+    if (!rollNarrativeArrivedRef.current) {
+      setHistory(prev => [...prev, {
+        id: `shimmer-${Date.now()}`,
+        text: '',
+        isMechanicalEvent: false,
+        mechanicalSummary: null,
+        createdAt: new Date().toISOString(),
+        isShimmer: true,
+      }]);
+    }
+  }, []);
 
   const refreshStats = useCallback(async () => {
     if (!activeRoomInstanceId || !characterId) return;
@@ -602,6 +782,19 @@ function PlayContent() {
   const isRemoteMyTurn = !!remoteCombat && remoteCombat.combatState.activeActorId === characterId;
   const displayGameState: 'exploration' | 'combat' = gameState === 'combat' ? 'combat' : (isRemoteMyTurn ? 'combat' : 'exploration');
   const displayCombatState: CombatState | null = gameState === 'combat' ? combatState : (isRemoteMyTurn ? remoteCombat!.combatState : null);
+
+  const validTargets = useMemo((): TargetOption[] => {
+    if (!displayCombatState) return [];
+    return displayCombatState.initiativeOrder
+      .filter(e => e.type === 'enemy' && e.hp > 0)
+      .map(e => ({ id: e.id, name: e.name, ac: e.ac, hp: e.hp, maxHp: e.maxHp, proximity: e.proximity }));
+  }, [displayCombatState]);
+  const validShoveTargets = useMemo(() => validTargets.filter(t => t.proximity === 'close'), [validTargets]);
+
+  const handleOpenRollSheet = useCallback((hint: 'attack' | 'hide' | 'provoke' | 'shove') => {
+    const targets = hint === 'shove' ? validShoveTargets : validTargets;
+    setRollSheetAction({ hint, validTargets: targets });
+  }, [validTargets, validShoveTargets]);
 
   // Auto-advance turn for unconscious characters — death save resolves server-side
   const isMyTurnLocal = combatState?.activeActorId === characterId;
@@ -857,6 +1050,7 @@ function PlayContent() {
             partyMembers={partyMembers}
             onEndTurn={handleEndTurn}
             onFeatureActivate={handleFeatureActivate}
+            onOpenRollSheet={handleOpenRollSheet}
             situationSummary={situationSummary}
             combatAlert={combatAlert}
           />
@@ -899,6 +1093,37 @@ function PlayContent() {
       </div>
 
       <BottomNav activeTab={activeTab} onTabChange={setActiveTab} hasPendingChoice={hasPendingChoice} />
+
+      {rollSheetAction && characterId && (
+        <CombatRollSheet
+          actionHint={rollSheetAction.hint}
+          attackBonus={characterStats?.attackBonus ?? 0}
+          validTargets={rollSheetAction.validTargets}
+          isSending={sending}
+          onRoll={(flavorText, targetId) => handleRoll(rollSheetAction.hint, flavorText, targetId)}
+          onDismiss={handleRollSheetDismiss}
+          diceCount={(() => {
+            const entry = combatState?.initiativeOrder.find(e => e.id === characterId);
+            if (!entry) return 1;
+            const hasAdvantage = entry.status_effects.includes('advantage_next_attack');
+            const hasElvenAccuracy = entry.status_effects.includes('elven_accuracy_next_attack');
+            if (hasElvenAccuracy) return 3;
+            if (hasAdvantage) return 2;
+            return 1;
+          })()}
+        />
+      )}
+      {chatRollResult && !rollSheetAction && (
+        <CombatRollSheet
+          actionHint={chatRollResult.hint}
+          attackBonus={characterStats?.attackBonus ?? 0}
+          validTargets={[]}
+          isSending={false}
+          onRoll={async () => chatRollResult.result}
+          onDismiss={handleChatRollDismiss}
+          immediateResult={chatRollResult.result}
+        />
+      )}
     </div>
   );
 }

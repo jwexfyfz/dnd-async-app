@@ -52,16 +52,25 @@ export const PROVING_GROUNDS_ACTS: ActDefinitionWithXp[] = [
   },
   {
     act: 2,
-    openingObjective: 'Clear the Proving Ring and face the Arena Floor',
+    openingObjective: 'Clear the Proving Ring and descend to The Gauntlet',
     onStartMutations: [],
     completionFlags: ['proving_ring_cleared'],
     milestoneXp: 300,
   },
   {
     act: 3,
+    openingObjective: 'Prove yourself in The Gauntlet',
+    onStartMutations: [
+      { poiTemplateId: 'd9a30008-d9a3-d9a3-d9a3-d9a300000008', setProps: { unlocked: true } },
+    ],
+    completionFlags: ['gauntlet_cleared'],
+    milestoneXp: 400,
+  },
+  {
+    act: 4,
     openingObjective: 'Face the Proving Master in the Arena Floor',
     onStartMutations: [],
     completionFlags: ['proving_master_defeated'],
-    milestoneXp: 0,
+    milestoneXp: 600,
   },
 ];

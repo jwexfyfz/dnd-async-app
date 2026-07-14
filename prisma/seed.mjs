@@ -2965,7 +2965,8 @@ async function main() {
   // ─── V2: The Proving Grounds ─────────────────────────────────────────────────
   // targetLevelRange: [1, 5]
   // Standalone 4-room dungeon for rapid XP and ability testing.
-  // XP per full clear: 150 (Skirmish Pit) + 400 (Proving Ring) + 850 (Arena Floor) = 1,400 XP
+  // XP per full clear: 150 (Skirmish Pit) + 400 (Proving Ring) + 700 (The Gauntlet) + 850 (Arena Floor) = 2,100 XP
+  // Milestone XP: 300 (ring cleared) + 400 (gauntlet cleared) + 600 (proving master defeated) = 1,300 XP bonus
   console.log("🏋️  Seeding V2 Proving Grounds dungeon...");
 
   const provingGroundsDungeon = await prisma.dungeonTemplate.upsert({
@@ -3732,6 +3733,30 @@ async function main() {
       },
     },
     {
+      id: "d9a30008-d9a3-d9a3-d9a3-d9a300000008",
+      name: "Passage to The Gauntlet",
+      keywordIdentifier: "gauntlet_passage_south",
+      grid_slot: "S",
+      visibility_level: 1,
+      exit_direction: "S",
+      exit_wall_section: "C",
+      exit_arch_width: 2,
+      defaultProperties: {
+        poi_type: "exit",
+        visibility: "always",
+        peek_visibility: "partial",
+        locked_by: "ring_clearance",
+        locked_text: "A heavy iron gate seals the southern passage. A mounted plaque reads: 'The Gauntlet opens only to those who have proven themselves worthy of this ring.'",
+        stand_at: { resulting_stance: "standing_before_gate" },
+        peer_through: { resulting_stance: "peering_through" },
+        enter: { target_room_template_id: "d9d00006-d9d0-d9d0-d9d0-d9d000000006" },
+        perception_details: [
+          { dc: 10, text: "A heavy iron gate blocks the southern passage. It bears the Iron Covenant crest and shows no visible lock mechanism." },
+          { dc: 13, text: "The gate has no keyhole — it's held by enchantment, not metal. Something in this room must trigger it." },
+        ],
+      },
+    },
+    {
       id: "d9a30007-d9a3-d9a3-d9a3-d9a300000007",
       name: "Open Space",
       keywordIdentifier: "open_space",
@@ -4036,6 +4061,283 @@ async function main() {
     });
   }
 
+  // The Gauntlet (0, 2) — hard: 2×CR1 Iron Plate Construct + CR2 Gauntlet Commander (700 XP)
+  // Unlocked by act mutation when proving_ring_cleared fires.
+  const pgGauntlet = await prisma.roomTemplate.upsert({
+    where: { id: "d9d00006-d9d0-d9d0-d9d0-d9d000000006" },
+    create: {
+      id: "d9d00006-d9d0-d9d0-d9d0-d9d000000006",
+      dungeonTemplateId: provingGroundsDungeon.id,
+      name: "The Gauntlet",
+      baseDescription: "A long stone chamber deliberately widened into a fighting floor, its walls scored with the marks of countless weapons. Iron sconces burn with cold enchanted flame. Two suits of animated plate armor — Iron Covenant battle constructs, heavier and more purposeful than anything in the ring — stand at the northern end. At the far wall, a Gauntlet Commander waits with arms crossed, watching your approach with the patience of someone who has done this many times and does not expect to lose.",
+      searchFailureNarrative: "The Gauntlet is a proving floor, not a treasure room. The only thing worth finding here is a way through the constructs.",
+      map_x: 0,
+      map_y: 2,
+    },
+    update: { map_x: 0, map_y: 2 },
+  });
+
+  const pgGauntletPois = [
+    {
+      id: "d9a50001-d9a5-d9a5-d9a5-d9a500000001",
+      name: "Return to Proving Ring",
+      keywordIdentifier: "ring_passage_north",
+      grid_slot: "N",
+      visibility_level: 1,
+      exit_direction: "N",
+      exit_wall_section: "C",
+      exit_arch_width: 2,
+      defaultProperties: {
+        poi_type: "exit",
+        visibility: "always",
+        peek_visibility: "partial",
+        stand_at: { resulting_stance: "standing_in_archway" },
+        peer_through: { resulting_stance: "peering_through" },
+        enter: { target_room_template_id: "d9d00004-d9d0-d9d0-d9d0-d9d000000004" },
+        perception_details: [
+          { dc: 10, text: "The northern archway leads back to the Proving Ring." },
+          { dc: 13, text: "The threshold is worn smooth — many fighters have come through here and not all came back the same way." },
+        ],
+      },
+    },
+    {
+      id: "d9a50002-d9a5-d9a5-d9a5-d9a500000002",
+      name: "Iron Plate Construct",
+      keywordIdentifier: "iron_construct_1",
+      grid_slot: "NW",
+      visibility_level: 1,
+      exit_direction: null,
+      exit_wall_section: "C",
+      exit_arch_width: 1,
+      defaultProperties: {
+        poi_type: "npc",
+        visibility: "always",
+        npc_id: "iron_construct_1",
+        npc_name: "Iron Plate Construct",
+        initial_awareness_state: "alert",
+        xp_value: 200,
+        examine_text: "A full suit of articulated plate armor animated by Iron Covenant enchantment — no body inside, only will and purpose. It moves with deliberate, mechanical weight, each step precise and unhurried. There is nothing to reason with here.",
+        examine_details: [
+          { skill: "arcana", dc: 12, text: "The enchantment substrate is woven through the metal itself, not a core or gem. Destroying it requires breaking the plate, not finding a weak point." },
+          { skill: "athletics", dc: 14, text: "Its joints are reinforced at the shoulder and hip — built to resist grappling and knockback. Shoving it would be difficult." },
+        ],
+        perception_details: [
+          { dc: 10, text: "It tracks your movement without a head — the whole suit reacts to you at once." },
+          { dc: 14, text: "A faint rune is etched into the breastplate: 'keth' — permanence. This construct was built to last indefinitely." },
+        ],
+        combat_stats: {
+          ac: 15,
+          max_hp: 32,
+          damage: "1d8+3",
+          attack_bonus: 5,
+          strength: 16,
+          dexterity: 10,
+          constitution: 14,
+          intelligence: 3,
+          wisdom: 6,
+          charisma: 1,
+          resistances: ["ranged"],
+        },
+      },
+    },
+    {
+      id: "d9a50003-d9a5-d9a5-d9a5-d9a500000003",
+      name: "Iron Plate Construct",
+      keywordIdentifier: "iron_construct_2",
+      grid_slot: "NE",
+      visibility_level: 1,
+      exit_direction: null,
+      exit_wall_section: "C",
+      exit_arch_width: 1,
+      defaultProperties: {
+        poi_type: "npc",
+        visibility: "always",
+        npc_id: "iron_construct_2",
+        npc_name: "Iron Plate Construct",
+        initial_awareness_state: "alert",
+        xp_value: 200,
+        examine_text: "The second construct mirrors the first — same plate, same rune, same deliberate movement. They're spaced to cut off flanking angles. Whoever designed this room knew what they were doing.",
+        examine_details: [
+          { skill: "arcana", dc: 12, text: "Identical enchantment to the first. Mass-produced from the same template — same strengths, same limits." },
+          { skill: "perception", dc: 13, text: "When you move, both constructs shift slightly in concert. They share positioning awareness somehow — or the room feeds it to them." },
+        ],
+        perception_details: [
+          { dc: 10, text: "It adjusts its position as you move, maintaining its angle on you." },
+          { dc: 13, text: "No wear marks on this one. If it was ever damaged, it was repaired or replaced." },
+        ],
+        combat_stats: {
+          ac: 15,
+          max_hp: 32,
+          damage: "1d8+3",
+          attack_bonus: 5,
+          strength: 16,
+          dexterity: 10,
+          constitution: 14,
+          intelligence: 3,
+          wisdom: 6,
+          charisma: 1,
+          resistances: ["ranged"],
+        },
+      },
+    },
+    {
+      id: "d9a50004-d9a5-d9a5-d9a5-d9a500000004",
+      name: "Gauntlet Commander",
+      keywordIdentifier: "gauntlet_commander",
+      grid_slot: "N",
+      visibility_level: 1,
+      exit_direction: null,
+      exit_wall_section: "C",
+      exit_arch_width: 1,
+      defaultProperties: {
+        poi_type: "npc",
+        visibility: "always",
+        npc_id: "gauntlet_commander",
+        npc_name: "Gauntlet Commander",
+        initial_awareness_state: "alert",
+        xp_value: 300,
+        examine_text: "A broad fighter in scarred half-plate, standing at the far wall with arms crossed. No weapon drawn yet — a deliberate choice. Their eyes move constantly, tracking your position, the constructs, the room. They've run this encounter so many times that they're bored of it. That does not make them any less dangerous.",
+        examine_details: [
+          { skill: "insight", dc: 13, text: "They're waiting for you to commit before the constructs engage. The Commander directs them — kill the Commander and the constructs become less coordinated." },
+          { skill: "history", dc: 14, text: "The half-plate bears a rank mark: two parallel bars, Iron Covenant field command. Senior to the Militia Guards but subordinate to the Proving Master. A tested fighter, not a figurehead.", story_flag: "commander_rank_known" },
+        ],
+        perception_details: [
+          { dc: 10, text: "They uncross their arms and reach for a longsword at their hip. Still unhurried." },
+          { dc: 14, text: "A small notch is cut into the pommel of their sword — a tally mark. They've stopped counting." },
+        ],
+        combat_stats: {
+          ac: 14,
+          max_hp: 48,
+          damage: "1d8+4",
+          attack_bonus: 6,
+          strength: 17,
+          dexterity: 13,
+          constitution: 15,
+          intelligence: 12,
+          wisdom: 13,
+          charisma: 12,
+          specialAbility: "precision_strike",
+          defeat_flag: "gauntlet_cleared",
+          lootTable: [
+            {
+              id: "commander_seal",
+              name: "Commander's Seal",
+              description: "A flat iron disc stamped with two parallel bars — Iron Covenant field command rank. Worth something to a collector, and proof you beat The Gauntlet.",
+              throwable: true,
+              story_flag: "commander_seal_claimed",
+              obvious: true,
+              value_gp: 15,
+              chance: 1.0,
+            },
+          ],
+        },
+      },
+    },
+    {
+      id: "d9a50005-d9a5-d9a5-d9a5-d9a500000005",
+      name: "Iron Bracket",
+      keywordIdentifier: "iron_bracket",
+      grid_slot: "E",
+      visibility_level: 1,
+      exit_direction: null,
+      exit_wall_section: "C",
+      exit_arch_width: 1,
+      defaultProperties: {
+        poi_type: "positional",
+        visibility: "always",
+        examine_text: "A heavy iron wall bracket that once held a weapon rack. The rack is gone — removed or destroyed — but the bracket protrudes far enough from the wall to use as a grip or a step.",
+        examine_details: [
+          { skill: "athletics", dc: 11, text: "Solid enough to bear weight. Someone with the right build could use it to reach the wall sconce above, or to gain a momentary height advantage." },
+          { skill: "perception", dc: 13, text: "The bolt holes where the rack was mounted are sheared clean. It wasn't removed carefully." },
+        ],
+        perception_details: [
+          { dc: 10, text: "A heavy iron bracket juts from the east wall — remnant of a weapon rack." },
+          { dc: 13, text: "The wall behind the bracket shows discoloration where something hung here for decades." },
+        ],
+        take_cover: { resulting_stance: "using_bracket" },
+      },
+    },
+    {
+      id: "d9a50006-d9a5-d9a5-d9a5-d9a500000006",
+      name: "Stone Plinth",
+      keywordIdentifier: "stone_plinth",
+      grid_slot: "W",
+      visibility_level: 1,
+      exit_direction: null,
+      exit_wall_section: "C",
+      exit_arch_width: 1,
+      defaultProperties: {
+        poi_type: "interactive",
+        visibility: "always",
+        examine_text: "A waist-high stone plinth in the western alcove, its top surface scored with old blade marks. A small recess in the face holds a folded note sealed with the Iron Covenant crest.",
+        examine_details: [
+          { skill: "investigation", dc: 11, text: "The note reads: 'To whoever opens this: the Gauntlet Commander has held this post for eleven years. He has not lost. If you are reading this after defeating him — you are the first. The Proving Master will know what to do with you.' No signature.", story_flag: "gauntlet_note_read" },
+          { skill: "history", dc: 14, text: "The blade marks on the surface match the pattern from the Gauntlet Commander's longsword — he's been using this as a sharpening stone." },
+        ],
+        perception_details: [
+          { dc: 10, text: "A stone plinth with a sealed recess in its face." },
+          { dc: 13, text: "The top is scored with fresh blade marks. Someone sharpened a weapon here recently." },
+        ],
+        items: [
+          {
+            id: "pg_gauntlet_potion",
+            name: "Commander's Reserve",
+            description: "A small flask of potent healing tincture, stored here by the Gauntlet Commander. Restores 10 HP when consumed.",
+            consumable: true,
+            throwable: true,
+            use_effect: "heal_10",
+            hidden: true,
+            reveal_check: { skill: "investigation", dc: 11 },
+            combat_usable: true,
+            target: "self",
+          },
+        ],
+      },
+    },
+    {
+      id: "d9a50007-d9a5-d9a5-d9a5-d9a500000007",
+      name: "Open Space",
+      keywordIdentifier: "open_space",
+      grid_slot: "C",
+      visibility_level: 1,
+      exit_direction: null,
+      exit_wall_section: "C",
+      exit_arch_width: 1,
+      defaultProperties: {
+        poi_type: "open_space",
+        visibility: "always",
+        perception_details: [
+          { dc: 10, text: "The chamber is long and open — designed to give the constructs room to engage from multiple angles." },
+          { dc: 13, text: "The floor has been resurfaced at some point — newer stone over old. Something damaged it badly enough to warrant repair." },
+          { dc: 16, text: "Faint bloodstains in the stone at the center. The Gauntlet Commander was not lying about their record — someone came close." },
+        ],
+        items: [
+          {
+            id: "pg_gauntlet_shard",
+            name: "Construct Plate Fragment",
+            description: "A shard of enchanted plate from a destroyed Iron Covenant construct. Still faintly warm from the animation magic.",
+            throwable: true,
+            improvised: true,
+            obvious: false,
+          },
+        ],
+      },
+    },
+  ];
+
+  for (const poi of pgGauntletPois) {
+    await prisma.poiTemplate.upsert({
+      where: { id: poi.id },
+      create: { ...poi, roomTemplateId: pgGauntlet.id },
+      update: {
+        name: poi.name, defaultProperties: poi.defaultProperties,
+        grid_slot: poi.grid_slot, visibility_level: poi.visibility_level,
+        exit_direction: poi.exit_direction, exit_wall_section: poi.exit_wall_section,
+        exit_arch_width: poi.exit_arch_width,
+      },
+    });
+  }
+
   console.log("\n✅ Seed complete!");
   console.log("=================================================");
   console.log(`Story:      ${story.id}  (${story.title})`);
@@ -4065,12 +4367,13 @@ async function main() {
   console.log(`  POIs F:   c3000001 Binding Seal C | c3000002 Chained Merchant NE(npc:maren) | c3000003 Vorne Family Ledgers S | c3000004 Vault Door West W | c3000005 Open Space SE`);
   console.log("  Scenarios: 1=Entry alone | 2=Entry@E archway obvious_only | 3=Entry@E archway full | 4=Entry@C wide arch");
   console.log("-------------------------------------------------");
-  console.log("V2 Proving Grounds (targetLevelRange: [1,5] | 1,400 XP per full clear):");
+  console.log("V2 Proving Grounds (targetLevelRange: [1,5] | 2,100 XP combat + 1,300 XP milestone per full clear):");
   console.log(`  Dungeon:  d9d00001-d9d0-d9d0-d9d0-d9d000000001  (The Proving Grounds)`);
   console.log(`  Hub:      d9d00002-d9d0-d9d0-d9d0-d9d000000002  (Quartermaster's Hub) map(0,0) — SAFE ROOM`);
   console.log(`  Arena:    d9d00003-d9d0-d9d0-d9d0-d9d000000003  (Arena Floor) map(0,-1) — 850 XP (2×Veteran + Proving Master)`);
   console.log(`  Ring:     d9d00004-d9d0-d9d0-d9d0-d9d000000004  (Proving Ring) map(0,1)  — 400 XP (3×Guard + Scout)`);
   console.log(`  Pit:      d9d00005-d9d0-d9d0-d9d0-d9d000000005  (Skirmish Pit) map(1,0)  — 150 XP (3×Straw Sentinel)`);
+  console.log(`  Gauntlet: d9d00006-d9d0-d9d0-d9d0-d9d000000006  (The Gauntlet) map(0,2)  — 700 XP (2×Iron Construct + Commander) [unlocks after ring cleared]`);
   console.log("=================================================");
   console.log("Run createGameMap(game.id, act1.id) to initialise the live tile map.");
 }

@@ -5,7 +5,6 @@ import type { InitiativeEntry, CharacterStats, PartyMemberInfo } from '@/types/v
 import { classSprite } from '@/lib/class-emoji';
 
 export const CLASS_FEATURES: Record<string, Array<{ id: string; label: string; description: string; bonusAction?: boolean; directFire?: boolean; cunning?: boolean; ki?: boolean }>> = {
-  'Blood Hunter': [{ id: 'crimson_rite', label: '🩸 Crimson Rite', bonusAction: true, directFire: true, description: 'Bonus action: imbue your weapon with elemental damage (+1d4) until combat ends. Costs HP to activate.' }],
   Barbarian: [{ id: 'rage', label: '🪓 Rage', bonusAction: true, directFire: true, description: 'Bonus action: enter rage. +2 melee damage, resistance to bludgeoning/piercing/slashing damage for 1 minute.' }],
   Bard: [{ id: 'bardic_inspiration', label: '🎵 Bardic Inspiration', bonusAction: true, description: "Bonus action: grant an ally a d6 to add to their next attack roll. Say who you're inspiring." }],
   Cleric: [{ id: 'channel_divinity', label: '⛪ Channel Divinity', bonusAction: true, directFire: true, description: 'Bonus action: channel divine power. All enemies must make a WIS save or be turned (unable to act) for the rest of combat. Once per short rest.' }],

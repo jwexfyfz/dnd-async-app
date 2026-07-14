@@ -260,46 +260,6 @@ export const CLASS_DEFINITIONS: Record<string, ClassDefinition> = {
       { level: 20, features: ['Eldritch Master — spend 1 minute communing with your patron to regain all Pact spell slots'] },
     ],
   },
-  'Blood Hunter': {
-    role: 'Dark warrior',
-    playstyleBlurb: 'A monster hunter who sacrifices their own blood for primal power.',
-    keyStats: ['STR', 'DEX'],
-    hitDie: 10,
-    highlightFeature: 'Crimson Rite',
-    subclassTerm: "Hunter's Boon",
-    subclassLevel: 3,
-    difficulty: 'expert',
-    roleType: 'attacker',
-    difficultyNote: 'Crimson Rite costs your own HP to activate — every encounter is a calculated risk.',
-    baseLevelUnlocks: [
-      { level: 1, features: ["Hunter's Bane — advantage on saves vs curse, fright, and possession; proficiency in saves vs poison and disease", 'Blood Maledict — place a supernatural curse on a creature (1/rest; more uses at higher levels)'] },
-      { level: 2, features: ['Crimson Rite — pay HP to imbue your weapon with elemental damage (fire, lightning, frost, etc.) until your next rest'] },
-      { level: 5, features: ['Extra Attack — attack twice when you take the Attack action'] },
-      { level: 6, features: ['Brand of Castigation — when the branded creature damages another creature, it takes Psychic damage equal to your Proficiency'] },
-      { level: 11, features: ['Dark Augmentation — Crimson Rite damage applies to all attacks, not just the activated weapon'] },
-      { level: 20, features: ['Sanguine Mastery — Crimson Rite no longer costs HP; critical hits deal extra rite damage'] },
-    ],
-  },
-  Artificer: {
-    role: 'Magical inventor',
-    playstyleBlurb: 'An arcane engineer who infuses objects with magic and crafts mechanical solutions to any problem.',
-    keyStats: ['INT'],
-    hitDie: 8,
-    highlightFeature: 'Infuse Item',
-    subclassTerm: 'Artificer Specialist',
-    subclassLevel: 3,
-    difficulty: 'expert',
-    roleType: 'support',
-    difficultyNote: 'Infusions, tool proficiencies, and spellcasting create many moving parts to manage each session.',
-    baseLevelUnlocks: [
-      { level: 1, features: ['Magical Tinkering — imbue small items with minor persistent effects (light, sounds, smells, messages)', 'Spellcasting — cast Artificer spells using INT'] },
-      { level: 2, features: ['Infuse Item — permanently enchant items with magical properties (2 infusions; more each level)'] },
-      { level: 3, features: ['Artificer Specialist — choose Alchemist, Armorer, Artillerist, or Battle Smith'] },
-      { level: 5, features: ['Tool Expertise — double Proficiency on any tool check you are proficient in'] },
-      { level: 7, features: ['Flash of Genius — reaction to add your INT modifier to an ally\'s ability check or saving throw'] },
-      { level: 20, features: ['Soul of Artifice — +1 to all saving throws per attuned magic item; avoid death once per long rest'] },
-    ],
-  },
 };
 
 export const SUBCLASS_LEVEL_UNLOCKS: Record<string, Record<string, SubclassLevelUnlock[]>> = {
@@ -538,46 +498,6 @@ export const SUBCLASS_LEVEL_UNLOCKS: Record<string, Record<string, SubclassLevel
       { level: 6, features: ['Entropic Ward — reaction to impose disadvantage on one attack roll; if it misses, advantage on your next attack (1/short rest)'] },
       { level: 10, features: ['Thought Shield — immunity to telepathy; resistance to psychic damage; attacker takes equal psychic damage'] },
       { level: 14, features: ['Create Thrall — touch an incapacitated humanoid to charm it indefinitely; communicate telepathically with it at any distance'] },
-    ],
-  },
-  'Blood Hunter': {
-    crimson_rite_order: [
-      { level: 3, features: ['Mutagencraft — create mutagens (Aether, Dysphoric, Emetic, Exterior, Mobile, Oily, Potent, Rapturous, Unbreakable) each granting a powerful bonus and a drawback'] },
-      { level: 7, features: ['Strange Metabolism — bonus action to end one condition on yourself by expending 1 Blood Maledict use'] },
-      { level: 11, features: ["Brand of Axiom — your Brand prevents the target from benefiting from illusion magic or invisibility"] },
-      { level: 15, features: ["Blood Curse of Corrosion — brand a creature; it becomes poisoned until the curse ends (CON save on their turn to end it)"] },
-    ],
-    ghostslayer: [
-      { level: 3, features: ['Rite of the Dawn — your Crimson Rite deals radiant damage; undead have disadvantage on saves vs your features', "Curse Specialist — Blood Maledict curses don't require concentration for Ghostslayers"] },
-      { level: 7, features: ['Ethereal Step — bonus action to step into the Ethereal Plane until the start of your next turn (3/long rest)'] },
-      { level: 11, features: ['Brand of Sundering — your Brand prevents planar travel and possession by entities'] },
-      { level: 15, features: ['Blood Curse of the Exorcist — force a possessing entity to leave its host (CON save)'] },
-    ],
-    lycan: [
-      { level: 3, features: ['Heightened Senses — advantage on Perception checks using hearing or smell', 'Hybrid Transformation — activate via Crimson Rite: claws (1d6 + rite damage), curse immunity, advantage on STR/DEX checks'] },
-      { level: 7, features: ["Stalker's Prowl — +10ft speed and advantage on Stealth checks while in Hybrid Transformation"] },
-      { level: 11, features: ['Lycan Regeneration — regain 1 HP at the start of your turn while in Hybrid form (if you have at least 1 HP)'] },
-      { level: 15, features: ["Blood Curse of the Howl — creatures within 30ft are frightened; lycanthropes are paralyzed instead (WIS save)"] },
-    ],
-  },
-  Artificer: {
-    alchemist: [
-      { level: 3, features: ["Tool Proficiency — Alchemist's Supplies", 'Alchemist Spells: Healing Word, Ray of Sickness, Flaming Sphere, Melf\'s Acid Arrow', 'Experimental Elixir — create a random elixir each long rest (Healing, Swiftness, Resilience, Boldness, Flight, or Transformation)'] },
-      { level: 5, features: ['Alchemical Savant — add INT mod to healing, acid, fire, or poison rolls from your alchemist spells'] },
-      { level: 9, features: ['Restorative Reagents — experimental elixirs also grant 2d6 + INT mod THP; cast Lesser Restoration for free'] },
-      { level: 15, features: ["Chemical Mastery — resistance to acid and poison; cast Greater Restoration and Heal once per long rest for free"] },
-    ],
-    armorer: [
-      { level: 3, features: ["Tool Proficiency — Smith's Tools", 'Arcane Armor — transform any armor into magical arcane armor (no STR requirement, cannot be removed against your will)', 'Armor Model — Guardian (Thunder Gauntlets 1d8+STR force, impose disadvantage to attack others) or Infiltrator (Lightning Launcher 1d6+DEX lightning, +1 AC, Soft Steps advantage on Stealth)'] },
-      { level: 5, features: ['Extra Attack — attack twice when you take the Attack action (using arcane armor strikes)'] },
-      { level: 9, features: ['Armor Modifications — 4 infusion slots dedicated to your arcane armor (each piece counts separately)'] },
-      { level: 15, features: ['Perfected Armor — Guardian: reaction to pull a creature toward you; Infiltrator: lightning mark grants allies advantage on attacks vs marked target'] },
-    ],
-    artillerist: [
-      { level: 3, features: ["Tool Proficiency — Woodcarver's Tools", 'Artillerist Spells: Shield, Thunderwave, Scorching Ray, Shatter', 'Eldritch Cannon — conjure a Force Ballista (120ft 2d8 force), Flamethrower (15ft cone 2d8 fire DEX save), or Protector (10ft aura of THP)'] },
-      { level: 5, features: ['Arcane Firearm — enhance a wand, staff, or rod as a spellcasting focus; add +1d8 to one damage roll per spell you cast through it'] },
-      { level: 9, features: ['Explosive Cannon — cannon deals +1d8 damage; bonus action to detonate for 3d8 force in 20ft radius (DEX save)'] },
-      { level: 15, features: ['Fortified Position — create two cannons at once; you and allies near a cannon gain half cover'] },
     ],
   },
 };

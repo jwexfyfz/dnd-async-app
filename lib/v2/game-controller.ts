@@ -10,6 +10,7 @@ import { rollStealthCheck } from '@/lib/stealth';
 import { awardCombatXp, applyXpAward } from '@/lib/v2/xp-helpers';
 import type {
   GameActionRequest,
+  ActionType,
   ExtractedAction,
   ItemDefinition,
   CharacterInventory,
@@ -154,8 +155,35 @@ async function autoResolveLeadingEnemyTurns(
   }
 }
 
+async function persistMechanicalSummary(
+  roomInstanceId: string,
+  sessionId: string,
+  rollResult: NonNullable<ViewStatePayload['rollResult']>,
+  characterId: string,
+  targetName?: string,
+): Promise<void> {
+  const hitOrMiss = rollResult.success ? 'Hit' : 'Miss';
+  let text = `You attack — roll ${rollResult.d20} = ${rollResult.d20} vs AC. ${hitOrMiss}.`;
+  if (rollResult.success && rollResult.damage !== undefined) {
+    text = `You attack ${targetName ?? 'the enemy'} — roll ${rollResult.d20}. ${rollResult.isCrit ? 'Critical hit!' : 'Hit.'} ${rollResult.damage} damage dealt.`;
+    if (rollResult.targetDefeated) text += ' Enemy defeated.';
+  } else if (!rollResult.success) {
+    text = `You attack ${targetName ?? 'the enemy'} — roll ${rollResult.d20}. Miss.`;
+  }
+  await prisma.messageLog.create({
+    data: {
+      roomInstanceId,
+      characterId,
+      isMechanicalEvent: true,
+      mechanicalSummary: { type: 'mechanical_summary', ...rollResult },
+      text,
+    },
+  });
+  console.log(`[narrative] mechanical summary written for session ${sessionId}`);
+}
+
 export async function handleGameAction(body: GameActionRequest): Promise<ViewStatePayload> {
-  const { characterId, roomInstanceId, playerActionText, action_hint } = body;
+  const { characterId, roomInstanceId, playerActionText, action_hint, target_poi_instance_id: bodyTargetPoiId } = body;
 
   if (!characterId || !roomInstanceId || !playerActionText) {
     throw new Error('Missing required fields: characterId, roomInstanceId, playerActionText');
@@ -879,16 +907,31 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
       }
     }
 
-    // Stage 2
-    const parsedActions = await parseIntentWithHaiku(
-      poiContexts,
-      characterInventory,
-      otherCharacters,
-      playerActionText,
-      currentProximityPoiId,
-      adjacentRoom,
-      action_hint,
-    );
+    // Stage 2 — intent parse (with bypass for roll-sheet actions)
+    const COMBAT_DIRECT_HINTS = new Set(['attack', 'shove', 'hide', 'provoke', 'dodge', 'dash', 'disengage']);
+    let parsedActions: ExtractedAction[];
+    if (action_hint && COMBAT_DIRECT_HINTS.has(action_hint) && bodyTargetPoiId !== undefined) {
+      // Roll-sheet action: bypass Haiku intent parse, construct ExtractedAction directly
+      parsedActions = [{
+        action_type: action_hint as ActionType,
+        target_poi_instance_id: bodyTargetPoiId ?? null,
+        item_id: null,
+        target_character_id: null,
+        resulting_stance: null,
+        interaction_result: null,
+        target_room_template_id: null,
+      }];
+    } else {
+      parsedActions = await parseIntentWithHaiku(
+        poiContexts,
+        characterInventory,
+        otherCharacters,
+        playerActionText,
+        currentProximityPoiId,
+        adjacentRoom,
+        action_hint,
+      );
+    }
 
     // Validate item IDs from parser against known items (including adjacent room items)
     const knownItemIds = new Set([
@@ -924,8 +967,9 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
     const inCombat = inOwnRoomCombat || remoteIsMyTurn;
     const cs = (inOwnRoomCombat ? riRow!.combatState : remoteCs) as unknown as CombatState;
     const combatRoomId = inOwnRoomCombat ? roomInstanceId : (remoteCombatRoomId ?? roomInstanceId);
-    const combatActionTypes = new Set(['attack', 'dodge', 'dash', 'disengage', 'hide', 'provoke', 'change_proximity', 'death_save', 'use_item', 'throw_item', 'use_class_feature']);
+    const combatActionTypes = new Set(['attack', 'shove', 'dodge', 'dash', 'disengage', 'hide', 'provoke', 'change_proximity', 'death_save', 'use_item', 'throw_item', 'use_class_feature']);
     const allCombatFacts: string[] = [];
+    let playerCombatRollResult: ViewStatePayload['rollResult'] | undefined;
     let hadSilentKill = false; // Phase 13: suppress loud propagation for silent kills
     if (inCombat && parsedActions.length > 0) {
       const usage = cs.currentTurnUsage;
@@ -938,21 +982,28 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
       if (character.currentHp > 0 && firstType === 'death_save') {
         throw Object.assign(new Error('You cannot make a death saving throw — you are not unconscious.'), { status: 400 });
       }
-      if (firstType === 'change_proximity' && usage.movementUsed) {
-        throw Object.assign(new Error('You have already used your movement this turn.'), { status: 400 });
-      }
       const mainActionTypes = new Set(['attack', 'dodge', 'dash', 'disengage', 'hide', 'provoke', 'use_item', 'throw_item']);
       const BONUS_ACTION_HINTS_GATE = ['Cunning Action', 'Second Wind', 'Channel Divinity'];
       const isClassFeature = firstType === 'use_class_feature' || action_hint === 'use_class_feature';
       const isThisBonusAction = isClassFeature || (!!action_hint && BONUS_ACTION_HINTS_GATE.some(h => action_hint.includes(h)));
-      if (mainActionTypes.has(firstType) && !isThisBonusAction && usage.actionUsed) {
-        throw Object.assign(new Error('You have already used your action this turn.'), { status: 400 });
-      }
       if (isThisBonusAction && usage.bonusActionUsed) {
         throw Object.assign(new Error('You have already used your bonus action this turn.'), { status: 400 });
       }
+      // Validate the entire action sequence against available resources upfront so we
+      // never execute a partial batch (e.g. move succeeds, action fails mid-turn).
+      let seqActionUsed = usage.actionUsed;
+      let seqMoveUsed   = usage.movementUsed;
+      for (const a of parsedActions) {
+        if (a.action_type === 'change_proximity') {
+          if (seqMoveUsed) throw Object.assign(new Error('You have already used your movement this turn.'), { status: 400 });
+          seqMoveUsed = true;
+        } else if (mainActionTypes.has(a.action_type) && !isThisBonusAction) {
+          if (seqActionUsed) throw Object.assign(new Error('You have already used your action this turn.'), { status: 400 });
+          seqActionUsed = true;
+        }
+      }
     }
-    if (inCombat && parsedActions.length > 0 && combatActionTypes.has(parsedActions[0].action_type)) {
+    if (inCombat && parsedActions.length > 0 && parsedActions.some(a => combatActionTypes.has(a.action_type))) {
       const mainHand = characterInventory.equipped.main_hand;
       const equippedWeapon = mainHand ? {
         damageDice: mainHand.damage_dice ?? '1d4',
@@ -962,14 +1013,84 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
       } : null;
       const hasExtraAttack = classFeatures.some(f => f.name === 'Extra Attack' && f.featureType === 'PASSIVE');
       const numAttacks = hasExtraAttack ? calcAttacksPerAction(character.characterClass, character.level) : 1;
-      const combatResult = resolveCombatAction(
-        parsedActions[0],
-        cs,
-        { id: character.id, name: character.name, characterClass: character.characterClass, level: character.level, baseDexterity: character.baseDexterity, baseStrength: character.baseStrength, baseCharisma: character.baseCharisma, baseWisdom: character.baseWisdom, isHiding: character.isHiding, critThreshold: character.critThreshold ?? 20, attacksPerAction: numAttacks },
-        equippedWeapon,
-        characterInventory,
-      );
-      allCombatFacts.push(...combatResult.facts);
+      const charCtxForCombat = { id: character.id, name: character.name, characterClass: character.characterClass, level: character.level, baseDexterity: character.baseDexterity, baseStrength: character.baseStrength, baseCharisma: character.baseCharisma, baseWisdom: character.baseWisdom, isHiding: character.isHiding, critThreshold: character.critThreshold ?? 20, attacksPerAction: numAttacks };
+
+      // Process all parsed actions sequentially, carrying combat state forward.
+      // This allows compound prompts like "move to the hay bale and hide" to
+      // resolve both change_proximity and hide in a single turn.
+      let csForCombat = cs;
+      let combatResult = null as ReturnType<typeof resolveCombatAction> | null;
+      for (const action of parsedActions) {
+        if (!combatActionTypes.has(action.action_type)) continue;
+
+        // OA: moving away from a close enemy triggers opportunity attacks unless Disengaged.
+        if (inOwnRoomCombat && action.action_type === 'change_proximity') {
+          const targetEntry = csForCombat.initiativeOrder.find(e => e.id === action.target_poi_instance_id);
+          if (targetEntry && targetEntry.proximity === 'close') {
+            const oaResult = resolveOpportunityAttacks(csForCombat, characterId, character.name, roomInstance.poiInstances);
+            allCombatFacts.push(...oaResult.facts);
+            if (oaResult.hpDamage > 0) {
+              const newHp = Math.max(0, character.currentHp - oaResult.hpDamage);
+              await prisma.character.update({ where: { id: characterId }, data: { currentHp: newHp } });
+            }
+            csForCombat = oaResult.updatedCombatState;
+          }
+        }
+
+        const result = resolveCombatAction(action, csForCombat, charCtxForCombat, equippedWeapon, characterInventory);
+        allCombatFacts.push(...result.facts);
+        csForCombat = result.updatedCombatState;
+
+        if (!combatResult) {
+          combatResult = result;
+        } else {
+          // Merge subsequent results into combatResult
+          combatResult = {
+            ...result,
+            facts: [...combatResult.facts, ...result.facts],
+            rollLogs: [...combatResult.rollLogs, ...result.rollLogs],
+            deadEnemyPoiIds: [...combatResult.deadEnemyPoiIds, ...result.deadEnemyPoiIds],
+            silentKillIds: new Set([...combatResult.silentKillIds, ...result.silentKillIds]),
+            dbHpUpdates: [...combatResult.dbHpUpdates, ...result.dbHpUpdates],
+            resourceUsages: [...combatResult.resourceUsages, ...result.resourceUsages],
+            playerGainedHidden: result.playerGainedHidden ?? combatResult.playerGainedHidden,
+            characterDied: combatResult.characterDied || result.characterDied,
+            combatEnded: combatResult.combatEnded || result.combatEnded,
+            updatedCombatState: csForCombat,
+          };
+        }
+        if (combatResult.combatEnded || combatResult.characterDied) break;
+      }
+      if (!combatResult) combatResult = resolveCombatAction(parsedActions[0], cs, charCtxForCombat, equippedWeapon, characterInventory);
+
+      // Inject flavor text and roll severity for narrative prompt
+      const BARE_ATTACK_WORDS = new Set(['attack', 'i attack', 'hit', 'strike', 'shove', 'i shove', 'hide', 'i hide', 'dodge', 'i dodge', 'provoke', 'i provoke', 'disengage', 'dash']);
+      const trimmedActionText = playerActionText.toLowerCase().trim();
+      if (!BARE_ATTACK_WORDS.has(trimmedActionText) && playerActionText.trim().length > 0) {
+        const safeFlavor = playerActionText.replace(/"/g, '\\"').slice(0, 120);
+        allCombatFacts.push(`PLAYER FLAVOR: "${safeFlavor}". You MUST incorporate this exact action into your narration verbatim and match the player's tone precisely.`);
+      }
+      const primaryRoll = combatResult.rollLogs[0];
+      const primaryRollActionType = parsedActions.find(a => ['attack', 'shove', 'hide', 'provoke'].includes(a.action_type))?.action_type ?? '';
+      if (primaryRoll && primaryRollActionType) {
+        const d20 = primaryRoll.d20;
+        const outcome = primaryRoll.isCrit ? 'critical hit' : primaryRoll.success ? 'hit' : d20 === 1 ? 'fumble' : 'miss';
+        allCombatFacts.push(`ROLL SEVERITY: d20=${d20}, outcome=${outcome}`);
+      }
+
+      // Capture roll result for response forwarding
+      const primaryCombatLog = combatResult.rollLogs[0];
+      if (primaryCombatLog && parsedActions[0]?.action_type !== 'death_save') {
+        playerCombatRollResult = {
+          d20: primaryCombatLog.d20,
+          allRolls: primaryCombatLog.d20Rolls ? [...primaryCombatLog.d20Rolls] : undefined,
+          success: primaryCombatLog.success,
+          isCrit: primaryCombatLog.isCrit ?? false,
+          damage: primaryCombatLog.damageRoll?.total,
+          targetDefeated: combatResult.deadEnemyPoiIds.length > 0,
+          rollType: primaryRollActionType as 'attack' | 'hide' | 'provoke' | 'shove' | undefined || undefined,
+        };
+      }
 
       if (parsedActions[0]?.action_type === 'death_save') {
         const rollLog = combatResult.rollLogs[0];
@@ -989,8 +1110,9 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
         });
       }
 
-      // Mark dead enemies in DB (from player attack) and collect xpValue
+      // Mark dead enemies in DB (from player attack) and collect xpValue + defeat flags
       const deadEnemyXpValues: { xpValue: number }[] = [];
+      const defeatFlags: Record<string, true> = {};
       for (const deadId of combatResult.deadEnemyPoiIds) {
         const existingPoi = await prisma.poiInstance.findUnique({
           where: { id: deadId },
@@ -1004,7 +1126,21 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
           const dp = existingPoi.template.defaultProperties as Record<string, unknown>;
           const xpValue = typeof dp.xp_value === 'number' ? dp.xp_value : 0;
           deadEnemyXpValues.push({ xpValue });
+          const cs = (dp.combat_stats as Record<string, unknown>) ?? {};
+          if (typeof cs.defeat_flag === 'string') defeatFlags[cs.defeat_flag] = true;
         }
+      }
+      if (Object.keys(defeatFlags).length > 0) {
+        const existingSession = await prisma.gameSession.findUniqueOrThrow({
+          where: { id: roomInstance.session.id },
+          select: { storyFlags: true },
+        });
+        const existingFlags = (existingSession.storyFlags as Record<string, unknown>) ?? {};
+        await prisma.gameSession.update({
+          where: { id: roomInstance.session.id },
+          data: { storyFlags: { ...existingFlags, ...defeatFlags } as object },
+        });
+        console.log(`[combat] defeat flags set:`, defeatFlags);
       }
 
       // Award combat XP to all enrolled characters (Phase 3)
@@ -1680,7 +1816,36 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
       activeGameState = newRoom.gameState;
     }
 
-    // Stage 4 + 5 in parallel: narrative AI call and view-state DB prefetch are independent
+    // Stage 4 + 5: narrative + view-state
+    // For combat roll-sheet actions: fire-and-forget narrative so the response returns immediately
+    // with rollResult while Haiku generates the prose concurrently.
+    if (playerCombatRollResult !== undefined) {
+      const narrativeArgs: Parameters<typeof generateAndPersistNarrative> = [
+        activeRoomInstanceId,
+        characterId,
+        character.name,
+        activeRoomName,
+        activeRoomDescription,
+        appliedActions,
+        roomInstance.session.id,
+        allCombatFacts.length > 0 ? allCombatFacts : undefined,
+        roomInstance.participants.map(p => p.character.name),
+      ];
+      generateAndPersistNarrative(...narrativeArgs).catch(async (err) => {
+        console.warn('[narrative] generation failed, retrying once:', err);
+        try {
+          await generateAndPersistNarrative(...narrativeArgs);
+        } catch (retryErr) {
+          console.error('[narrative] retry failed, writing mechanical summary:', retryErr);
+          await persistMechanicalSummary(activeRoomInstanceId, roomInstance.session.id, playerCombatRollResult!, characterId);
+        }
+      });
+      const rawViewState = await prefetchViewStateData(activeRoomInstanceId, characterId, roomInstance.session.id);
+      const viewState = await assembleViewState(rawViewState, activeRoomInstanceId, activeGameState, characterId, roomInstance.session.id, activeCharacterProximityTargetId);
+      return { ...viewState, rollResult: playerCombatRollResult };
+    }
+
+    // Non-combat or non-roll-sheet: await narrative (no animation window, no shimmer)
     const [narrativeResult, rawViewState] = await Promise.all([
       generateAndPersistNarrative(
         activeRoomInstanceId,

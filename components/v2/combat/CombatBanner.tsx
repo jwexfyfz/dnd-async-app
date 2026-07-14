@@ -8,6 +8,7 @@ export interface HistoryEntry {
   isMechanicalEvent: boolean;
   mechanicalSummary: Record<string, unknown> | null;
   createdAt: string;
+  isShimmer?: boolean;
   authorCharacterId?: string | null;
   authorCharacterClass?: string | null;
   authorName?: string | null;
