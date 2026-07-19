@@ -12,14 +12,35 @@ export const STAT_TO_FIELD: Record<StatKey, string> = {
 
 export const ALL_STATS = Object.keys(STAT_TO_FIELD) as StatKey[];
 
-export interface CharForAsiValidation {
+export interface CharBaseStats {
   baseStrength: number;
   baseDexterity: number;
   baseConstitution: number;
   baseIntelligence: number;
   baseWisdom: number;
   baseCharisma: number;
+}
+
+export interface CharForAsiValidation extends CharBaseStats {
   pendingChoicesQueue: Array<{ type: string; level: number }>;
+}
+
+// Total points allocatable across all stats (each stat capped at 20, max +2 per stat).
+// If this drops below 2, a full ASI (which always grants exactly 2 points) can't be spent.
+export function getAsiCapacity(char: CharBaseStats): number {
+  const statBases: Record<StatKey, number> = {
+    strength:     char.baseStrength,
+    dexterity:    char.baseDexterity,
+    constitution: char.baseConstitution,
+    intelligence: char.baseIntelligence,
+    wisdom:       char.baseWisdom,
+    charisma:     char.baseCharisma,
+  };
+  return ALL_STATS.reduce((sum, s) => sum + Math.max(0, Math.min(2, 20 - statBases[s])), 0);
+}
+
+export function isAsiLocked(char: CharBaseStats): boolean {
+  return getAsiCapacity(char) < 2;
 }
 
 export function validateAsiChoices(char: CharForAsiValidation, choices: AsiChoices): string | null {

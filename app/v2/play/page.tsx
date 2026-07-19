@@ -13,6 +13,7 @@ import { InitiativeStrip, InitiativeMiniSheet, CLASS_FEATURES } from '@/componen
 import { ActionChips, TurnBadge } from '@/components/v2/combat/ActionChips';
 import { CombatRollSheet } from '@/components/v2/combat/CombatRollSheet';
 import type { TargetOption, RollSheetResult } from '@/components/v2/combat/CombatRollSheet';
+import { DamageRollSheet } from '@/components/v2/combat/DamageRollSheet';
 import { InventoryTab, ItemPickerSheet } from '@/components/v2/inventory/InventoryTab';
 import { UseButtons } from '@/components/v2/inventory/UseButtons';
 import { PartyTab } from '@/components/v2/character/PartyTab';
@@ -21,6 +22,7 @@ import { ChatTab } from '@/components/v2/chat/ChatTab';
 import { MapTab } from '@/components/v2/map/DungeonMap';
 import { Header, BottomNav } from '@/components/v2/layout/Header';
 import type { ActiveTab } from '@/components/v2/layout/Header';
+import { GuardianTab } from '@/components/v2/guardian/GuardianTab';
 import type { AsiChoices } from '@/lib/v2/asi-helpers';
 
 // ─── Map — see imports (MapTab from map/DungeonMap) ───────────────────────────
@@ -96,6 +98,8 @@ function PlayContent() {
   const [sacrificeConfirming, setSacrificeConfirming] = useState(false);
   const [rollSheetAction, setRollSheetAction] = useState<{ hint: 'attack' | 'hide' | 'provoke' | 'shove'; validTargets: TargetOption[] } | null>(null);
   const [chatRollResult, setChatRollResult] = useState<{ hint: 'attack' | 'hide' | 'provoke' | 'shove'; result: RollSheetResult } | null>(null);
+  const [pendingDamageRoll, setPendingDamageRoll] = useState<{ rolls: number[]; dieFaces: number; totalDamage: number; isCrit: boolean; targetDefeated?: boolean; targetName?: string | null } | null>(null);
+  const pendingDamageRollRef = useRef<typeof pendingDamageRoll>(null);
   const narrativePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const rollNarrativeArrivedRef = useRef(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -111,6 +115,16 @@ function PlayContent() {
   useEffect(() => {
     fetch('/api/v2/user/ping', { method: 'POST' }).catch(() => {});
   }, []);
+
+  // Streak check on session load — fires once per characterId
+  useEffect(() => {
+    if (!characterId) return;
+    fetch(`/api/v2/me/characters/${characterId}/gacha`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'streak' }),
+    }).catch(() => {});
+  }, [characterId]);
 
   // Auto long rest on session load — fires once per characterId
   useEffect(() => {
@@ -374,9 +388,20 @@ function PlayContent() {
 
       // If the server took the fire-and-forget narrative path (roll occurred), show dice
       // animation and poll for the narrative that arrives asynchronously.
-      const rawRollResult = data.rollResult as { d20?: number; success?: boolean; isCrit?: boolean; damage?: number; targetDefeated?: boolean; rollType?: string } | undefined;
+      const rawRollResult = data.rollResult as { d20?: number; success?: boolean; isCrit?: boolean; damage?: number; targetDefeated?: boolean; rollType?: string; damageRolls?: number[]; damageDieFaces?: number } | undefined;
       if (rawRollResult) {
         const hint = (rawRollResult.rollType ?? 'attack') as 'attack' | 'hide' | 'provoke' | 'shove';
+        const hasDmgRoll = hint === 'attack' && !!(rawRollResult.success || rawRollResult.isCrit) && !!(rawRollResult.damageRolls?.length);
+        if (hasDmgRoll) {
+          pendingDamageRollRef.current = {
+            rolls: rawRollResult.damageRolls!,
+            dieFaces: rawRollResult.damageDieFaces ?? 6,
+            totalDamage: rawRollResult.damage ?? 0,
+            isCrit: rawRollResult.isCrit ?? false,
+            targetDefeated: rawRollResult.targetDefeated,
+            targetName: null,
+          };
+        }
         setChatRollResult({
           hint,
           result: {
@@ -385,6 +410,7 @@ function PlayContent() {
             isCrit: rawRollResult.isCrit ?? false,
             damageDealt: rawRollResult.damage,
             targetDefeated: rawRollResult.targetDefeated,
+            hasDamageRoll: hasDmgRoll,
           },
         });
         // Poll for the narrative that will be written after this response returns
@@ -563,7 +589,19 @@ function PlayContent() {
         }, 500);
       }
 
-      const rollResult = data.rollResult as { d20?: number; allRolls?: number[]; success?: boolean; isCrit?: boolean; damage?: number; targetDefeated?: boolean } | undefined;
+      const rollResult = data.rollResult as { d20?: number; allRolls?: number[]; success?: boolean; isCrit?: boolean; damage?: number; targetDefeated?: boolean; damageRolls?: number[]; damageDieFaces?: number } | undefined;
+      const hasDamageRoll = !!(rollResult?.success || rollResult?.isCrit) && !!(rollResult?.damageRolls?.length);
+      if (hasDamageRoll && rollResult) {
+        const targetEntry = combatState?.initiativeOrder.find(e => e.id === targetId);
+        pendingDamageRollRef.current = {
+          rolls: rollResult.damageRolls!,
+          dieFaces: rollResult.damageDieFaces ?? 6,
+          totalDamage: rollResult.damage ?? 0,
+          isCrit: rollResult.isCrit ?? false,
+          targetDefeated: rollResult.targetDefeated,
+          targetName: targetEntry?.name ?? null,
+        };
+      }
       return {
         d20: rollResult?.d20 ?? 0,
         allRolls: rollResult?.allRolls,
@@ -571,15 +609,21 @@ function PlayContent() {
         isCrit: rollResult?.isCrit ?? false,
         damageDealt: rollResult?.damage,
         targetDefeated: rollResult?.targetDefeated,
+        hasDamageRoll,
       };
     } finally {
       setSending(false);
       sendingRef.current = false;
     }
-  }, [gameState, dispatchAction, applyActionResponse, sessionId]);
+  }, [gameState, combatState, dispatchAction, applyActionResponse, sessionId]);
 
   const handleRollSheetDismiss = useCallback(() => {
     setRollSheetAction(null);
+    if (pendingDamageRollRef.current) {
+      setPendingDamageRoll(pendingDamageRollRef.current);
+      pendingDamageRollRef.current = null;
+      return;
+    }
     if (!rollNarrativeArrivedRef.current) {
       setHistory(prev => [...prev, {
         id: `shimmer-${Date.now()}`,
@@ -594,6 +638,11 @@ function PlayContent() {
 
   const handleChatRollDismiss = useCallback(() => {
     setChatRollResult(null);
+    if (pendingDamageRollRef.current) {
+      setPendingDamageRoll(pendingDamageRollRef.current);
+      pendingDamageRollRef.current = null;
+      return;
+    }
     if (!rollNarrativeArrivedRef.current) {
       setHistory(prev => [...prev, {
         id: `shimmer-${Date.now()}`,
@@ -714,6 +763,16 @@ function PlayContent() {
       const data = await res.json();
       setError(data.error ?? 'Failed to apply ASI');
       return;
+    }
+    const resolveData = await res.json();
+    if (resolveData.locked) {
+      // Locked ASI never touches stats — apply the pull grant immediately so the
+      // Guardian tab updates even when there's no active room to refetch state from.
+      setCharacterStats(prev => prev ? {
+        ...prev,
+        pendingPulls: resolveData.pendingPulls,
+        pendingChoicesQueue: prev.pendingChoicesQueue.slice(1),
+      } : prev);
     }
     // Refresh characterStats and partyMembers to reflect new values
     if (!activeRoomInstanceId) return;
@@ -1053,6 +1112,7 @@ function PlayContent() {
             onOpenRollSheet={handleOpenRollSheet}
             situationSummary={situationSummary}
             combatAlert={combatAlert}
+            suppressLastCombatRollDamage={pendingDamageRoll !== null}
           />
         )}
         {activeTab === 'inventory' && (
@@ -1090,9 +1150,21 @@ function PlayContent() {
             refreshKey={mapRefreshKey}
           />
         )}
+        {activeTab === 'guardian' && characterStats && characterId && (
+          <GuardianTab
+            characterId={characterId}
+            characterStats={characterStats}
+            onStatsUpdated={(patch) => setCharacterStats(prev => prev ? { ...prev, ...patch } : prev)}
+          />
+        )}
       </div>
 
-      <BottomNav activeTab={activeTab} onTabChange={setActiveTab} hasPendingChoice={hasPendingChoice} />
+      <BottomNav
+        activeTab={activeTab}
+        onTabChange={setActiveTab}
+        hasPendingChoice={hasPendingChoice}
+        hasPendingPulls={(characterStats?.pendingPulls ?? 0) > 0}
+      />
 
       {rollSheetAction && characterId && (
         <CombatRollSheet
@@ -1122,6 +1194,29 @@ function PlayContent() {
           onRoll={async () => chatRollResult.result}
           onDismiss={handleChatRollDismiss}
           immediateResult={chatRollResult.result}
+        />
+      )}
+      {pendingDamageRoll && !rollSheetAction && !chatRollResult && (
+        <DamageRollSheet
+          rolls={pendingDamageRoll.rolls}
+          dieFaces={pendingDamageRoll.dieFaces}
+          totalDamage={pendingDamageRoll.totalDamage}
+          isCrit={pendingDamageRoll.isCrit}
+          targetDefeated={pendingDamageRoll.targetDefeated}
+          targetName={pendingDamageRoll.targetName}
+          onDismiss={() => {
+            setPendingDamageRoll(null);
+            if (!rollNarrativeArrivedRef.current) {
+              setHistory(prev => [...prev, {
+                id: `shimmer-${Date.now()}`,
+                text: '',
+                isMechanicalEvent: false,
+                mechanicalSummary: null,
+                createdAt: new Date().toISOString(),
+                isShimmer: true,
+              }]);
+            }
+          }}
         />
       )}
     </div>

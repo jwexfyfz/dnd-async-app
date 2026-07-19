@@ -1088,6 +1088,8 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
           isCrit: primaryCombatLog.isCrit ?? false,
           damage: primaryCombatLog.damageRoll?.total,
           targetDefeated: combatResult.deadEnemyPoiIds.length > 0,
+          damageRolls: primaryCombatLog.damageRoll?.rolls,
+          damageDieFaces: primaryCombatLog.damageRoll?.dieFaces,
           rollType: primaryRollActionType as 'attack' | 'hide' | 'provoke' | 'shove' | undefined || undefined,
         };
       }
@@ -1126,8 +1128,8 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
           const dp = existingPoi.template.defaultProperties as Record<string, unknown>;
           const xpValue = typeof dp.xp_value === 'number' ? dp.xp_value : 0;
           deadEnemyXpValues.push({ xpValue });
-          const cs = (dp.combat_stats as Record<string, unknown>) ?? {};
-          if (typeof cs.defeat_flag === 'string') defeatFlags[cs.defeat_flag] = true;
+          const combatStats = (dp.combat_stats as Record<string, unknown>) ?? {};
+          if (typeof combatStats.defeat_flag === 'string') defeatFlags[combatStats.defeat_flag] = true;
         }
       }
       if (Object.keys(defeatFlags).length > 0) {
@@ -1143,19 +1145,22 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
         console.log(`[combat] defeat flags set:`, defeatFlags);
       }
 
-      // Award combat XP to all enrolled characters (Phase 3)
-      if (deadEnemyXpValues.length > 0) {
-        const totalXp = awardCombatXp(deadEnemyXpValues);
+      // XP: accumulate per kill during combat; award only when combat ends so
+      // level-up never fires mid-battle (before the DM responds with the outcome).
+      const thisRoundXp = awardCombatXp(deadEnemyXpValues);
+      if (combatResult.combatEnded) {
+        const totalXp = (cs.accumulatedXp ?? 0) + thisRoundXp;
         if (totalXp > 0) {
-          const currentCs = combatResult.combatEnded
-            ? combatResult.updatedCombatState
-            : combatResult.updatedCombatState;
-          const enrolledCharIds = currentCs.initiativeOrder
+          const enrolledCharIds = combatResult.updatedCombatState.initiativeOrder
             .filter(e => e.type === 'character')
             .map(e => e.id);
-          const sourceText = deadEnemyXpValues.length === 1
-            ? (combatResult.updatedCombatState.initiativeOrder.find(e => combatResult.deadEnemyPoiIds.includes(e.id))?.name ?? 'enemy')
-            : `${deadEnemyXpValues.length} enemies`;
+          const priorXp = cs.accumulatedXp ?? 0;
+          const deadPoiIds = combatResult.deadEnemyPoiIds;
+          const sourceText = priorXp > 0
+            ? 'enemies defeated'
+            : deadEnemyXpValues.length === 1
+              ? (combatResult.updatedCombatState.initiativeOrder.find(e => deadPoiIds.includes(e.id))?.name ?? 'enemy')
+              : `${deadEnemyXpValues.length} enemies`;
           for (const charId of enrolledCharIds) {
             const charData = await prisma.character.findUnique({
               where: { id: charId },
@@ -1176,6 +1181,15 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
             }
           }
         }
+      } else if (thisRoundXp > 0) {
+        // Accumulate in combat state — persisted with the normal combatState DB write below
+        combatResult = {
+          ...combatResult,
+          updatedCombatState: {
+            ...combatResult.updatedCombatState,
+            accumulatedXp: (combatResult.updatedCombatState.accumulatedXp ?? 0) + thisRoundXp,
+          },
+        };
       }
 
       // Apply HP updates from item heals or Crimson Rite cost

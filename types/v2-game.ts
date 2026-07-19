@@ -49,7 +49,7 @@ export interface ItemDefinition {
   name: string;
   description?: string;
   quantity?: number;
-  equip_slot?: 'main_hand' | 'off_hand' | 'head' | 'chest' | 'legs' | 'feet' | 'ring' | 'amulet';
+  equip_slot?: 'main_hand' | 'off_hand' | 'head' | 'chest' | 'legs' | 'feet' | 'ring' | 'amulet' | 'hands';
   equip_bonus?: Record<string, number>;
   damage_dice?: string;
   weapon_type?: 'melee' | 'ranged' | 'finesse';
@@ -84,7 +84,17 @@ export interface CharacterInventory {
     feet?: ItemDefinition;
     ring?: ItemDefinition;
     amulet?: ItemDefinition;
+    hands?: ItemDefinition;
   };
+}
+
+export type GachaRarity = 'common' | 'uncommon' | 'rare' | 'legendary';
+
+export interface GachaPullRecord {
+  itemId: string;
+  itemName: string;
+  rarity: GachaRarity;
+  pulledAt: string;
 }
 
 export interface EntityRef {
@@ -214,6 +224,7 @@ export interface CombatState {
   initiativeOrder: InitiativeEntry[];
   activeActorId: string;
   currentTurnUsage: TurnUsage;
+  accumulatedXp?: number;
 }
 
 export interface CharacterStats {
@@ -242,6 +253,13 @@ export interface CharacterStats {
   featuresUnlocked: string[];
   resourceStates: Array<{ poolKey: string; current: number }>;
   canShortRest: boolean;
+  pendingPulls: number;
+  streakDays: number;
+  streakShields: number;
+  lastStreakDate: string | null;
+  pityCount: number;
+  milestoneFlags: string[];
+  pullHistory: GachaPullRecord[];
   classFeatureDetails: Array<{
     id: string;
     name: string;
@@ -298,5 +316,7 @@ export interface ViewStatePayload {
     damage?: number;
     targetDefeated?: boolean;
     rollType?: 'attack' | 'hide' | 'provoke' | 'shove';
+    damageRolls?: number[];
+    damageDieFaces?: number;
   };
 }

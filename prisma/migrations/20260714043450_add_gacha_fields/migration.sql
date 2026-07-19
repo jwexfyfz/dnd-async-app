@@ -1,0 +1,9 @@
+-- AlterTable
+ALTER TABLE "Character" ADD COLUMN     "lastStreakDate" TEXT,
+ADD COLUMN     "lifetimePullCount" INTEGER NOT NULL DEFAULT 0,
+ADD COLUMN     "milestoneFlags" TEXT[] DEFAULT ARRAY[]::TEXT[],
+ADD COLUMN     "pendingPulls" INTEGER NOT NULL DEFAULT 0,
+ADD COLUMN     "pityCount" INTEGER NOT NULL DEFAULT 0,
+ADD COLUMN     "pullHistory" JSONB NOT NULL DEFAULT '[]',
+ADD COLUMN     "streakDays" INTEGER NOT NULL DEFAULT 0,
+ADD COLUMN     "streakShields" INTEGER NOT NULL DEFAULT 0;

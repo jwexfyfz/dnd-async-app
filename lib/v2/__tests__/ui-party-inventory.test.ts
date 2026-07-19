@@ -19,7 +19,9 @@ function makeStats(overrides: Partial<CharacterStats> = {}): CharacterStats {
     skillsModifiers: { Stealth: 6, Perception: 2, Athletics: 0 },
     skillProficiencies: ['Stealth', 'Perception'],
     isHiding: false,
-    pendingChoicesQueue: [], subclass: null, critThreshold: 20, featuresUnlocked: [], resourceStates: [], canShortRest: false, classFeatureDetails: [],
+    pendingChoicesQueue: [], subclass: null, critThreshold: 20, featuresUnlocked: [], resourceStates: [], canShortRest: false,
+    pendingPulls: 0, streakDays: 0, streakShields: 0, lastStreakDate: null, pityCount: 0, milestoneFlags: [], pullHistory: [],
+    classFeatureDetails: [],
     ...overrides,
   };
 }
@@ -304,6 +306,7 @@ function partyMemberToStats(m: PartyMemberInfo): CharacterStats {
     featuresUnlocked: [],
     resourceStates: m.resourceStates ?? [],
     canShortRest: false,
+    pendingPulls: 0, streakDays: 0, streakShields: 0, lastStreakDate: null, pityCount: 0, milestoneFlags: [], pullHistory: [],
     classFeatureDetails: m.classFeatureDetails ?? [],
   };
 }

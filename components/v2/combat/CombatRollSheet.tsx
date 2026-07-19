@@ -18,6 +18,7 @@ export interface RollSheetResult {
   isCrit: boolean;
   damageDealt?: number;
   targetDefeated?: boolean;
+  hasDamageRoll?: boolean; // damage roll UI will follow — suppress damage display and shorten dismiss
 }
 
 interface CombatRollSheetProps {
@@ -153,7 +154,7 @@ export function CombatRollSheet({ actionHint, attackBonus, validTargets, isSendi
   // Auto-dismiss once outcome is visible
   useEffect(() => {
     if (!showOutcome || !result) return;
-    const delay = result.isCrit ? 4000 : result.targetDefeated ? 3500 : 2500;
+    const delay = result.hasDamageRoll ? 1000 : result.isCrit ? 4000 : result.targetDefeated ? 3500 : 2500;
     const t = setTimeout(() => {
       setState('dismissed');
       onDismiss();
@@ -311,13 +312,16 @@ export function CombatRollSheet({ actionHint, attackBonus, validTargets, isSendi
                 <span className={`text-sm font-bold ${result.isCrit ? 'text-amber-600' : result.success ? 'text-emerald-600' : 'text-red-500'}`}>
                   {outcomeLabel}
                 </span>
-                {result.success && result.damageDealt !== undefined && !result.targetDefeated && (
+                {!result.hasDamageRoll && result.success && result.damageDealt !== undefined && !result.targetDefeated && (
                   <span className="text-xs text-slate-600">{result.damageDealt} damage</span>
                 )}
-                {result.targetDefeated && (
+                {!result.hasDamageRoll && result.targetDefeated && (
                   <span className="text-xs font-semibold text-amber-600">
                     DEFEATED{selectedTarget ? ` — ${selectedTarget.name} falls` : ''}
                   </span>
+                )}
+                {result.hasDamageRoll && result.success && (
+                  <span className="text-xs text-slate-400">Roll for damage →</span>
                 )}
               </>
             )}

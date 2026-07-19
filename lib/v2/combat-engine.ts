@@ -528,7 +528,7 @@ export interface EnemyTurnResult {
     vsTarget: string;
     success: boolean;
     isCrit?: boolean;
-    damageRoll?: { dice: string; expr: string; total: number };
+    damageRoll?: { dice: string; expr: string; total: number; rolls?: number[]; dieFaces?: number };
     rollMode?: 'advantage' | 'disadvantage';
     d20Rolls?: [number, number];
   };
@@ -877,7 +877,7 @@ type CombatRollLog = {
   vsTarget: string;
   success: boolean;
   isCrit?: boolean;
-  damageRoll?: { dice: string; expr: string; total: number };
+  damageRoll?: { dice: string; expr: string; total: number; rolls?: number[]; dieFaces?: number };
   rollMode?: 'advantage' | 'disadvantage';
   d20Rolls?: [number, number];
 };
@@ -1032,7 +1032,9 @@ export function resolveCombatAction(
         rollLogs.push({ type: 'combat_roll', action: `${character.name} attacks ${target.name}`, d20: 1, modifier: 0, total: 1, vsTarget: `AC ${target.ac}`, success: false, ...rollModeFields });
       } else if (effectiveRoll.success || effectiveRoll.critical) {
         const damageDice = equippedWeapon?.damageDice ?? '1d4';
-        const { total: damage, expr: dmgExpr } = computeAttackDamage(damageDice, statMod, effectiveRoll.critical);
+        const { total: damage, expr: dmgExpr, rolls: weaponRolls } = computeAttackDamage(damageDice, statMod, effectiveRoll.critical);
+        const dieFacesMatch = damageDice.match(/d(\d+)/);
+        const dieFaces = dieFacesMatch ? parseInt(dieFacesMatch[1], 10) : 6;
 
         // Sneak attack fires once per turn (first hit only)
         let sneakDamage = 0;
@@ -1096,7 +1098,7 @@ export function resolveCombatAction(
         const dmgModStr = statMod !== 0 ? (statMod > 0 ? `+${statMod}` : `${statMod}`) : '';
         const diceLabel = `${damageDice}${dmgModStr}${effectiveRoll.critical ? ' ×2' : ''}`;
         const dmgExprFull = `${dmgExpr}${sneakExpr}${concExpr}${crimsonExpr}${smiteExpr}${isResisted ? ' (resisted)' : ''}`;
-        rollLogs.push({ type: 'combat_roll', action: `${character.name} attacks ${target.name}`, d20: effectiveRoll.roll, modifier: atkBonus, total: effectiveRoll.total, vsTarget: `AC ${target.ac}`, success: true, isCrit: effectiveRoll.critical || undefined, damageRoll: { dice: diceLabel, expr: dmgExprFull, total: effectiveDamage }, ...rollModeFields });
+        rollLogs.push({ type: 'combat_roll', action: `${character.name} attacks ${target.name}`, d20: effectiveRoll.roll, modifier: atkBonus, total: effectiveRoll.total, vsTarget: `AC ${target.ac}`, success: true, isCrit: effectiveRoll.critical || undefined, damageRoll: { dice: diceLabel, expr: dmgExprFull, total: effectiveDamage, rolls: weaponRolls, dieFaces }, ...rollModeFields });
 
         if (newHp <= 0) {
           console.log(`[stage3:enemy-dead] ${target.name} dropped to 0 HP — removed from initiative`);

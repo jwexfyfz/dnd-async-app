@@ -51,7 +51,7 @@ export function RollBadge({ rolls }: { rolls: RollResult[] }) {
   );
 }
 
-export function CombatRollBadge({ data }: { data: CombatRollData }) {
+export function CombatRollBadge({ data, suppressDamage }: { data: CombatRollData; suppressDamage?: boolean }) {
   const modStr = data.modifier !== 0 ? (data.modifier > 0 ? `+${data.modifier}` : `${data.modifier}`) : '';
   return (
     <div className="my-2 flex flex-col gap-1.5">
@@ -78,7 +78,7 @@ export function CombatRollBadge({ data }: { data: CombatRollData }) {
         </span>
       </div>
       {/* Damage roll chip */}
-      {data.success && data.damageRoll && (
+      {!suppressDamage && data.success && data.damageRoll && (
         <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-mono w-fit border ${
           data.isCrit ? 'bg-amber-50 border-amber-200 text-amber-700' : 'bg-orange-50 border-orange-200 text-orange-800'
         }`}>

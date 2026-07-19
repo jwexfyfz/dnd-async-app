@@ -6,7 +6,7 @@ import { CLASS_FEATURES } from '@/components/v2/combat/InitiativeStrip';
 import { ABILITY_DESCRIPTIONS, ABILITY_PASSIVE_NOTES, SKILL_ABILITY, SKILL_DESCRIPTIONS } from '@/lib/v2/skill-descriptions';
 import { proficiencyBonus } from '@/lib/dice';
 import type { AsiChoices, StatKey } from '@/lib/v2/asi-helpers';
-import { computeConHpDelta } from '@/lib/v2/asi-helpers';
+import { computeConHpDelta, isAsiLocked } from '@/lib/v2/asi-helpers';
 import { SubclassPicker } from '@/components/v2/character/SubclassPicker';
 import { ResourcePools } from '@/components/v2/character/ResourcePools';
 
@@ -64,6 +64,7 @@ function AsiStepper({ stats, onConfirm }: {
 }) {
   const [alloc, setAlloc] = useState<AsiChoices>({});
   const [confirming, setConfirming] = useState(false);
+  const locked = isAsiLocked(stats);
 
   const totalSpent = STAT_LABELS.reduce((sum, s) => sum + (alloc[s.key] ?? 0), 0);
   const remaining = 2 - totalSpent;
@@ -79,6 +80,12 @@ function AsiStepper({ stats, onConfirm }: {
   };
 
   const handleConfirm = async () => {
+    if (locked) {
+      if (confirming) return;
+      setConfirming(true);
+      try { await onConfirm({}); } finally { setConfirming(false); }
+      return;
+    }
     if (totalSpent !== 2 || confirming) return;
     setConfirming(true);
     try { await onConfirm(alloc); } finally { setConfirming(false); }
@@ -102,55 +109,69 @@ function AsiStepper({ stats, onConfirm }: {
         <span className="text-sm font-bold text-amber-900">
           Level {stats.pendingChoicesQueue[0]?.type !== 'heroic_sacrifice' ? stats.pendingChoicesQueue[0]?.level : ''} — Ability Score Improvement
         </span>
-        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${remaining > 0 ? 'bg-amber-200 text-amber-800' : 'bg-emerald-100 text-emerald-700'}`}>
-          {remaining > 0 ? `${remaining} pt${remaining !== 1 ? 's' : ''} left` : 'Ready'}
-        </span>
+        {!locked && (
+          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${remaining > 0 ? 'bg-amber-200 text-amber-800' : 'bg-emerald-100 text-emerald-700'}`}>
+            {remaining > 0 ? `${remaining} pt${remaining !== 1 ? 's' : ''} left` : 'Ready'}
+          </span>
+        )}
       </div>
-      <div className="px-4 py-3 space-y-2">
-        {STAT_LABELS.map(({ key, short }) => {
-          const base = stats[STAT_TO_BASE[key]] as number;
-          const delta = alloc[key] ?? 0;
-          const newScore = base + delta;
-          const canAdd = remaining > 0 && newScore < 20;
-          const canSub = delta > 0;
-          return (
-            <div key={key} className="flex items-center gap-2">
-              <span className="w-8 text-xs font-bold text-slate-500 uppercase">{short}</span>
-              <span className="w-6 text-sm font-semibold text-slate-700 text-center tabular-nums">{base}</span>
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={() => adjust(key, -1)}
-                  disabled={!canSub}
-                  className="w-7 h-7 flex items-center justify-center rounded border border-slate-200 text-slate-500 disabled:opacity-30 hover:bg-slate-100 font-bold text-sm"
-                >−</button>
-                <span className={`w-5 text-center text-sm font-bold tabular-nums ${delta > 0 ? 'text-amber-700' : 'text-transparent'}`}>
-                  +{delta}
-                </span>
-                <button
-                  onClick={() => adjust(key, 1)}
-                  disabled={!canAdd}
-                  className="w-7 h-7 flex items-center justify-center rounded border border-slate-200 text-slate-500 disabled:opacity-30 hover:bg-slate-100 font-bold text-sm"
-                >+</button>
+      {locked ? (
+        <div className="px-4 py-3">
+          <p className="text-sm text-amber-900">
+            Every ability score is already maxed — there&apos;s nothing left to improve. Your guardian angel grants you an extra gift instead.
+          </p>
+        </div>
+      ) : (
+        <div className="px-4 py-3 space-y-2">
+          {STAT_LABELS.map(({ key, short }) => {
+            const base = stats[STAT_TO_BASE[key]] as number;
+            const delta = alloc[key] ?? 0;
+            const newScore = base + delta;
+            const maxed = base >= 20;
+            const canAdd = remaining > 0 && newScore < 20;
+            const canSub = delta > 0;
+            return (
+              <div key={key} className="flex items-center gap-2">
+                <span className="w-8 text-xs font-bold text-slate-500 uppercase">{short}</span>
+                <span className="w-6 text-sm font-semibold text-slate-700 text-center tabular-nums">{base}</span>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => adjust(key, -1)}
+                    disabled={!canSub}
+                    className="w-7 h-7 flex items-center justify-center rounded border border-slate-200 text-slate-500 disabled:opacity-30 hover:bg-slate-100 font-bold text-sm"
+                  >−</button>
+                  <span className={`w-5 text-center text-sm font-bold tabular-nums ${delta > 0 ? 'text-amber-700' : 'text-transparent'}`}>
+                    +{delta}
+                  </span>
+                  <button
+                    onClick={() => adjust(key, 1)}
+                    disabled={!canAdd}
+                    className="w-7 h-7 flex items-center justify-center rounded border border-slate-200 text-slate-500 disabled:opacity-30 hover:bg-slate-100 font-bold text-sm"
+                  >+</button>
+                </div>
+                {maxed ? (
+                  <span className="text-[10px] font-bold text-slate-400 ml-1">MAX</span>
+                ) : delta > 0 ? (
+                  <span className="text-[10px] text-amber-700 ml-1">{statHint(key)}</span>
+                ) : (
+                  <span className="text-[10px] text-slate-400 ml-1">{statHint(key)}</span>
+                )}
               </div>
-              {delta > 0 && (
-                <span className="text-[10px] text-amber-700 ml-1">{statHint(key)}</span>
-              )}
-              {delta === 0 && (
-                <span className="text-[10px] text-slate-400 ml-1">{statHint(key)}</span>
-              )}
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      )}
       <div className="px-4 pb-3">
         <button
           onClick={handleConfirm}
-          disabled={totalSpent !== 2 || confirming}
+          disabled={(!locked && totalSpent !== 2) || confirming}
           className="w-full py-2 bg-amber-500 text-white rounded-lg text-sm font-semibold disabled:opacity-40 hover:bg-amber-600 transition-colors"
         >
-          {totalSpent !== 2
-            ? `Spend all 2 points to continue`
-            : confirming ? 'Confirming…' : 'Confirm'}
+          {locked
+            ? (confirming ? 'Claiming…' : 'Claim gift')
+            : totalSpent !== 2
+              ? `Spend all 2 points to continue`
+              : confirming ? 'Confirming…' : 'Confirm'}
         </button>
       </div>
     </div>

@@ -175,6 +175,16 @@ model Character {
   // ── Heroic sacrifice / character continuity ──
   pendingArrivalContext Json?
 
+  // ── Gacha / Guardian angel system ──
+  pendingPulls      Int      @default(0)
+  streakDays        Int      @default(0)
+  streakShields     Int      @default(0)
+  lastStreakDate    String?
+  lifetimePullCount Int      @default(0)
+  pityCount         Int      @default(0)
+  milestoneFlags    String[] @default([])
+  pullHistory       Json     @default("[]")
+
   games               Game[]
   partyMemberships    PartyMember[]
   resourceStates      CharacterResourceState[]

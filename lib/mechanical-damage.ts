@@ -30,7 +30,7 @@ export function computeAttackDamage(
   damageDice: string | null,
   statMod:    number,
   isCrit:     boolean,
-): { total: number; expr: string } {
+): { total: number; expr: string; rolls: number[] } {
   const base = damageDice ?? "1d4";
   const diceExpr = isCrit ? doubleDice(base) : base;
   const { rawTotal, rolls, formulaBonus } = rollDamageExprDetail(diceExpr);
@@ -38,5 +38,5 @@ export function computeAttackDamage(
   const rollStr = `[${rolls.join(', ')}]`;
   const allMods = formulaBonus + statMod;
   const modStr = allMods !== 0 ? (allMods > 0 ? `+${allMods}` : `${allMods}`) : '';
-  return { total, expr: `${rollStr}${modStr}` };
+  return { total, expr: `${rollStr}${modStr}`, rolls };
 }

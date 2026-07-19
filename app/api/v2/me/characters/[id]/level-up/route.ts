@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { createSupabaseServerClient } from '@/lib/supabase-server';
-import { validateAsiChoices, computeConHpDelta, STAT_TO_FIELD, ALL_STATS } from '@/lib/v2/asi-helpers';
+import { validateAsiChoices, computeConHpDelta, isAsiLocked, STAT_TO_FIELD, ALL_STATS } from '@/lib/v2/asi-helpers';
 import type { AsiChoices } from '@/lib/v2/asi-helpers';
 
 export async function PATCH(
@@ -34,6 +34,7 @@ export async function PATCH(
       baseIntelligence: true,
       baseWisdom: true,
       baseCharisma: true,
+      pendingPulls: true,
       pendingChoicesQueue: true,
       characterClass: true,
       subclass: true,
@@ -142,6 +143,36 @@ export async function PATCH(
   if (type === 'asi') {
     if (resolvedChoice.type !== 'asi') {
       return NextResponse.json({ error: `Expected choice type 'asi', got '${resolvedChoice.type}'` }, { status: 400 });
+    }
+
+    // All ability scores are maxed (or too close to 20 to absorb 2 full points) —
+    // there's nothing to spend this ASI on, so grant a gacha pull instead.
+    if (isAsiLocked(character)) {
+      const newPendingPulls = character.pendingPulls + 1;
+      await prisma.$transaction(async tx => {
+        await tx.character.update({
+          where: { id: characterId },
+          data: { pendingPulls: { increment: 1 }, pendingChoicesQueue: newQueue },
+        });
+
+        if (roomInstanceId) {
+          await tx.messageLog.create({
+            data: {
+              roomInstanceId,
+              characterId,
+              isMechanicalEvent: true,
+              mechanicalSummary: {
+                type: 'level_up_confirmed',
+                choiceType: 'asi_locked',
+                newLevel: resolvedChoice.level,
+              },
+              text: `✓ Level ${resolvedChoice.level} ASI — all ability scores maxed, your guardian angel grants an extra gift instead`,
+            },
+          });
+        }
+      });
+
+      return NextResponse.json({ ok: true, locked: true, pendingPulls: newPendingPulls });
     }
 
     const validationError = validateAsiChoices({ ...character, pendingChoicesQueue: queue }, choices ?? {});

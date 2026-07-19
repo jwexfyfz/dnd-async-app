@@ -63,6 +63,8 @@ export async function GET(req: NextRequest) {
           baseStrength: true, baseDexterity: true, baseConstitution: true, baseIntelligence: true,
           baseWisdom: true, baseCharisma: true, skillsModifiers: true, skillProficiencies: true, isHiding: true,
           pendingChoicesQueue: true, subclass: true, critThreshold: true, featuresUnlocked: true,
+          pendingPulls: true, streakDays: true, streakShields: true, lastStreakDate: true,
+          pityCount: true, milestoneFlags: true, pullHistory: true,
           resourceStates: { select: { poolKey: true, current: true } },
         },
       }) : Promise.resolve(null),
@@ -189,6 +191,13 @@ export async function GET(req: NextRequest) {
         featuresUnlocked: charRow.featuresUnlocked ?? [],
         resourceStates: charRow.resourceStates ?? [],
         canShortRest,
+        pendingPulls: charRow.pendingPulls ?? 0,
+        streakDays: charRow.streakDays ?? 0,
+        streakShields: charRow.streakShields ?? 0,
+        lastStreakDate: charRow.lastStreakDate ?? null,
+        pityCount: charRow.pityCount ?? 0,
+        milestoneFlags: (charRow.milestoneFlags as string[]) ?? [],
+        pullHistory: ((charRow.pullHistory as unknown as import('@/types/v2-game').GachaPullRecord[]) ?? []).slice(-5),
         classFeatureDetails: featureDetailsForIds(charFeatureIds),
       };
     }

@@ -8,7 +8,7 @@ import { ItemPickerSheet } from '@/components/v2/inventory/InventoryTab';
 import { ActionChips } from '@/components/v2/combat/ActionChips';
 import { ChatMessage } from '@/components/v2/chat/ChatMessage';
 
-export function ChatTab({ history, hasMore, loadingMore, loadMore, sending, error, input, setInput, sendAction, handleKeyDown, chip, setChip, gameState, combatState, characterStats, characterInventory, chatEndRef, chatContainerRef, showResumeCard, onDismissResume, roomName, characterId, partyMembers, onEndTurn, onFeatureActivate, onOpenRollSheet, situationSummary, combatAlert }: {
+export function ChatTab({ history, hasMore, loadingMore, loadMore, sending, error, input, setInput, sendAction, handleKeyDown, chip, setChip, gameState, combatState, characterStats, characterInventory, chatEndRef, chatContainerRef, showResumeCard, onDismissResume, roomName, characterId, partyMembers, onEndTurn, onFeatureActivate, onOpenRollSheet, situationSummary, combatAlert, suppressLastCombatRollDamage }: {
   history: HistoryEntry[];
   hasMore: boolean;
   loadingMore: boolean;
@@ -37,6 +37,7 @@ export function ChatTab({ history, hasMore, loadingMore, loadMore, sending, erro
   onOpenRollSheet?: (hint: 'attack' | 'hide' | 'provoke' | 'shove') => void;
   situationSummary?: string | null;
   combatAlert?: CombatAlertInfo | null;
+  suppressLastCombatRollDamage?: boolean;
 }) {
   const [showItemSheet, setShowItemSheet] = useState(false);
 
@@ -79,9 +80,19 @@ export function ChatTab({ history, hasMore, loadingMore, loadMore, sending, erro
         {history.length === 0 && !sending && (
           <p className="text-center text-slate-400 text-sm mt-8">Loading…</p>
         )}
-        {history.map(entry => (
-          <ChatMessage key={entry.id} entry={entry} characterId={characterId} />
-        ))}
+        {(() => {
+          const lastCombatRollId = suppressLastCombatRollDamage
+            ? [...history].reverse().find(e => (e.mechanicalSummary as { type?: string } | null)?.type === 'combat_roll')?.id
+            : undefined;
+          return history.map(entry => (
+            <ChatMessage
+              key={entry.id}
+              entry={entry}
+              characterId={characterId}
+              suppressDamage={entry.id === lastCombatRollId}
+            />
+          ));
+        })()}
         {showResumeCard && combatAlert && (
           <CombatAlertResumeCard combatAlert={combatAlert} onDismiss={onDismissResume} />
         )}

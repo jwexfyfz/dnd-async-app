@@ -6,7 +6,7 @@ import type { RollResult, CombatRollData } from '@/components/v2/combat/RollBadg
 import { CombatBanner } from '@/components/v2/combat/CombatBanner';
 import type { HistoryEntry, InitiativeRollEntry } from '@/components/v2/combat/CombatBanner';
 
-export function ChatMessage({ entry, characterId }: { entry: HistoryEntry; characterId?: string }) {
+export function ChatMessage({ entry, characterId, suppressDamage }: { entry: HistoryEntry; characterId?: string; suppressDamage?: boolean }) {
   if (entry.isShimmer) {
     return (
       <div className="flex justify-start my-2 gap-2">
@@ -62,7 +62,7 @@ export function ChatMessage({ entry, characterId }: { entry: HistoryEntry; chara
   }
 
   if (type === 'combat_roll') {
-    return <CombatRollBadge data={summary as unknown as CombatRollData} />;
+    return <CombatRollBadge data={summary as unknown as CombatRollData} suppressDamage={suppressDamage} />;
   }
 
   if (type === 'combat_start') {
@@ -140,6 +140,15 @@ export function ChatMessage({ entry, characterId }: { entry: HistoryEntry; chara
   if (type === 'level_up_confirmed') {
     const newLevel = summary?.newLevel as number | undefined;
     const choiceType = summary?.choiceType as string | undefined;
+    if (choiceType === 'asi_locked') {
+      return (
+        <div className="flex justify-center my-1.5">
+          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-indigo-50 border border-indigo-300 text-xs font-semibold text-indigo-800">
+            ✓ Level {newLevel} ASI — stats maxed, guardian angel gift granted
+          </span>
+        </div>
+      );
+    }
     return (
       <div className="flex justify-center my-1.5">
         <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-yellow-50 border border-yellow-300 text-xs font-semibold text-yellow-800">

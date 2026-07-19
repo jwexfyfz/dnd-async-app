@@ -14,7 +14,7 @@ vi.mock('@/lib/dice', () => ({
   rollInitiative: vi.fn(),
 }));
 vi.mock('@/lib/mechanical-damage', () => ({
-  computeAttackDamage: vi.fn(() => ({ total: 5, expr: '[3]' })),
+  computeAttackDamage: vi.fn(() => ({ total: 5, expr: '[3]', rolls: [] })),
 }));
 
 import { rollD20Check } from '@/lib/dice';
@@ -197,7 +197,7 @@ describe('resolveEnemyTurn', () => {
       const roll1 = { ...base, roll: 4, total: 7, success: false, critical: false, fumble: false };
       const roll2 = { ...base, roll: 15, total: 18, success: true, critical: false, fumble: false };
       vi.mocked(rollD20Check).mockReturnValueOnce(roll1).mockReturnValueOnce(roll2);
-      vi.mocked(computeAttackDamage).mockReturnValue({ total: 5, expr: '[3]' });
+      vi.mocked(computeAttackDamage).mockReturnValue({ total: 5, expr: '[3]', rolls: [] });
       const entry = makeEnemy({ status_effects: ['advantage_next_attack'] });
       const result = resolveEnemyTurn(entry, makeCs(entry, makeCharEntry()), 'char-1', 'Tomas', aggressiveProps);
       expect(result.hpDamage).toBe(5);
@@ -270,7 +270,7 @@ describe('auto-resolve loop integration (advanceTurn + resolveEnemyTurn)', () =>
 
   it('player reaching 0 HP mid-loop: loop stops', () => {
     vi.mocked(rollD20Check).mockReturnValue(mockHit);
-    vi.mocked(computeAttackDamage).mockReturnValue({ total: 20, expr: '[6]+2' }); // one-shot player
+    vi.mocked(computeAttackDamage).mockReturnValue({ total: 20, expr: '[6]+2', rolls: [] }); // one-shot player
     const char = makeCharEntry({ acted: true, hp: 10 });
     const enemy1 = makeEnemy({ id: 'e1' });
     const enemy2 = makeEnemy({ id: 'e2', initiative: 5 });

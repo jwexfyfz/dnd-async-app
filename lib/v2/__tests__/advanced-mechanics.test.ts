@@ -9,7 +9,7 @@ vi.mock('@/lib/dice', () => ({
   rollInitiative: vi.fn(),
 }));
 vi.mock('@/lib/mechanical-damage', () => ({
-  computeAttackDamage: vi.fn(() => ({ total: 5, expr: '[3]+2' })),
+  computeAttackDamage: vi.fn(() => ({ total: 5, expr: '[3]+2', rolls: [] })),
 }));
 vi.mock('@/lib/stealth', () => ({
   rollStealthCheck: vi.fn(() => 14),
@@ -75,7 +75,7 @@ describe('stealth kills', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(rollD20Check).mockReturnValue(mockHit);
-    vi.mocked(computeAttackDamage).mockReturnValue({ total: 5, expr: '[3]+2' });
+    vi.mocked(computeAttackDamage).mockReturnValue({ total: 5, expr: '[3]+2', rolls: [] });
   });
 
   it('hidden attacker + unaware target: advantage on attack (two rolls, best taken)', () => {
@@ -96,7 +96,7 @@ describe('stealth kills', () => {
   });
 
   it('instant kill with silent weapon + hidden player: no propagation tracked (silentKillIds populated)', () => {
-    vi.mocked(computeAttackDamage).mockReturnValue({ total: 999, expr: '[6]+2' });
+    vi.mocked(computeAttackDamage).mockReturnValue({ total: 999, expr: '[6]+2', rolls: [] });
     const char = makeChar();
     const enemy = makeEnemy({ hp: 5, maxHp: 5 });
     const cs = makeCs(char, enemy);
@@ -112,7 +112,7 @@ describe('stealth kills', () => {
   });
 
   it('instant kill with non-silent weapon: silentKillIds is empty (propagation fires)', () => {
-    vi.mocked(computeAttackDamage).mockReturnValue({ total: 999, expr: '[6]+2' });
+    vi.mocked(computeAttackDamage).mockReturnValue({ total: 999, expr: '[6]+2', rolls: [] });
     const char = makeChar();
     const enemy = makeEnemy({ hp: 5, maxHp: 5 });
     const cs = makeCs(char, enemy);
@@ -171,7 +171,7 @@ describe('prone status effect', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(rollD20Check).mockReturnValue(mockHit);
-    vi.mocked(computeAttackDamage).mockReturnValue({ total: 5, expr: '[3]+2' });
+    vi.mocked(computeAttackDamage).mockReturnValue({ total: 5, expr: '[3]+2', rolls: [] });
   });
 
   it('melee attack vs prone target: advantage (two rolls, best taken)', () => {
@@ -231,7 +231,7 @@ describe('damage resistances', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(rollD20Check).mockReturnValue(mockHit);
-    vi.mocked(computeAttackDamage).mockReturnValue({ total: 10, expr: '[8]+2' });
+    vi.mocked(computeAttackDamage).mockReturnValue({ total: 10, expr: '[8]+2', rolls: [] });
   });
 
   it('attack type matches resistance: damage halved (round down)', () => {
@@ -386,7 +386,7 @@ describe('improvised thrown weapons', () => {
 
   it('throwable item with no special effect: 1d4 improvised damage', () => {
     vi.mocked(rollD20Check).mockReturnValue(mockHit);
-    vi.mocked(computeAttackDamage).mockReturnValue({ total: 3, expr: '[3]' });
+    vi.mocked(computeAttackDamage).mockReturnValue({ total: 3, expr: '[3]', rolls: [] });
     const char = makeChar();
     const enemy = makeEnemy();
     const cs = makeCs(char, enemy);
@@ -407,7 +407,7 @@ describe('improvised thrown weapons', () => {
 
   it('item with throw_effect "ignite": adds bonus fire damage', () => {
     vi.mocked(rollD20Check).mockReturnValue(mockHit);
-    vi.mocked(computeAttackDamage).mockReturnValue({ total: 3, expr: '[3]' });
+    vi.mocked(computeAttackDamage).mockReturnValue({ total: 3, expr: '[3]', rolls: [] });
     const char = makeChar();
     const enemy = makeEnemy();
     const cs = makeCs(char, enemy);
@@ -427,7 +427,7 @@ describe('improvised thrown weapons', () => {
 
   it('throw_damage_type matching target resistance: damage halved', () => {
     vi.mocked(rollD20Check).mockReturnValue(mockHit);
-    vi.mocked(computeAttackDamage).mockReturnValue({ total: 3, expr: '[3]' });
+    vi.mocked(computeAttackDamage).mockReturnValue({ total: 3, expr: '[3]', rolls: [] });
     const char = makeChar();
     const enemy = makeEnemy({ resistances: ['fire'] });
     const cs = makeCs(char, enemy);
