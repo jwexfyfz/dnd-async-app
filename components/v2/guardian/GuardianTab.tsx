@@ -200,9 +200,7 @@ export function GuardianTab({ characterId, characterStats, onStatsUpdated }: Gua
                             <span className="text-[10px] font-semibold text-indigo-500 bg-indigo-50 border border-indigo-100 rounded px-1.5 py-0.5 whitespace-nowrap flex-shrink-0">+1 gift</span>
                           )}
                         </div>
-                        {showAllMilestones && (
-                          <span className={`text-xs ${done ? 'text-slate-300' : 'text-slate-400'}`}>{m.description}</span>
-                        )}
+                        <span className={`text-xs ${done ? 'text-slate-300' : 'text-slate-400'}`}>{m.description}</span>
                       </div>
                     </div>
                   );

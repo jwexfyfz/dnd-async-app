@@ -19,6 +19,9 @@ export interface RollSheetResult {
   damageDealt?: number;
   targetDefeated?: boolean;
   hasDamageRoll?: boolean; // damage roll UI will follow — suppress damage display and shorten dismiss
+  modifier?: number;  // skill/attack modifier applied to d20
+  dc?: number;        // numeric DC or contest value being compared against
+  vsTarget?: string;  // full label string (e.g. "Perception 14", "DC 12", "Contest 14")
 }
 
 interface CombatRollSheetProps {
@@ -144,17 +147,17 @@ export function CombatRollSheet({ actionHint, attackBonus, validTargets, isSendi
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Show outcome label 400ms after landing (lets the highlight animation finish first)
+  // Show outcome label after landing (lets the highlight animation finish first)
   useEffect(() => {
     if (state !== 'landed' || !result) return;
-    const t = setTimeout(() => setShowOutcome(true), 400);
+    const t = setTimeout(() => setShowOutcome(true), 150);
     return () => clearTimeout(t);
   }, [state, result]);
 
   // Auto-dismiss once outcome is visible
   useEffect(() => {
     if (!showOutcome || !result) return;
-    const delay = result.hasDamageRoll ? 1000 : result.isCrit ? 4000 : result.targetDefeated ? 3500 : 2500;
+    const delay = result.hasDamageRoll ? 1200 : result.isCrit ? 3000 : result.targetDefeated ? 2500 : 1800;
     const t = setTimeout(() => {
       setState('dismissed');
       onDismiss();
@@ -309,6 +312,22 @@ export function CombatRollSheet({ actionHint, attackBonus, validTargets, isSendi
             </div>
             {showOutcome && result && (
               <>
+                {actionHint === 'attack' && (
+                  <p className="text-xs font-mono text-slate-400 text-center leading-none">
+                    <span className={outcomeNumColor}>{result.d20}</span>
+                    {attackBonus > 0 && <span>{` + ${attackBonus} = `}<span className={outcomeNumColor}>{result.d20 + attackBonus}</span></span>}
+                    {attackBonus < 0 && <span>{` − ${Math.abs(attackBonus)} = `}<span className={outcomeNumColor}>{result.d20 + attackBonus}</span></span>}
+                    {selectedTarget && <span>{` · AC ${selectedTarget.ac}`}</span>}
+                  </p>
+                )}
+                {(actionHint === 'hide' || actionHint === 'provoke' || actionHint === 'shove') && result.vsTarget && (
+                  <p className="text-xs font-mono text-slate-400 text-center leading-none">
+                    <span className={outcomeNumColor}>{result.d20}</span>
+                    {result.modifier !== undefined && result.modifier > 0 && <span>{` + ${result.modifier} = `}<span className={outcomeNumColor}>{result.d20 + result.modifier}</span></span>}
+                    {result.modifier !== undefined && result.modifier < 0 && <span>{` − ${Math.abs(result.modifier)} = `}<span className={outcomeNumColor}>{result.d20 + result.modifier}</span></span>}
+                    <span>{` · ${result.vsTarget}`}</span>
+                  </p>
+                )}
                 <span className={`text-sm font-bold ${result.isCrit ? 'text-amber-600' : result.success ? 'text-emerald-600' : 'text-red-500'}`}>
                   {outcomeLabel}
                 </span>

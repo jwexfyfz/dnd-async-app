@@ -99,9 +99,12 @@ function PlayContent() {
   const [rollSheetAction, setRollSheetAction] = useState<{ hint: 'attack' | 'hide' | 'provoke' | 'shove'; validTargets: TargetOption[] } | null>(null);
   const [chatRollResult, setChatRollResult] = useState<{ hint: 'attack' | 'hide' | 'provoke' | 'shove'; result: RollSheetResult } | null>(null);
   const [pendingDamageRoll, setPendingDamageRoll] = useState<{ rolls: number[]; dieFaces: number; totalDamage: number; isCrit: boolean; targetDefeated?: boolean; targetName?: string | null } | null>(null);
+  const [damageChipSuppressed, setDamageChipSuppressed] = useState(false);
   const pendingDamageRollRef = useRef<typeof pendingDamageRoll>(null);
   const narrativePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const rollNarrativeArrivedRef = useRef(false);
+  const damageSheetActiveRef = useRef(false);
+  const pendingHistoryFlushRef = useRef<HistoryEntry[]>([]);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const suppressScrollRef = useRef(false);
@@ -338,6 +341,31 @@ function PlayContent() {
       const nextGameState = (data.gameState as 'exploration' | 'combat') ?? prevGameState;
       const isTransition = prevGameState !== nextGameState;
 
+      // Pre-compute damage roll BEFORE history update so combat_end banner can be gated
+      const rawRollResult = data.rollResult as { d20?: number; success?: boolean; isCrit?: boolean; damage?: number; targetDefeated?: boolean; rollType?: string; damageRolls?: number[]; damageDieFaces?: number; modifier?: number; dc?: number; vsTarget?: string } | undefined;
+      if (rawRollResult) {
+        const hint = (rawRollResult.rollType ?? 'attack') as 'attack' | 'hide' | 'provoke' | 'shove';
+        const hasDmgRoll = hint === 'attack' && !!(rawRollResult.success || rawRollResult.isCrit) && !!(rawRollResult.damageRolls?.length);
+        if (hasDmgRoll) {
+          pendingDamageRollRef.current = {
+            rolls: rawRollResult.damageRolls!,
+            dieFaces: rawRollResult.damageDieFaces ?? 6,
+            totalDamage: rawRollResult.damage ?? 0,
+            isCrit: rawRollResult.isCrit ?? false,
+            targetDefeated: rawRollResult.targetDefeated,
+            targetName: null,
+          };
+          damageSheetActiveRef.current = true;
+          setDamageChipSuppressed(true);
+        }
+      }
+
+      // Buffer combat_end banner if damage sheet will be shown (gated on outcome chip)
+      const shouldBufferCombatEnd = damageSheetActiveRef.current && isTransition && nextGameState === 'exploration';
+      if (shouldBufferCombatEnd) {
+        pendingHistoryFlushRef.current.push(buildBannerEntry('combat_end'));
+      }
+
       // Append fresh entries to history; inject combat banner on state transitions
       setHistory(prev => {
         // Exclude both optimistic placeholders and the previous injected-current sentinel —
@@ -352,7 +380,7 @@ function PlayContent() {
           const hasCombatStartInFresh = fresh.some(e => (e.mechanicalSummary as Record<string,unknown> | null)?.type === 'combat_start');
           if (nextGameState === 'combat' && !hasCombatStartInFresh) {
             base.push(buildBannerEntry('combat_start', data.combatState as CombatState | null));
-          } else if (nextGameState === 'exploration') {
+          } else if (nextGameState === 'exploration' && !shouldBufferCombatEnd) {
             base.push(buildBannerEntry('combat_end'));
           }
         }
@@ -386,22 +414,11 @@ function PlayContent() {
 
       setMapRefreshKey(k => k + 1);
 
-      // If the server took the fire-and-forget narrative path (roll occurred), show dice
-      // animation and poll for the narrative that arrives asynchronously.
-      const rawRollResult = data.rollResult as { d20?: number; success?: boolean; isCrit?: boolean; damage?: number; targetDefeated?: boolean; rollType?: string; damageRolls?: number[]; damageDieFaces?: number } | undefined;
+      // rawRollResult already extracted above; show dice animation and poll for narrative
       if (rawRollResult) {
         const hint = (rawRollResult.rollType ?? 'attack') as 'attack' | 'hide' | 'provoke' | 'shove';
         const hasDmgRoll = hint === 'attack' && !!(rawRollResult.success || rawRollResult.isCrit) && !!(rawRollResult.damageRolls?.length);
-        if (hasDmgRoll) {
-          pendingDamageRollRef.current = {
-            rolls: rawRollResult.damageRolls!,
-            dieFaces: rawRollResult.damageDieFaces ?? 6,
-            totalDamage: rawRollResult.damage ?? 0,
-            isCrit: rawRollResult.isCrit ?? false,
-            targetDefeated: rawRollResult.targetDefeated,
-            targetName: null,
-          };
-        }
+        // pendingDamageRollRef.current already set and damageSheetActiveRef.current already set above
         setChatRollResult({
           hint,
           result: {
@@ -411,6 +428,9 @@ function PlayContent() {
             damageDealt: rawRollResult.damage,
             targetDefeated: rawRollResult.targetDefeated,
             hasDamageRoll: hasDmgRoll,
+            modifier: rawRollResult.modifier,
+            dc: rawRollResult.dc,
+            vsTarget: rawRollResult.vsTarget,
           },
         });
         // Poll for the narrative that will be written after this response returns
@@ -428,17 +448,26 @@ function PlayContent() {
                 clearInterval(narrativePollRef.current!);
                 narrativePollRef.current = null;
                 rollNarrativeArrivedRef.current = true;
-                setHistory(prev => {
-                  const withoutShimmer = prev.filter(e => !e.isShimmer);
-                  const ids = new Set(withoutShimmer.map(e => e.id));
-                  const fresh = logs.filter(e => !ids.has(e.id));
-                  if (fresh.length === 0) return prev;
-                  const newest = fresh[fresh.length - 1].createdAt;
+                if (damageSheetActiveRef.current) {
+                  // Buffer until damage outcome chip is shown
+                  pendingHistoryFlushRef.current = [...pendingHistoryFlushRef.current, ...logs];
+                  const newest = logs[logs.length - 1].createdAt;
                   if (!newestTimestampRef.current || newest > newestTimestampRef.current) {
                     newestTimestampRef.current = newest;
                   }
-                  return [...withoutShimmer, ...fresh];
-                });
+                } else {
+                  setHistory(prev => {
+                    const withoutShimmer = prev.filter(e => !e.isShimmer);
+                    const ids = new Set(withoutShimmer.map(e => e.id));
+                    const fresh = logs.filter(e => !ids.has(e.id));
+                    if (fresh.length === 0) return prev;
+                    const newest = fresh[fresh.length - 1].createdAt;
+                    if (!newestTimestampRef.current || newest > newestTimestampRef.current) {
+                      newestTimestampRef.current = newest;
+                    }
+                    return [...withoutShimmer, ...fresh];
+                  });
+                }
               } else if (attempts >= 12) {
                 clearInterval(narrativePollRef.current!);
                 narrativePollRef.current = null;
@@ -464,6 +493,11 @@ function PlayContent() {
   const applyActionResponse = useCallback((data: Record<string, unknown>, prevGs: 'exploration' | 'combat', opts?: { switchToChat?: boolean; stripShimmer?: boolean }) => {
     const newNarrative: HistoryEntry[] = (data.currentNarrative as HistoryEntry[]) ?? [];
     const nextGs = (data.gameState as 'exploration' | 'combat') ?? prevGs;
+    // Buffer combat_end banner if damage sheet will be shown (gated on outcome chip)
+    const shouldBufferCombatEnd = damageSheetActiveRef.current && prevGs !== nextGs && nextGs === 'exploration';
+    if (shouldBufferCombatEnd) {
+      pendingHistoryFlushRef.current.push(buildBannerEntry('combat_end'));
+    }
     setHistory(prev => {
       const withoutInjected = prev.filter(e => e.id !== 'injected-current' && !(opts?.stripShimmer && e.isShimmer));
       const existingIds = new Set(withoutInjected.map(e => e.id));
@@ -473,7 +507,7 @@ function PlayContent() {
         const hasCombatStartInFresh = fresh.some(e => (e.mechanicalSummary as Record<string,unknown> | null)?.type === 'combat_start');
         if (nextGs === 'combat' && !hasCombatStartInFresh) {
           base.push(buildBannerEntry('combat_start', data.combatState as CombatState | null));
-        } else if (nextGs === 'exploration') {
+        } else if (nextGs === 'exploration' && !shouldBufferCombatEnd) {
           base.push(buildBannerEntry('combat_end'));
         }
       }
@@ -555,6 +589,24 @@ function PlayContent() {
     if (narrativePollRef.current) { clearInterval(narrativePollRef.current); narrativePollRef.current = null; }
     try {
       const data = await dispatchAction(text, hint, targetId);
+
+      // Set up damage roll ref BEFORE applyActionResponse so combat_end can be buffered
+      const rollResult = data.rollResult as { d20?: number; allRolls?: number[]; success?: boolean; isCrit?: boolean; damage?: number; targetDefeated?: boolean; damageRolls?: number[]; damageDieFaces?: number; modifier?: number; dc?: number; vsTarget?: string } | undefined;
+      const hasDamageRoll = !!(rollResult?.success || rollResult?.isCrit) && !!(rollResult?.damageRolls?.length);
+      if (hasDamageRoll && rollResult) {
+        const targetEntry = combatState?.initiativeOrder.find(e => e.id === targetId);
+        pendingDamageRollRef.current = {
+          rolls: rollResult.damageRolls!,
+          dieFaces: rollResult.damageDieFaces ?? 6,
+          totalDamage: rollResult.damage ?? 0,
+          isCrit: rollResult.isCrit ?? false,
+          targetDefeated: rollResult.targetDefeated,
+          targetName: targetEntry?.name ?? null,
+        };
+        damageSheetActiveRef.current = true;
+        setDamageChipSuppressed(true);
+      }
+
       applyActionResponse(data, prevGs, { switchToChat: true });
 
       // Poll for fire-and-forget narrative starting immediately after server responds
@@ -570,17 +622,26 @@ function PlayContent() {
               clearInterval(narrativePollRef.current!);
               narrativePollRef.current = null;
               rollNarrativeArrivedRef.current = true;
-              setHistory(prev => {
-                const withoutShimmer = prev.filter(e => !e.isShimmer);
-                const ids = new Set(withoutShimmer.map(e => e.id));
-                const fresh = logs.filter(e => !ids.has(e.id));
-                if (fresh.length === 0) return prev;
-                const newest = fresh[fresh.length - 1].createdAt;
+              if (damageSheetActiveRef.current) {
+                // Buffer until damage outcome chip is shown
+                pendingHistoryFlushRef.current = [...pendingHistoryFlushRef.current, ...logs];
+                const newest = logs[logs.length - 1].createdAt;
                 if (!newestTimestampRef.current || newest > newestTimestampRef.current) {
                   newestTimestampRef.current = newest;
                 }
-                return [...withoutShimmer, ...fresh];
-              });
+              } else {
+                setHistory(prev => {
+                  const withoutShimmer = prev.filter(e => !e.isShimmer);
+                  const ids = new Set(withoutShimmer.map(e => e.id));
+                  const fresh = logs.filter(e => !ids.has(e.id));
+                  if (fresh.length === 0) return prev;
+                  const newest = fresh[fresh.length - 1].createdAt;
+                  if (!newestTimestampRef.current || newest > newestTimestampRef.current) {
+                    newestTimestampRef.current = newest;
+                  }
+                  return [...withoutShimmer, ...fresh];
+                });
+              }
             } else if (attempts >= 8) {
               clearInterval(narrativePollRef.current!);
               narrativePollRef.current = null;
@@ -589,19 +650,6 @@ function PlayContent() {
         }, 500);
       }
 
-      const rollResult = data.rollResult as { d20?: number; allRolls?: number[]; success?: boolean; isCrit?: boolean; damage?: number; targetDefeated?: boolean; damageRolls?: number[]; damageDieFaces?: number } | undefined;
-      const hasDamageRoll = !!(rollResult?.success || rollResult?.isCrit) && !!(rollResult?.damageRolls?.length);
-      if (hasDamageRoll && rollResult) {
-        const targetEntry = combatState?.initiativeOrder.find(e => e.id === targetId);
-        pendingDamageRollRef.current = {
-          rolls: rollResult.damageRolls!,
-          dieFaces: rollResult.damageDieFaces ?? 6,
-          totalDamage: rollResult.damage ?? 0,
-          isCrit: rollResult.isCrit ?? false,
-          targetDefeated: rollResult.targetDefeated,
-          targetName: targetEntry?.name ?? null,
-        };
-      }
       return {
         d20: rollResult?.d20 ?? 0,
         allRolls: rollResult?.allRolls,
@@ -610,6 +658,9 @@ function PlayContent() {
         damageDealt: rollResult?.damage,
         targetDefeated: rollResult?.targetDefeated,
         hasDamageRoll,
+        modifier: rollResult?.modifier,
+        dc: rollResult?.dc,
+        vsTarget: rollResult?.vsTarget,
       };
     } finally {
       setSending(false);
@@ -1112,7 +1163,8 @@ function PlayContent() {
             onOpenRollSheet={handleOpenRollSheet}
             situationSummary={situationSummary}
             combatAlert={combatAlert}
-            suppressLastCombatRollDamage={pendingDamageRoll !== null}
+            suppressLastCombatRollDamage={damageChipSuppressed}
+            suppressLastCombatRoll={rollSheetAction !== null || chatRollResult !== null}
           />
         )}
         {activeTab === 'inventory' && (
@@ -1205,7 +1257,18 @@ function PlayContent() {
           targetDefeated={pendingDamageRoll.targetDefeated}
           targetName={pendingDamageRoll.targetName}
           onDismiss={() => {
+            damageSheetActiveRef.current = false;
+            setDamageChipSuppressed(false);
             setPendingDamageRoll(null);
+            if (pendingHistoryFlushRef.current.length > 0) {
+              const toFlush = pendingHistoryFlushRef.current;
+              pendingHistoryFlushRef.current = [];
+              setHistory(prev => {
+                const ids = new Set(prev.map(e => e.id));
+                const fresh = toFlush.filter(e => !ids.has(e.id));
+                return fresh.length > 0 ? [...prev, ...fresh] : prev;
+              });
+            }
             if (!rollNarrativeArrivedRef.current) {
               setHistory(prev => [...prev, {
                 id: `shimmer-${Date.now()}`,

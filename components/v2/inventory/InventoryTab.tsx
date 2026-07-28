@@ -4,6 +4,15 @@ import { useState } from 'react';
 import type { CharacterInventory, ItemDefinition, CombatState } from '@/types/v2-game';
 import { UseButtons, SLOT_GROUPS, SLOT_LABELS, BONUS_LABELS, fmtBonus, bagBadge } from '@/components/v2/inventory/UseButtons';
 
+const PASSIVE_EFFECT_LABELS: Record<string, string> = {
+  initiative_bonus: 'Grants a bonus to initiative at the start of combat',
+  stealth_adv_while_hiding: 'Advantage on Stealth checks while hiding',
+};
+
+function fmtPassiveEffect(effect: string): string {
+  return PASSIVE_EFFECT_LABELS[effect] ?? effect;
+}
+
 export function InventoryTab({ characterInventory, gameState, onExplorationAction, onCombatUse, proximityPoi, availablePois, partyMembers, combatState }: {
   characterInventory: CharacterInventory | null;
   gameState: 'exploration' | 'combat';
@@ -158,7 +167,7 @@ export function InventoryTab({ characterInventory, gameState, onExplorationActio
                           <p className="text-xs text-slate-600 italic">{item.description}</p>
                         )}
                         {item.passive_effect && (
-                          <p className="text-xs text-slate-500">{item.passive_effect}</p>
+                          <p className="text-xs text-slate-500">{fmtPassiveEffect(item.passive_effect)}</p>
                         )}
                         {item.equip_bonus && Object.keys(item.equip_bonus).length > 0 && (
                           <p className="text-xs font-medium text-emerald-700">{fmtBonus(item.equip_bonus)}</p>
@@ -242,7 +251,7 @@ export function InventoryTab({ characterInventory, gameState, onExplorationActio
                           <p className="text-xs text-slate-600 italic">{item.description}</p>
                         )}
                         {item.passive_effect && (
-                          <p className="text-xs text-slate-500">{item.passive_effect}</p>
+                          <p className="text-xs text-slate-500">{fmtPassiveEffect(item.passive_effect)}</p>
                         )}
                         {bonusStr && (
                           <p className="text-xs font-medium text-emerald-700">{bonusStr}</p>

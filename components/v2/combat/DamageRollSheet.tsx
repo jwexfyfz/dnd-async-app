@@ -82,16 +82,16 @@ export function DamageRollSheet({ rolls, dieFaces, totalDamage, isCrit, targetDe
 
   useEffect(() => {
     if (state !== 'landed') return;
-    // Show outcome at least 1000ms after landing AND at least 4000ms from when user clicked roll
+    // Show outcome at least 400ms after landing AND at least 2500ms from when user clicked roll
     const elapsed = Date.now() - rollStartRef.current;
-    const delay = Math.max(1000, 4000 - elapsed);
+    const delay = Math.max(400, 2500 - elapsed);
     const t = setTimeout(() => setShowOutcome(true), delay);
     return () => clearTimeout(t);
   }, [state]);
 
   useEffect(() => {
     if (!showOutcome) return;
-    const delay = targetDefeated ? 3500 : isCrit ? 3000 : 2500;
+    const delay = targetDefeated ? 2500 : isCrit ? 2000 : 1500;
     const t = setTimeout(() => onDismiss(), delay);
     return () => clearTimeout(t);
   }, [showOutcome, targetDefeated, isCrit, onDismiss]);
@@ -156,6 +156,27 @@ export function DamageRollSheet({ rolls, dieFaces, totalDamage, isCrit, targetDe
             </div>
             {showOutcome && (
               <>
+                {(() => {
+                  const diceSum = rolls.reduce((a, b) => a + b, 0);
+                  const modifier = totalDamage - diceSum;
+                  const showCalc = rolls.length > 1 || modifier !== 0;
+                  const valueColor = isCrit ? 'text-amber-600' : 'text-orange-600';
+                  if (!showCalc) return null;
+                  return (
+                    <p className="text-xs font-mono text-slate-400 text-center leading-none">
+                      {rolls.map((v, i) => (
+                        <span key={i}>
+                          <span className={valueColor}>{v}</span>
+                          {i < rolls.length - 1 && ' + '}
+                        </span>
+                      ))}
+                      {modifier > 0 && ` + ${modifier}`}
+                      {modifier < 0 && ` − ${Math.abs(modifier)}`}
+                      {' = '}
+                      <span className={valueColor}>{totalDamage}</span>
+                    </p>
+                  );
+                })()}
                 <span className="text-sm font-bold text-orange-600">
                   {totalDamage} damage{isCrit ? ' — CRITICAL!' : ''}
                 </span>

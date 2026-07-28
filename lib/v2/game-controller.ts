@@ -1081,6 +1081,7 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
       // Capture roll result for response forwarding
       const primaryCombatLog = combatResult.rollLogs[0];
       if (primaryCombatLog && parsedActions[0]?.action_type !== 'death_save') {
+        const vsTargetNum = primaryCombatLog.vsTarget ? parseInt(primaryCombatLog.vsTarget.replace(/\D/g, ''), 10) : NaN;
         playerCombatRollResult = {
           d20: primaryCombatLog.d20,
           allRolls: primaryCombatLog.d20Rolls ? [...primaryCombatLog.d20Rolls] : undefined,
@@ -1091,6 +1092,9 @@ export async function handleGameAction(body: GameActionRequest): Promise<ViewSta
           damageRolls: primaryCombatLog.damageRoll?.rolls,
           damageDieFaces: primaryCombatLog.damageRoll?.dieFaces,
           rollType: primaryRollActionType as 'attack' | 'hide' | 'provoke' | 'shove' | undefined || undefined,
+          modifier: primaryCombatLog.modifier,
+          dc: isNaN(vsTargetNum) ? undefined : vsTargetNum,
+          vsTarget: primaryCombatLog.vsTarget,
         };
       }
 

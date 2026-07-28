@@ -6,7 +6,7 @@ import type { RollResult, CombatRollData } from '@/components/v2/combat/RollBadg
 import { CombatBanner } from '@/components/v2/combat/CombatBanner';
 import type { HistoryEntry, InitiativeRollEntry } from '@/components/v2/combat/CombatBanner';
 
-export function ChatMessage({ entry, characterId, suppressDamage }: { entry: HistoryEntry; characterId?: string; suppressDamage?: boolean }) {
+export function ChatMessage({ entry, characterId, suppressDamage, suppressRoll }: { entry: HistoryEntry; characterId?: string; suppressDamage?: boolean; suppressRoll?: boolean }) {
   if (entry.isShimmer) {
     return (
       <div className="flex justify-start my-2 gap-2">
@@ -62,6 +62,7 @@ export function ChatMessage({ entry, characterId, suppressDamage }: { entry: His
   }
 
   if (type === 'combat_roll') {
+    if (suppressRoll) return null;
     return <CombatRollBadge data={summary as unknown as CombatRollData} suppressDamage={suppressDamage} />;
   }
 

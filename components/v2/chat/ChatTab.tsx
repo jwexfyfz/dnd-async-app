@@ -8,7 +8,7 @@ import { ItemPickerSheet } from '@/components/v2/inventory/InventoryTab';
 import { ActionChips } from '@/components/v2/combat/ActionChips';
 import { ChatMessage } from '@/components/v2/chat/ChatMessage';
 
-export function ChatTab({ history, hasMore, loadingMore, loadMore, sending, error, input, setInput, sendAction, handleKeyDown, chip, setChip, gameState, combatState, characterStats, characterInventory, chatEndRef, chatContainerRef, showResumeCard, onDismissResume, roomName, characterId, partyMembers, onEndTurn, onFeatureActivate, onOpenRollSheet, situationSummary, combatAlert, suppressLastCombatRollDamage }: {
+export function ChatTab({ history, hasMore, loadingMore, loadMore, sending, error, input, setInput, sendAction, handleKeyDown, chip, setChip, gameState, combatState, characterStats, characterInventory, chatEndRef, chatContainerRef, showResumeCard, onDismissResume, roomName, characterId, partyMembers, onEndTurn, onFeatureActivate, onOpenRollSheet, situationSummary, combatAlert, suppressLastCombatRollDamage, suppressLastCombatRoll }: {
   history: HistoryEntry[];
   hasMore: boolean;
   loadingMore: boolean;
@@ -38,6 +38,7 @@ export function ChatTab({ history, hasMore, loadingMore, loadMore, sending, erro
   situationSummary?: string | null;
   combatAlert?: CombatAlertInfo | null;
   suppressLastCombatRollDamage?: boolean;
+  suppressLastCombatRoll?: boolean;
 }) {
   const [showItemSheet, setShowItemSheet] = useState(false);
 
@@ -81,7 +82,7 @@ export function ChatTab({ history, hasMore, loadingMore, loadMore, sending, erro
           <p className="text-center text-slate-400 text-sm mt-8">Loading…</p>
         )}
         {(() => {
-          const lastCombatRollId = suppressLastCombatRollDamage
+          const lastCombatRollId = (suppressLastCombatRollDamage || suppressLastCombatRoll)
             ? [...history].reverse().find(e => (e.mechanicalSummary as { type?: string } | null)?.type === 'combat_roll')?.id
             : undefined;
           return history.map(entry => (
@@ -89,7 +90,8 @@ export function ChatTab({ history, hasMore, loadingMore, loadMore, sending, erro
               key={entry.id}
               entry={entry}
               characterId={characterId}
-              suppressDamage={entry.id === lastCombatRollId}
+              suppressDamage={entry.id === lastCombatRollId && !!suppressLastCombatRollDamage}
+              suppressRoll={entry.id === lastCombatRollId && !!suppressLastCombatRoll}
             />
           ));
         })()}

@@ -318,5 +318,8 @@ export interface ViewStatePayload {
     rollType?: 'attack' | 'hide' | 'provoke' | 'shove';
     damageRolls?: number[];
     damageDieFaces?: number;
+    modifier?: number;
+    dc?: number;
+    vsTarget?: string;
   };
 }
